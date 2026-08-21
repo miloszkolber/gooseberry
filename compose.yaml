@@ -1,53 +1,131 @@
+name: mewa-code
+
 services:
   mewa-code:
     build:
       context: ./mewa-code
+    container_name: mewa-code
+    restart: unless-stopped
+    user: "${MEWA_UID:-1000}:${MEWA_GID:-1000}"
+    env_file:
+      - path: .env
+        required: false
     environment:
+      HOME: ${MEWA_HOME_ROOT:-/home/mewa}
       SYNARA_HOST: 0.0.0.0
       SYNARA_PORT: 3773
+      SYNARA_AUTH_TOKEN: ${SYNARA_AUTH_TOKEN:?set SYNARA_AUTH_TOKEN}
       MEWA_SSH_HOST: ${MEWA_SSH_HOST:?set MEWA_SSH_HOST}
       MEWA_SSH_PORT: ${MEWA_SSH_PORT:-22}
       MEWA_SSH_USER: ${MEWA_SSH_USER:-mewa}
       MEWA_SSH_PRIVATE_KEY: /run/secrets/mewa_ssh_key
-      MEWA_SSH_KNOWN_HOST: ${MEWA_SSH_KNOWN_HOST:?set pinned host key}
+      MEWA_SSH_KNOWN_HOST: ${MEWA_SSH_KNOWN_HOST:?set a pinned SSH host key}
+      MEWA_SSH_SHELL: ${MEWA_SSH_SHELL:-/bin/bash}
+      MEWA_SSH_FORWARD_ENV: ${MEWA_SSH_FORWARD_ENV:-PI_SESSION_ID,PI_PROVIDER,PI_MODEL,PI_REASONING_LEVEL,CI}
+      MEWA_SSH_MAX_OUTPUT_BYTES: ${MEWA_SSH_MAX_OUTPUT_BYTES:-4194304}
+      MEWA_LOCAL_ROOTS: ${MEWA_HOME_ROOT:-/home/mewa},${MEWA_DATA_ROOT:-/data},${MEWA_REPO_ROOT:-/repos}
+      MEWA_SFTP_FALLBACK: ${MEWA_SFTP_FALLBACK:-true}
       MEWA_BROWSER_URL: http://mewa-browser:8787
+      MEWA_BROWSER_TOKEN: ${MEWA_BROWSER_TOKEN:?set MEWA_BROWSER_TOKEN}
       PI_CODING_AGENT_DIR: /var/lib/mewa/pi
+      PI_SKIP_VERSION_CHECK: "1"
+      PI_TELEMETRY: "0"
       SYNARA_HOME: /var/lib/mewa/synara
+      TZ: ${TZ:-UTC}
+    working_dir: ${MEWA_REPO_ROOT:-/repos}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${SYNARA_PORT:-3773}:3773"
     volumes:
       - mewa-state:/var/lib/mewa
+      - type: bind
+        source: ${MEWA_HOME_ROOT:-/home/mewa}
+        target: ${MEWA_HOME_ROOT:-/home/mewa}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEWA_DATA_ROOT:-/data}
+        target: ${MEWA_DATA_ROOT:-/data}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEWA_REPO_ROOT:-/repos}
+        target: ${MEWA_REPO_ROOT:-/repos}
+        bind:
+          create_host_path: false
     secrets:
       - mewa_ssh_key
     networks:
       - default
-      - browser
+      - browser-control
     read_only: true
     tmpfs:
-      - /tmp
-      - /run
+      - /tmp:exec,nosuid,size=256m,mode=1777
+      - /run:nosuid,size=32m,mode=755
+    ulimits:
+      core: 0
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          const net=require('node:net');const s=net.connect(3773,'127.0.0.1');
+          s.setTimeout(3000);s.on('connect',()=>{s.end();process.exit(0)});
+          s.on('timeout',()=>process.exit(1));s.on('error',()=>process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   mewa-browser:
     build:
       context: ./mewa-browser
+    container_name: mewa-browser
+    restart: unless-stopped
     environment:
       PORT: 8787
+      MEWA_BROWSER_TOKEN: ${MEWA_BROWSER_TOKEN:?set MEWA_BROWSER_TOKEN}
       BROWSER_ARTIFACT_ROOT: /artifacts
+      BROWSER_STATE_ROOT: /tmp/mewa-browser
+      BROWSER_MAX_ARTIFACT_BYTES: ${BROWSER_MAX_ARTIFACT_BYTES:-67108864}
+      BROWSER_MAX_STATE_BYTES: ${BROWSER_MAX_STATE_BYTES:-268435456}
+      BROWSER_COMMAND_TIMEOUT_MS: ${BROWSER_COMMAND_TIMEOUT_MS:-120000}
+      TZ: ${TZ:-UTC}
     expose:
       - "8787"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - browser-artifacts:/artifacts
     networks:
-      - browser
+      - default
+      - browser-control
     read_only: true
+    shm_size: "512m"
     tmpfs:
-      - /tmp
-      - /run
-      - /home/browser
+      - /tmp:exec,nosuid,size=512m,mode=1777
+      - /run:nosuid,size=32m,mode=755
+      - /home/browser:nosuid,size=64m,mode=700,uid=1000,gid=1000
+    ulimits:
+      core: 0
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('node:http').get('http://127.0.0.1:8787/health',r=>
+          process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   mewa-state:
@@ -58,5 +136,5 @@ secrets:
     file: ${MEWA_SSH_PRIVATE_KEY_FILE:-./secrets/mewa_ed25519}
 
 networks:
-  browser:
+  browser-control:
     internal: true
