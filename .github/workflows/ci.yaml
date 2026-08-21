@@ -1,0 +1,79 @@
+name: Validate mewa draft
+
+on:
+  push:
+    branches: [main, "draft/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mewa-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate mewa-code sources
+        working-directory: mewa-code
+        run: |
+          npm install
+          npm run check
+
+      - name: Validate browser policy
+        working-directory: mewa-browser
+        run: |
+          npm install
+          npm run check
+          npm test
+
+      - name: Render Compose configuration
+        env:
+          SYNARA_AUTH_TOKEN: ci-synara-token
+          MEWA_BROWSER_TOKEN: ci-browser-token
+          MEWA_SSH_HOST: host.docker.internal
+          MEWA_SSH_USER: mewa
+          MEWA_SSH_KNOWN_HOST: host.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICI
+          MEWA_SSH_PRIVATE_KEY_FILE: /tmp/mewa/key
+          MEWA_HOME_ROOT: /tmp/mewa/home
+          MEWA_DATA_ROOT: /tmp/mewa/data
+          MEWA_REPO_ROOT: /tmp/mewa/repos
+        run: |
+          mkdir -p /tmp/mewa/home /tmp/mewa/data /tmp/mewa/repos
+          printf '%s\n' placeholder > /tmp/mewa/key
+          docker compose config --quiet
+
+      - name: Source hygiene
+        run: git diff --check
+
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: Build mewa-code
+        uses: docker/build-push-action@v7
+        with:
+          context: mewa-code
+          push: false
+          load: false
+          tags: mewa-code:ci
+          cache-from: type=gha,scope=mewa-code
+          cache-to: type=gha,mode=max,scope=mewa-code
+      - name: Build mewa-browser
+        uses: docker/build-push-action@v7
+        with:
+          context: mewa-browser
+          push: false
+          load: false
+          tags: mewa-browser:ci
+          cache-from: type=gha,scope=mewa-browser
+          cache-to: type=gha,mode=max,scope=mewa-browser
