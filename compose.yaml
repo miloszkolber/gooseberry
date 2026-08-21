@@ -1,0 +1,62 @@
+services:
+  mewa-code:
+    build:
+      context: ./mewa-code
+    environment:
+      SYNARA_HOST: 0.0.0.0
+      SYNARA_PORT: 3773
+      MEWA_SSH_HOST: ${MEWA_SSH_HOST:?set MEWA_SSH_HOST}
+      MEWA_SSH_PORT: ${MEWA_SSH_PORT:-22}
+      MEWA_SSH_USER: ${MEWA_SSH_USER:-mewa}
+      MEWA_SSH_PRIVATE_KEY: /run/secrets/mewa_ssh_key
+      MEWA_SSH_KNOWN_HOST: ${MEWA_SSH_KNOWN_HOST:?set pinned host key}
+      MEWA_BROWSER_URL: http://mewa-browser:8787
+      PI_CODING_AGENT_DIR: /var/lib/mewa/pi
+      SYNARA_HOME: /var/lib/mewa/synara
+    ports:
+      - "127.0.0.1:${SYNARA_PORT:-3773}:3773"
+    volumes:
+      - mewa-state:/var/lib/mewa
+    secrets:
+      - mewa_ssh_key
+    networks:
+      - default
+      - browser
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    security_opt:
+      - no-new-privileges:true
+
+  mewa-browser:
+    build:
+      context: ./mewa-browser
+    environment:
+      PORT: 8787
+      BROWSER_ARTIFACT_ROOT: /artifacts
+    expose:
+      - "8787"
+    volumes:
+      - browser-artifacts:/artifacts
+    networks:
+      - browser
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /home/browser
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mewa-state:
+  browser-artifacts:
+
+secrets:
+  mewa_ssh_key:
+    file: ${MEWA_SSH_PRIVATE_KEY_FILE:-./secrets/mewa_ed25519}
+
+networks:
+  browser:
+    internal: true
