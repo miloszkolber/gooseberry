@@ -1,0 +1,11 @@
+{
+  "name": "@mewa/browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs"
+  },
+  "dependencies": {
+    "agent-browser": "0.34.0"
+  }
+}
