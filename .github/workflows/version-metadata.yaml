@@ -1,0 +1,19 @@
+name: Validate version metadata
+
+on:
+  push:
+    branches: [main, "draft/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/check-versions.mjs
