@@ -166,8 +166,9 @@ jobs:
           EOF
           docker build -q -t mewa-host-smoke:ci "$host_image"
 
-          sudo chown -R 1000:1000 "$state" "$project" "$work/controller"
-          chmod 0600 "$work/controller"
+          sudo chown -R 1000:1000 "$state" "$project"
+          sudo chown 1000:1000 "$work/controller"
+          sudo chmod 0600 "$work/controller"
 
           docker network create mewa-smoke >/dev/null
           docker run -d --name mewa-host-smoke \
