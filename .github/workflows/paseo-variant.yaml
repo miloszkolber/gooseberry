@@ -1,0 +1,78 @@
+name: Validate Paseo Pi variant
+
+on:
+  push:
+    branches: ["draft/paseo-pi"]
+    paths:
+      - "variants/paseo-pi/**"
+      - "mewa-code/**"
+      - "mewa-browser/**"
+      - ".github/workflows/paseo-variant.yaml"
+  pull_request:
+    paths:
+      - "variants/paseo-pi/**"
+      - "mewa-code/**"
+      - "mewa-browser/**"
+      - ".github/workflows/paseo-variant.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build comparison image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: variants/paseo-pi/Dockerfile
+          push: false
+          load: true
+          tags: mewa-paseo:ci
+          build-args: |
+            PASEO_VERSION=0.5.0-beta.4
+            PI_VERSION=0.81.1
+          cache-from: type=gha,scope=mewa-paseo
+          cache-to: type=gha,mode=max,scope=mewa-paseo
+
+      - name: Verify bundled Pi and extensions
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/pi mewa-paseo:ci --version
+          docker run --rm --entrypoint /usr/bin/test mewa-paseo:ci \
+            -f /opt/mewa/dist/pi/extensions/mewa-remote.js
+          docker run --rm --entrypoint /usr/bin/test mewa-paseo:ci \
+            -f /opt/mewa/dist/pi/extensions/mewa-browser.js
+          docker run --rm --entrypoint /usr/bin/test mewa-paseo:ci \
+            -f /opt/mewa/dist/pi/extensions/mewa-question.js
+          docker run --rm --entrypoint /usr/bin/test mewa-paseo:ci \
+            -f /opt/mewa/dist/pi/extensions/mewa-plan.js
+
+      - name: Render variant Compose configuration
+        working-directory: variants/paseo-pi
+        env:
+          PASEO_PASSWORD: ci-paseo-password
+          MEWA_BROWSER_TOKEN: ci-browser-token
+          MEWA_SSH_HOST: host.docker.internal
+          MEWA_SSH_USER: core
+          MEWA_SSH_KNOWN_HOST: host.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICI
+          MEWA_SSH_PRIVATE_KEY_FILE: /tmp/mewa/key
+          MEWA_PASEO_STATE_PATH: /tmp/mewa/state
+          MEWA_HOME_ROOT: /tmp/mewa/home
+          MEWA_DATA_ROOT: /tmp/mewa/host-data
+          MEWA_REPO_ROOT: /tmp/mewa/repo
+          MEWA_AGENTS_ROOT: /tmp/mewa/home/agents
+          MEWA_AGENT_RULES_FILE: /tmp/mewa/home/agents/AGENTS.md
+          MEWA_AGENT_SKILLS_DIR: /tmp/mewa/home/agents/skills
+        run: |
+          mkdir -p \
+            /tmp/mewa/state/browser \
+            /tmp/mewa/home/agents/skills \
+            /tmp/mewa/host-data \
+            /tmp/mewa/repo
+          printf '%s\n' '# CI agent rules' > /tmp/mewa/home/agents/AGENTS.md
+          printf '%s\n' placeholder > /tmp/mewa/key
+          docker compose config --quiet
