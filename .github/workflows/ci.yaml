@@ -25,7 +25,7 @@ jobs:
       - name: Validate mewa-code sources
         working-directory: mewa-code
         run: |
-          npm install
+          npm install --no-audit --no-fund
           npm run check
           npm run build
           test -f dist/src/remote-workspace.js
@@ -37,9 +37,11 @@ jobs:
       - name: Validate browser policy
         working-directory: mewa-browser
         run: |
-          npm install
           npm run check
           npm test
+
+      - name: Validate version and runtime metadata
+        run: node scripts/check-versions.mjs
 
       - name: Render Compose configuration
         env:
@@ -74,15 +76,84 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
+
       - name: Build mewa-code
         uses: docker/build-push-action@v7
         with:
           context: mewa-code
           push: false
-          load: false
+          load: true
           tags: mewa-code:ci
           cache-from: type=gha,scope=mewa-code
           cache-to: type=gha,mode=max,scope=mewa-code
+
+      - name: Verify slim runtime layout
+        run: |
+          docker image inspect mewa-code:ci --format 'mewa-code image size: {{.Size}} bytes'
+          docker run --rm --entrypoint sh mewa-code:ci -c '
+            set -eu
+            test -f /opt/synara/dist/index.mjs
+            test -f /opt/synara/dist/client/index.html
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-remote.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-browser.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-question.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-plan.js
+            test ! -e /opt/synara/apps
+            test ! -e /opt/synara/packages
+            test ! -e /opt/mewa
+          '
+          docker run --rm --entrypoint node mewa-code:ci --input-type=module -e "
+            await import('node-pty');
+            await import('@earendil-works/pi-coding-agent');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-remote.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-browser.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-question.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-plan.js');
+          "
+
+      - name: Smoke Synara readiness
+        env:
+          SYNARA_AUTH_TOKEN: ci-synara-token
+          MEWA_BROWSER_TOKEN: ci-browser-token
+        run: |
+          set -euo pipefail
+          state=$(mktemp -d)
+          chmod 0777 "$state"
+          cleanup() {
+            docker logs mewa-code-smoke || true
+            docker rm -f mewa-code-smoke >/dev/null 2>&1 || true
+            rm -rf "$state"
+          }
+          trap cleanup EXIT
+
+          docker run -d --name mewa-code-smoke \
+            --network host \
+            --read-only \
+            --tmpfs /tmp:exec,nosuid,size=256m,mode=1777 \
+            --tmpfs /run:nosuid,size=32m,mode=755 \
+            -v "$state:/home/data" \
+            -e HOME=/home/node \
+            -e SYNARA_AUTH_TOKEN="$SYNARA_AUTH_TOKEN" \
+            -e MEWA_BROWSER_TOKEN="$MEWA_BROWSER_TOKEN" \
+            -e MEWA_BROWSER_URL=http://127.0.0.1:9 \
+            -e MEWA_SSH_HOST=127.0.0.1 \
+            -e MEWA_SSH_PORT=22 \
+            -e MEWA_SSH_USER=ci \
+            -e MEWA_SSH_PRIVATE_KEY=/tmp/unused-key \
+            -e 'MEWA_SSH_KNOWN_HOST=ci ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICI' \
+            -e MEWA_LOCAL_ROOTS=/tmp \
+            mewa-code:ci
+
+          ready=false
+          for _ in $(seq 1 60); do
+            if node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))"; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+
       - name: Build mewa-browser
         uses: docker/build-push-action@v7
         with:
