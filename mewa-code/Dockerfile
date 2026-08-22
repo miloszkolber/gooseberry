@@ -1,15 +1,37 @@
 ARG NODE_VERSION=24-bookworm-slim
+ARG SYNARA_VERSION=0.7.1
 
-FROM node:${NODE_VERSION} AS build
+FROM node:${NODE_VERSION} AS extension-build
 
-WORKDIR /app
+WORKDIR /src/mewa
 COPY package.json tsconfig.check.json tsconfig.build.json ./
 RUN npm install
 COPY src ./src
 COPY pi ./pi
-RUN npm run build \
-  && npm prune --omit=dev \
+RUN npm run build
+
+FROM node:${NODE_VERSION} AS synara-package
+
+ARG SYNARA_VERSION
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    g++ \
+    make \
+    python3 \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/synara
+RUN curl --fail --location --retry 3 \
+    "https://github.com/Emanuele-web04/synara/releases/download/v${SYNARA_VERSION}/synara-server-${SYNARA_VERSION}.tar.gz" \
+    | tar -xz \
+  && node -e 'const fs=require("node:fs");const p=require("./package.json");delete p.scripts;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' \
+  && npm install --omit=dev \
+  && npm install --no-save ssh2@1.17.0 typebox@1.0.40 \
   && npm cache clean --force
+
+COPY --from=extension-build /src/mewa/dist /opt/synara/mewa/dist
 
 FROM node:${NODE_VERSION}
 
@@ -34,13 +56,11 @@ ENV NODE_ENV=production \
     COREPACK_HOME=/home/data/.cache/corepack \
     NODE_REPL_HISTORY=/home/data/.local/state/node_repl_history
 
-WORKDIR /app
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/src/bootstrap.mjs ./src/bootstrap.mjs
+WORKDIR /opt/synara
+COPY --from=synara-package /opt/synara /opt/synara
+COPY src/bootstrap.mjs /opt/mewa/bootstrap.mjs
 
 USER node
 EXPOSE 3773
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["node", "src/bootstrap.mjs"]
+CMD ["node", "/opt/mewa/bootstrap.mjs"]
