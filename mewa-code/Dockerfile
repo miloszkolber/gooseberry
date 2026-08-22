@@ -22,8 +22,7 @@ RUN printf '%s\n' \
     '  "private": true,' \
     '  "type": "module",' \
     '  "dependencies": {' \
-    '    "ssh2": "1.17.0",' \
-    '    "typebox": "1.0.40"' \
+    '    "ssh2": "1.17.0"' \
     '  }' \
     '}' > package.json \
   && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
@@ -50,15 +49,10 @@ RUN curl --fail --location --retry 3 \
   && test -f apps/server/dist/client/index.html \
   && mkdir -p /out \
   && cp -a apps/server/dist /out/dist \
-  && node -e 'const fs=require("node:fs");const root=require("./package.json");const server=require("./apps/server/package.json");const catalog=root.workspaces.catalog;const dependencies=Object.fromEntries(Object.entries(server.dependencies).map(([name,value])=>{if(value==="catalog:"){const resolved=catalog[name];if(typeof resolved!=="string")throw new Error(`Missing catalog dependency: ${name}`);return [name,resolved]}if(typeof value==="string"&&value.startsWith("workspace:"))throw new Error(`Unbundled workspace dependency: ${name}`);return [name,value]}));const runtime={name:server.name,version:server.version,private:true,type:server.type,engines:server.engines,dependencies};fs.writeFileSync("/out/package.json",JSON.stringify(runtime,null,2)+"\n")'
-
-FROM node:${NODE_VERSION} AS synara-runtime-deps
-
-WORKDIR /opt/synara
-COPY --from=synara-build /out/package.json ./package.json
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund \
-  && node --input-type=module -e "await import('node-pty'); await import('@earendil-works/pi-coding-agent')" \
-  && npm cache clean --force
+  && node -e 'const fs=require("node:fs");const root=require("./package.json");const server=require("./apps/server/package.json");const catalog=root.workspaces.catalog;const dependencies=Object.fromEntries(Object.entries(server.dependencies).map(([name,value])=>{if(value==="catalog:"){const resolved=catalog[name];if(typeof resolved!=="string")throw new Error(`Missing catalog dependency: ${name}`);return [name,resolved]}if(typeof value==="string"&&value.startsWith("workspace:"))throw new Error(`Unbundled workspace dependency: ${name}`);return [name,value]}));const runtime={name:server.name,version:server.version,private:true,type:server.type,engines:server.engines,dependencies};fs.writeFileSync("/out/package.json",JSON.stringify(runtime,null,2)+"\n")' \
+  && rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules \
+  && bun install --frozen-lockfile --ignore-scripts --filter @synara/cli --omit dev --linker hoisted \
+  && node --input-type=module -e "await import('node-pty'); await import('@earendil-works/pi-coding-agent'); await import('typebox')"
 
 FROM node:${NODE_VERSION}
 
@@ -88,9 +82,9 @@ ENV NODE_ENV=production \
     NODE_REPL_HISTORY=/home/data/.local/state/node_repl_history
 
 WORKDIR /opt/synara
+COPY --from=synara-build /out/package.json ./package.json
 COPY --from=synara-build /out/dist ./dist
-COPY --from=synara-runtime-deps /opt/synara/package.json ./package.json
-COPY --from=synara-runtime-deps /opt/synara/node_modules ./node_modules
+COPY --from=synara-build /src/synara/node_modules ./node_modules
 COPY --from=mewa-runtime-deps /opt/synara/mewa/package.json ./mewa/package.json
 COPY --from=mewa-runtime-deps /opt/synara/mewa/node_modules ./mewa/node_modules
 COPY --from=extension-build /src/mewa/dist ./mewa/dist
