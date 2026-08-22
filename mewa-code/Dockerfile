@@ -31,6 +31,8 @@ RUN printf '%s\n' \
 FROM node:${NODE_VERSION} AS synara-build
 
 ARG SYNARA_VERSION
+ENV NODE_OPTIONS=--max-old-space-size=4096 \
+    TURBO_TELEMETRY_DISABLED=1
 COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
