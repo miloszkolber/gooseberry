@@ -151,6 +151,7 @@ jobs:
               bash ca-certificates fd-find file git openssh-server ripgrep \
             && rm -rf /var/lib/apt/lists/* \
             && useradd -m -u 1000 -s /bin/bash ci \
+            && passwd -d ci \
             && install -d -m 0700 -o ci -g ci /home/ci/.ssh \
             && install -d -m 0755 /run/sshd \
             && ln -s /usr/bin/fdfind /usr/local/bin/fd \
