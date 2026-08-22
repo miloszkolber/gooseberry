@@ -28,6 +28,7 @@ jobs:
           npm install --no-audit --no-fund
           npm run check
           npm run build
+          node --check test/pi-remote-smoke.mjs
           test -f dist/src/remote-workspace.js
           test -f dist/pi/extensions/mewa-remote.js
           test -f dist/pi/extensions/mewa-browser.js
@@ -111,48 +112,110 @@ jobs:
             await import('/opt/synara/mewa/dist/pi/extensions/mewa-plan.js');
           "
 
-      - name: Smoke Synara readiness
+      - name: Smoke Synara, Pi tools, mounts, SSH, and SFTP
         env:
           SYNARA_AUTH_TOKEN: ci-synara-token
           MEWA_BROWSER_TOKEN: ci-browser-token
         run: |
           set -euo pipefail
-          state=$(mktemp -d)
-          chmod 0777 "$state"
+          work=$(mktemp -d)
+          state="$work/state"
+          project="$work/project"
+          host_image="$work/host-image"
+          mkdir -p "$state" "$project" "$host_image"
+
           cleanup() {
             docker logs mewa-code-smoke || true
-            docker rm -f mewa-code-smoke >/dev/null 2>&1 || true
-            rm -rf "$state"
+            docker logs mewa-host-smoke || true
+            docker rm -f mewa-code-smoke mewa-host-smoke >/dev/null 2>&1 || true
+            docker network rm mewa-smoke >/dev/null 2>&1 || true
+            sudo rm -rf "$work"
           }
           trap cleanup EXIT
 
+          git -C "$project" init -q
+          git -C "$project" config user.name CI
+          git -C "$project" config user.email ci@example.invalid
+          printf '%s\n' '# mewa integration smoke' > "$project/README.md"
+          git -C "$project" add README.md
+          git -C "$project" commit -qm init
+
+          ssh-keygen -q -t ed25519 -N '' -f "$work/controller"
+          cp "$work/controller.pub" "$host_image/authorized_keys"
+          cat > "$host_image/Dockerfile" <<'EOF'
+          FROM debian:bookworm-slim
+          RUN apt-get update \
+            && apt-get install -y --no-install-recommends \
+              bash ca-certificates fd-find file git openssh-server ripgrep \
+            && rm -rf /var/lib/apt/lists/* \
+            && useradd -m -u 1000 -s /bin/bash ci \
+            && install -d -m 0700 -o ci -g ci /home/ci/.ssh \
+            && install -d -m 0755 /run/sshd \
+            && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+            && ssh-keygen -A \
+            && printf '%s\n' \
+              'PasswordAuthentication no' \
+              'KbdInteractiveAuthentication no' \
+              'PubkeyAuthentication yes' \
+              'PermitRootLogin no' \
+              'UsePAM no' \
+              > /etc/ssh/sshd_config.d/mewa-smoke.conf
+          COPY --chown=ci:ci authorized_keys /home/ci/.ssh/authorized_keys
+          RUN chmod 0600 /home/ci/.ssh/authorized_keys
+          CMD ["/usr/sbin/sshd", "-D", "-e"]
+          EOF
+          docker build -q -t mewa-host-smoke:ci "$host_image"
+
+          sudo chown -R 1000:1000 "$state" "$project" "$work/controller"
+          chmod 0600 "$work/controller"
+
+          docker network create mewa-smoke >/dev/null
+          docker run -d --name mewa-host-smoke \
+            --network mewa-smoke \
+            --network-alias mewa-host \
+            -v "$project:/repo/smoke" \
+            mewa-host-smoke:ci
+
+          host_key=$(docker exec mewa-host-smoke sh -c "awk '{print \$1 \" \" \$2}' /etc/ssh/ssh_host_ed25519_key.pub")
+
           docker run -d --name mewa-code-smoke \
-            --network host \
+            --network mewa-smoke \
             --read-only \
             --tmpfs /tmp:exec,nosuid,size=256m,mode=1777 \
             --tmpfs /run:nosuid,size=32m,mode=755 \
             -v "$state:/home/data" \
-            -e HOME=/home/node \
+            -v "$project:/repo/smoke" \
+            -v "$work/controller:/run/secrets/mewa_ssh_key:ro" \
+            -v "$PWD/mewa-code/test/pi-remote-smoke.mjs:/tmp/pi-remote-smoke.mjs:ro" \
+            -w /repo/smoke \
+            -e HOME=/home/ci \
             -e SYNARA_AUTH_TOKEN="$SYNARA_AUTH_TOKEN" \
+            -e SYNARA_ALLOW_INSECURE_REMOTE=1 \
             -e MEWA_BROWSER_TOKEN="$MEWA_BROWSER_TOKEN" \
             -e MEWA_BROWSER_URL=http://127.0.0.1:9 \
-            -e MEWA_SSH_HOST=127.0.0.1 \
+            -e MEWA_SSH_HOST=mewa-host \
             -e MEWA_SSH_PORT=22 \
             -e MEWA_SSH_USER=ci \
-            -e MEWA_SSH_PRIVATE_KEY=/tmp/unused-key \
-            -e 'MEWA_SSH_KNOWN_HOST=ci ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICI' \
-            -e MEWA_LOCAL_ROOTS=/tmp \
+            -e MEWA_SSH_PRIVATE_KEY=/run/secrets/mewa_ssh_key \
+            -e "MEWA_SSH_KNOWN_HOST=mewa-host $host_key" \
+            -e MEWA_LOCAL_ROOTS=/repo \
+            -e MEWA_SFTP_FALLBACK=true \
+            -e MEWA_SMOKE_CWD=/repo/smoke \
             mewa-code:ci
 
           ready=false
           for _ in $(seq 1 60); do
-            if node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))"; then
+            if docker exec mewa-code-smoke node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))"; then
               ready=true
               break
             fi
             sleep 1
           done
           test "$ready" = true
+
+          docker exec mewa-code-smoke node /tmp/pi-remote-smoke.mjs
+          test "$(sudo cat "$project/mounted.txt")" = mounted-ok
+          docker exec mewa-host-smoke sh -lc 'test "$(cat ~/sftp-smoke.txt)" = sftp-ok'
 
       - name: Build mewa-browser
         uses: docker/build-push-action@v7
