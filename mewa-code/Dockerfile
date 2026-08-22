@@ -32,7 +32,7 @@ RUN curl --fail --location --retry 3 \
     "https://github.com/Emanuele-web04/synara/archive/refs/tags/v${SYNARA_VERSION}.tar.gz" \
     | tar -xz --strip-components=1 \
   && bun install --frozen-lockfile \
-  && bunx turbo run build --filter=@synara/cli \
+  && bun x turbo run build --filter=@synara/cli \
   && test -f apps/server/dist/index.mjs \
   && test -f apps/server/dist/client/index.html
 
