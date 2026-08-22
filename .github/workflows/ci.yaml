@@ -219,7 +219,7 @@ jobs:
 
           docker exec mewa-code-smoke node /tmp/pi-remote-smoke.mjs
           test "$(sudo cat "$project/mounted.txt")" = mounted-ok
-          docker exec mewa-host-smoke sh -lc 'test "$(cat ~/sftp-smoke.txt)" = sftp-ok'
+          docker exec --user ci mewa-host-smoke sh -lc 'test "$(cat ~/sftp-smoke.txt)" = sftp-ok'
 
       - name: Build mewa-browser
         uses: docker/build-push-action@v7
