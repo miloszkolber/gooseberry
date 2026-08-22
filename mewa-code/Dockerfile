@@ -38,7 +38,10 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    g++ \
     git \
+    make \
+    python3 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/synara
@@ -54,6 +57,7 @@ RUN curl --fail --location --retry 3 \
   && node -e 'const fs=require("node:fs");const root=require("./package.json");const server=require("./apps/server/package.json");const catalog=root.workspaces.catalog;const dependencies=Object.fromEntries(Object.entries(server.dependencies).map(([name,value])=>{if(value==="catalog:"){const resolved=catalog[name];if(typeof resolved!=="string")throw new Error(`Missing catalog dependency: ${name}`);return [name,resolved]}if(typeof value==="string"&&value.startsWith("workspace:"))throw new Error(`Unbundled workspace dependency: ${name}`);return [name,value]}));const runtime={name:server.name,version:server.version,private:true,type:server.type,engines:server.engines,dependencies};fs.writeFileSync("/out/package.json",JSON.stringify(runtime,null,2)+"\n")' \
   && rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules \
   && bun install --frozen-lockfile --ignore-scripts --filter @synara/cli --omit dev --linker hoisted \
+  && npm_config_nodedir=/usr/local npm_config_build_from_source=true npm rebuild node-pty --foreground-scripts --no-audit --no-fund \
   && node --input-type=module -e "await import('node-pty'); await import('@earendil-works/pi-coding-agent'); await import('typebox')"
 
 FROM node:${NODE_VERSION}
