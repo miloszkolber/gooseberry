@@ -58,17 +58,23 @@ if (!codeDockerfile.includes("synara/archive/refs/tags/v${SYNARA_VERSION}.tar.gz
 if (!codeDockerfile.includes("bun run build --filter=@synara/web --filter=@synara/cli")) {
   throw new Error("mewa-code must use Synara's release build targets");
 }
-if (!codeDockerfile.includes("--filter @synara/cli --omit dev --linker hoisted")) {
-  throw new Error("mewa-code must prune Synara to its locked runtime dependency set");
+if (!codeDockerfile.includes("bun install --frozen-lockfile --ignore-scripts --filter @synara/cli --omit dev")) {
+  throw new Error("mewa-code must prune Synara to its locked CLI runtime dependency set");
+}
+if (codeDockerfile.includes("--linker hoisted")) {
+  throw new Error("mewa-code must preserve Synara's isolated dependency linker");
 }
 for (const forbidden of [
   "COPY --from=synara-build /src/synara/packages",
-  "COPY --from=synara-build /src/synara/apps/server",
+  "COPY --from=synara-build /src/synara/apps/server/src",
   "    ripgrep \\",
 ]) {
   if (codeDockerfile.includes(forbidden)) {
     throw new Error(`mewa-code final image still contains obsolete layout: ${forbidden}`);
   }
+}
+if (!codeDockerfile.includes("/src/synara/apps/server/node_modules ./node_modules")) {
+  throw new Error("mewa-code must preserve Synara's isolated server dependency links");
 }
 if (!browserDockerfile.includes(`ARG AGENT_BROWSER_VERSION=${versions.AGENT_BROWSER_VERSION}`)) {
   throw new Error(
