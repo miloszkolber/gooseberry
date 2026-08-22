@@ -1,5 +1,7 @@
 {
+  "args": "--no-sandbox,--disable-dev-shm-usage",
   "contentBoundaries": true,
+  "debug": true,
   "executablePath": "/usr/bin/chromium",
   "hideScrollbars": true,
   "idleTimeout": "2m",
