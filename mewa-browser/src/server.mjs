@@ -8,7 +8,6 @@ import {
   readdir,
   readFile,
   rm,
-  stat,
   unlink,
 } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -86,20 +85,28 @@ async function measureTree(path, root = path) {
   let total = 0;
   let entries;
   try {
-    entries = await readdir(path, { withFileTypes: true });
+    entries = await readdir(path);
   } catch (error) {
     if (error?.code === "ENOENT") return 0;
     throw error;
   }
-  for (const entry of entries) {
-    const child = join(path, entry.name);
+  for (const name of entries) {
+    const child = join(path, name);
     if (!within(root, child)) throw new BrowserServiceError("unsafe_path", "path escaped quota root");
-    // Chromium creates singleton symlinks inside its private profile. Quota
-    // accounting must not follow them, but their targets also get no file or
+    let info;
+    try {
+      info = await lstat(child);
+    } catch (error) {
+      // Chromium rotates temporary profile entries while commands are running.
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    // Never follow symlinks while accounting for browser state. Chromium creates
+    // singleton links inside its private profile. Linked targets get no file or
     // artifact access through this service.
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) total += await measureTree(child, root);
-    else if (entry.isFile()) total += (await stat(child)).size;
+    if (info.isSymbolicLink()) continue;
+    if (info.isDirectory()) total += await measureTree(child, root);
+    else if (info.isFile()) total += info.size;
   }
   return total;
 }
