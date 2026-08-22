@@ -9,17 +9,20 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
-const stateRoot = process.env.MEWA_STATE_DIR ?? "/home/data";
-const piDir = process.env.PI_CODING_AGENT_DIR ?? join(stateRoot, "pi");
-const piSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR ?? join(piDir, "sessions");
-const synaraHome = process.env.SYNARA_HOME ?? join(stateRoot, "synara");
+const stateRoot = resolve(process.env.MEWA_STATE_DIR ?? "/home/data");
+const piDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(stateRoot, "pi"));
+const piSessionDir = resolve(
+  process.env.PI_CODING_AGENT_SESSION_DIR ?? join(piDir, "sessions"),
+);
+const synaraHome = resolve(process.env.SYNARA_HOME ?? join(stateRoot, "synara"));
 const settingsPath = join(piDir, "settings.json");
 const agentsRoot = process.env.MEWA_AGENTS_ROOT ?? "/home/core/agents";
 const agentRulesFile = process.env.MEWA_AGENT_RULES_FILE ?? join(agentsRoot, "AGENTS.md");
 const agentSkillsDir = process.env.MEWA_AGENT_SKILLS_DIR ?? join(agentsRoot, "skills");
-const extensionRoot = process.env.MEWA_EXTENSION_ROOT ?? "/opt/mewa/dist/pi/extensions";
+const extensionRoot =
+  process.env.MEWA_EXTENSION_ROOT ?? "/opt/synara/mewa/dist/pi/extensions";
 const bundledExtensions = [
   join(extensionRoot, "mewa-remote.js"),
   join(extensionRoot, "mewa-browser.js"),
@@ -35,9 +38,7 @@ for (const required of [
   "MEWA_SSH_KNOWN_HOST",
   "MEWA_BROWSER_TOKEN",
 ]) {
-  if (!process.env[required]) {
-    throw new Error(`${required} must be configured`);
-  }
+  if (!process.env[required]) throw new Error(`${required} must be configured`);
 }
 
 const persistentDirectories = [
@@ -51,9 +52,13 @@ const persistentDirectories = [
   process.env.XDG_CACHE_HOME,
   process.env.NPM_CONFIG_CACHE,
   process.env.COREPACK_HOME,
-].filter((value) => typeof value === "string" && value.length > 0);
+  process.env.NODE_COMPILE_CACHE,
+]
+  .filter((value) => typeof value === "string" && value.length > 0)
+  .map((value) => resolve(value));
 
 for (const path of persistentDirectories) {
+  assertWithinStateRoot(path);
   await mkdir(path, { recursive: true, mode: 0o700 });
 }
 
@@ -64,8 +69,10 @@ for (const extension of bundledExtensions) {
 }
 
 let settings = {};
+let currentSettingsText;
 try {
-  settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  currentSettingsText = await readFile(settingsPath, "utf8");
+  settings = JSON.parse(currentSettingsText);
 } catch (error) {
   if (error?.code !== "ENOENT") throw error;
 }
@@ -91,43 +98,46 @@ settings.retry = {
   baseDelayMs: 2_000,
   ...(isRecord(settings.retry) ? settings.retry : {}),
 };
-
 settings.extensions = mergeStringEntries(settings.extensions, bundledExtensions);
 if (await exists(agentSkillsDir)) {
   settings.skills = mergeStringEntries(settings.skills, [agentSkillsDir]);
 }
 
-const temporary = join(dirname(settingsPath), `.settings.${process.pid}.tmp`);
-await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, {
-  encoding: "utf8",
-  mode: 0o600,
-});
-await rename(temporary, settingsPath);
+const nextSettingsText = `${JSON.stringify(settings, null, 2)}\n`;
+if (currentSettingsText !== nextSettingsText) {
+  const temporary = join(dirname(settingsPath), `.settings.${process.pid}.tmp`);
+  await writeFile(temporary, nextSettingsText, { encoding: "utf8", mode: 0o600 });
+  await rename(temporary, settingsPath);
+}
 
 if (await exists(agentRulesFile)) {
   await ensureManagedSymlink(join(piDir, "AGENTS.md"), agentRulesFile);
 }
 
-const synaraEntry =
-  process.env.SYNARA_ENTRY ?? "/opt/synara/apps/server/dist/index.mjs";
+const synaraEntry = process.env.SYNARA_ENTRY ?? "/opt/synara/dist/index.mjs";
 if (!(await exists(synaraEntry))) {
   throw new Error(`Synara entry is missing: ${synaraEntry}`);
 }
-const args = [
-  synaraEntry,
-  "--host",
-  process.env.SYNARA_HOST ?? "0.0.0.0",
-  "--port",
-  process.env.SYNARA_PORT ?? "3773",
-  "--no-browser",
-];
-const child = spawn(process.execPath, args, {
-  stdio: "inherit",
-  env: process.env,
-});
 
+const child = spawn(
+  process.execPath,
+  [
+    synaraEntry,
+    "--host",
+    process.env.SYNARA_HOST ?? "0.0.0.0",
+    "--port",
+    process.env.SYNARA_PORT ?? "3773",
+    "--no-browser",
+  ],
+  { stdio: "inherit", env: process.env },
+);
+
+let forwardedSignal;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => child.kill(signal));
+  process.on(signal, () => {
+    forwardedSignal ??= signal;
+    child.kill(signal);
+  });
 }
 
 child.once("error", (error) => {
@@ -135,12 +145,22 @@ child.once("error", (error) => {
   process.exitCode = 1;
 });
 child.once("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
+  const terminationSignal = forwardedSignal ?? signal;
+  if (terminationSignal) {
+    process.removeAllListeners(terminationSignal);
+    process.kill(process.pid, terminationSignal);
     return;
   }
   process.exitCode = code ?? 1;
 });
+
+function assertWithinStateRoot(path) {
+  const rel = relative(stateRoot, path);
+  if (rel === "" || (rel !== ".." && !rel.startsWith("../") && !rel.startsWith("..\\"))) {
+    return;
+  }
+  throw new Error(`Persistent path must stay inside ${stateRoot}: ${path}`);
+}
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
