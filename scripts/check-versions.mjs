@@ -41,8 +41,16 @@ for (const [name, dockerfile] of [
   }
 }
 
-if (!codeDockerfile.includes(`ARG SYNARA_VERSION=${versions.SYNARA_VERSION}`)) {
-  throw new Error(`mewa-code Dockerfile does not use SYNARA_VERSION=${versions.SYNARA_VERSION}`);
+for (const [name, value] of [
+  ["BUN_VERSION", versions.BUN_VERSION],
+  ["SYNARA_VERSION", versions.SYNARA_VERSION],
+]) {
+  if (!codeDockerfile.includes(`ARG ${name}=${value}`)) {
+    throw new Error(`mewa-code Dockerfile does not use ${name}=${value}`);
+  }
+}
+if (!codeDockerfile.includes("synara/archive/refs/tags/v${SYNARA_VERSION}.tar.gz")) {
+  throw new Error("mewa-code must build Synara from the pinned tagged source archive");
 }
 if (!browserDockerfile.includes(`ARG AGENT_BROWSER_VERSION=${versions.AGENT_BROWSER_VERSION}`)) {
   throw new Error(
@@ -50,7 +58,7 @@ if (!browserDockerfile.includes(`ARG AGENT_BROWSER_VERSION=${versions.AGENT_BROW
   );
 }
 if (codePackage.dependencies["@synara/cli"] !== undefined) {
-  throw new Error("mewa-code must consume Synara's published server artifact, not an npm dependency");
+  throw new Error("mewa-code must not depend on the unpublished Synara npm package");
 }
 
 console.log("version metadata is consistent");
