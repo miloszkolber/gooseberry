@@ -20,7 +20,8 @@ RUN printf '%s\n' \
     '  "private": true,' \
     '  "type": "module",' \
     '  "dependencies": {' \
-    '    "ssh2": "1.17.0"' \
+    '    "ssh2": "1.17.0",' \
+    '    "typebox": "1.1.38"' \
     '  }' \
     '}' > package.json \
   && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
@@ -84,12 +85,11 @@ COPY --from=mewa-runtime-deps /opt/synara/mewa/package.json /opt/synara/mewa/pac
 COPY --from=mewa-runtime-deps /opt/synara/mewa/node_modules /opt/synara/mewa/node_modules
 COPY --from=extension-build /src/mewa/dist /opt/synara/mewa/dist
 COPY src/bootstrap.mjs /opt/synara/mewa/bootstrap.mjs
-RUN mkdir -p /opt/synara/mewa/node_modules/@earendil-works \
+RUN test -e /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent \
+  && mkdir -p /opt/synara/mewa/node_modules/@earendil-works \
   && ln -s \
     /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent \
-    /opt/synara/mewa/node_modules/@earendil-works/pi-coding-agent \
-  && typebox_dir="$(node -e 'const { createRequire } = require("node:module"); const { dirname } = require("node:path"); const requireFromPi = createRequire("/opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent/package.json"); process.stdout.write(dirname(requireFromPi.resolve("typebox/package.json")))')" \
-  && ln -s "$typebox_dir" /opt/synara/mewa/node_modules/typebox
+    /opt/synara/mewa/node_modules/@earendil-works/pi-coding-agent
 
 USER node
 EXPOSE 3773
