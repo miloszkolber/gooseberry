@@ -48,7 +48,8 @@ RUN curl --fail --location --retry 3 \
   && rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules \
   && bun install --frozen-lockfile --ignore-scripts --filter @synara/cli --omit dev \
   && cd apps/server \
-  && npm_config_nodedir=/usr/local npm_config_build_from_source=true npm rebuild node-pty --foreground-scripts --no-audit --no-fund \
+  && pty_dir="$(dirname "$(node -p "require.resolve('node-pty/package.json')")")" \
+  && (cd "$pty_dir" && npm_config_nodedir=/usr/local node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild) \
   && node --input-type=module -e "await import('node-pty'); await import('@earendil-works/pi-coding-agent'); await import('effect'); await import('@effect/platform-node/NodeRuntime')"
 
 FROM node:${NODE_VERSION}
