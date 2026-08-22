@@ -94,9 +94,10 @@ async function measureTree(path, root = path) {
   for (const entry of entries) {
     const child = join(path, entry.name);
     if (!within(root, child)) throw new BrowserServiceError("unsafe_path", "path escaped quota root");
-    if (entry.isSymbolicLink()) {
-      throw new BrowserServiceError("unsafe_path", `symbolic links are not permitted: ${child}`);
-    }
+    // Chromium creates singleton symlinks inside its private profile. Quota
+    // accounting must not follow them, but their targets also get no file or
+    // artifact access through this service.
+    if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) total += await measureTree(child, root);
     else if (entry.isFile()) total += (await stat(child)).size;
   }
@@ -440,10 +441,9 @@ createServer(async (req, res) => {
       });
       return;
     }
-    json(res, 500, {
-      outcome: "failed",
-      code: "internal_error",
-      warnings: [error instanceof Error ? error.message : String(error)],
-    });
+    console.error(error);
+    json(res, 500, { outcome: "failed", code: "internal_error" });
   }
-}).listen(port, "0.0.0.0");
+}).listen(port, "0.0.0.0", () => {
+  console.log(`[mewa-browser] listening on ${port}`);
+});
