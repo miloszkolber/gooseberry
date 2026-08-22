@@ -1,4 +1,6 @@
-FROM node:24-bookworm-slim AS build
+ARG NODE_VERSION=24-bookworm-slim
+
+FROM node:${NODE_VERSION} AS build
 
 WORKDIR /app
 COPY package.json tsconfig.check.json tsconfig.build.json ./
@@ -9,7 +11,7 @@ RUN npm run build \
   && npm prune --omit=dev \
   && npm cache clean --force
 
-FROM node:24-bookworm-slim
+FROM node:${NODE_VERSION}
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
