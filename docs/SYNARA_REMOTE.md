@@ -1,10 +1,31 @@
-# Synara remote workspace seam
+# Synara workspace boundary
 
-This is the main unfinished integration boundary in the draft.
+The hybrid architecture does not require a full Synara remote-workspace fork. Same-path mounts make Synara Files, Changes, and worktrees useful for the Core roots, while Pi routes execution and exceptional paths through SSH/SFTP.
 
-Synara currently assumes local filesystem and child-process access for workspace services. A complete full-SSH implementation should introduce a workspace transport below those services rather than special-casing SSH in individual UI features.
+## Current behavior
 
-Proposed interface:
+```text
+Synara Files/Changes/worktrees -> local same-path mounts
+Synara standalone terminal     -> controller container
+Pi file tools                  -> mounts with SFTP fallback
+Pi bash/grep/find              -> SSH host
+Pi browser                     -> mewa-browser
+```
+
+This is coherent for normal work under `/home/core`, `/data`, and `/repo`. The model uses Pi tools and does not need to understand the split.
+
+## Remaining limitations
+
+- Synara's standalone terminal does not share the host shell environment.
+- SFTP-only paths do not appear in Synara Files or Changes.
+- host development ports are not forwarded automatically to browser previews.
+- Synara's local Git and file watchers observe only mounted roots.
+
+Use Pi `bash` for host commands. Do not rely on the standalone terminal for host-state verification.
+
+## Optional complete remote adapter
+
+A future complete remote workspace could introduce a transport below Synara's local services:
 
 ```ts
 interface WorkspaceTransport {
@@ -18,29 +39,26 @@ interface WorkspaceTransport {
 }
 ```
 
-Initial SSH implementation:
+An SSH implementation would use:
 
-- files: SFTP
-- commands/Git/worktrees/search: SSH exec
-- terminals: SSH PTY
-- dev-server previews: SSH port forwarding
+- SFTP for files;
+- SSH exec for Git, worktrees, and search;
+- SSH PTY for terminals;
+- SSH forwarding for development servers.
 
-The same transport instance should be shared by Synara's Pi adapter and Synara workspace services so all consumers agree on host identity, cwd, reconnect state and path semantics.
+The same transport instance should be shared by Synara's Pi adapter and workspace services so all consumers agree on host identity, cwd, reconnect state, and path semantics.
 
-## Pi integration
+## Why this is optional
 
-Pi already allows custom operations for its native coding tool definitions. The current prototype uses this for `read`, `write`, `edit` and `bash` instead of defining new model-facing tools.
+The adapter adds substantial maintenance surface inside an early-stage controller. It is justified only if real use shows that one of these is critical:
 
-The next Pi step is remote resource discovery. Pi's SDK supports a custom `ResourceLoader`; use that to load project `AGENTS.md`, `.pi/*`, `.agents/skills/*`, prompts and project extensions through the remote workspace. Global Pi state and provider credentials remain local to mewa-code.
+- editing unmounted paths through Synara Files;
+- using Synara's terminal as the authoritative host terminal;
+- managing worktrees outside the mounted roots;
+- presenting several remote machines through one Synara daemon.
 
-## Synara integration order
+Until then, the hybrid mount plus transparent Pi transport is the preferred design.
 
-1. Add `WorkspaceTransport` and `SshWorkspaceTransport`.
-2. Convert Files/editor reads and writes.
-3. Convert Git status/diff/worktree operations.
-4. Convert terminal manager to SSH PTY.
-5. Convert project discovery/search/watch behavior.
-6. Add remote Pi `ResourceLoader` and inject the same transport into Pi tool operations.
-7. Add SSH forwarding for preview ports.
+## Paseo comparison
 
-Until these are complete, the branch should be treated as an architecture and transport prototype, not a complete Synara remote-workspace build.
+Paseo does not remove this class of limitation. Its file explorer uses local filesystem APIs, its Git/worktree services operate on daemon-local paths, and its terminal uses local PTYs. Paseo's advantage is a cleaner Pi subprocess/RPC boundary and stronger general orchestration, not automatic remote-workspace transparency.
