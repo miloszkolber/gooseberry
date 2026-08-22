@@ -18,7 +18,6 @@ import {
   sep,
 } from "node:path";
 import { posix as remotePath } from "node:path";
-import { readFile } from "node:fs/promises";
 import {
   Client,
   type ClientChannel,
@@ -150,7 +149,7 @@ export class RemoteWorkspace {
     if (this.#client && this.#sftp) return;
     if (this.#connecting) return this.#connecting;
     this.#connecting = (async () => {
-      const privateKey = await readFile(this.config.privateKeyPath);
+      const privateKey = await localReadFile(this.config.privateKeyPath);
       const client = new Client();
       const connectConfig: ConnectConfig = {
         host: this.config.host,
@@ -160,8 +159,8 @@ export class RemoteWorkspace {
         readyTimeout: 15_000,
         keepaliveInterval: 15_000,
         keepaliveCountMax: 3,
-        hostVerifier: (key) =>
-          Buffer.from(key).toString("base64") === this.config.expectedHostKeyBase64,
+        hostVerifier: (key: Buffer) =>
+          key.toString("base64") === this.config.expectedHostKeyBase64,
       };
       await new Promise<void>((resolveReady, reject) => {
         client.once("ready", resolveReady);
@@ -330,11 +329,7 @@ export class RemoteWorkspace {
       };
     }
     this.#requireFallback(path);
-    const value = await this.#remoteStat(path);
-    return {
-      isDirectory: () => value.isDirectory(),
-      isFile: () => value.isFile(),
-    };
+    return this.#remoteStat(path);
   }
 
   async readdir(path: string): Promise<string[]> {
@@ -349,12 +344,19 @@ export class RemoteWorkspace {
     });
   }
 
-  async #remoteStat(path: string) {
+  async #remoteStat(path: string): Promise<WorkspaceStat> {
     await this.connect();
-    return new Promise<Awaited<ReturnType<typeof localStat>>>((resolveStat, reject) => {
-      this.#sftp!.stat(path, (error, value) =>
-        error ? reject(error) : resolveStat(value as Awaited<ReturnType<typeof localStat>>),
-      );
+    return new Promise<WorkspaceStat>((resolveStat, reject) => {
+      this.#sftp!.stat(path, (error, value) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolveStat({
+          isDirectory: () => value.isDirectory(),
+          isFile: () => value.isFile(),
+        });
+      });
     });
   }
 
@@ -465,9 +467,9 @@ export class RemoteWorkspace {
           target.push(data);
           onData?.(data);
         };
-        channel.on("data", (chunk) => collect(stdout, chunk));
-        channel.stderr.on("data", (chunk) => collect(stderr, chunk));
-        channel.once("error", (cause) => finishError(cause));
+        channel.on("data", (chunk: Buffer | string) => collect(stdout, chunk));
+        channel.stderr.on("data", (chunk: Buffer | string) => collect(stderr, chunk));
+        channel.once("error", (cause: Error) => finishError(cause));
         channel.once("close", (code: number | null) => {
           if (settled) return;
           settled = true;
