@@ -19,7 +19,7 @@ const settingsPath = join(piDir, "settings.json");
 const agentsRoot = process.env.MEWA_AGENTS_ROOT ?? "/home/core/agents";
 const agentRulesFile = process.env.MEWA_AGENT_RULES_FILE ?? join(agentsRoot, "AGENTS.md");
 const agentSkillsDir = process.env.MEWA_AGENT_SKILLS_DIR ?? join(agentsRoot, "skills");
-const extensionRoot = process.env.MEWA_EXTENSION_ROOT ?? "/opt/synara/mewa/dist/pi/extensions";
+const extensionRoot = process.env.MEWA_EXTENSION_ROOT ?? "/opt/mewa/dist/pi/extensions";
 const bundledExtensions = [
   join(extensionRoot, "mewa-remote.js"),
   join(extensionRoot, "mewa-browser.js"),
@@ -108,15 +108,20 @@ if (await exists(agentRulesFile)) {
   await ensureManagedSymlink(join(piDir, "AGENTS.md"), agentRulesFile);
 }
 
-const synara = process.env.SYNARA_BINARY ?? "/opt/synara/node_modules/.bin/synara";
+const synaraEntry =
+  process.env.SYNARA_ENTRY ?? "/opt/synara/apps/server/dist/index.mjs";
+if (!(await exists(synaraEntry))) {
+  throw new Error(`Synara entry is missing: ${synaraEntry}`);
+}
 const args = [
+  synaraEntry,
   "--host",
   process.env.SYNARA_HOST ?? "0.0.0.0",
   "--port",
   process.env.SYNARA_PORT ?? "3773",
   "--no-browser",
 ];
-const child = spawn(synara, args, {
+const child = spawn(process.execPath, args, {
   stdio: "inherit",
   env: process.env,
 });
