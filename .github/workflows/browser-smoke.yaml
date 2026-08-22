@@ -28,9 +28,10 @@ jobs:
           TOKEN: browser-smoke-token
         run: |
           set -euo pipefail
-          mkdir -p /tmp/mewa-site .browser-artifacts
+          browser_state=$(mktemp -d)
+          mkdir -p /tmp/mewa-site "$browser_state/artifacts"
+          chmod 0777 "$browser_state" "$browser_state/artifacts"
           printf '<!doctype html><title>mewa smoke</title><button id="ok">Ready</button>\n' > /tmp/mewa-site/index.html
-          chown 1000:1000 .browser-artifacts
           python3 -m http.server 8099 --directory /tmp/mewa-site >/tmp/mewa-site.log 2>&1 &
           site_pid=$!
 
@@ -41,7 +42,7 @@ jobs:
             --tmpfs /tmp:exec,nosuid,size=512m,mode=1777 \
             --tmpfs /run:nosuid,size=32m,mode=755 \
             --tmpfs /home/browser:nosuid,size=64m,mode=700,uid=1000,gid=1000 \
-            -v "$PWD/.browser-artifacts:/artifacts" \
+            -v "$browser_state:/state" \
             -e MEWA_BROWSER_TOKEN="$TOKEN" \
             mewa-browser:smoke
 
@@ -49,13 +50,19 @@ jobs:
             docker logs mewa-browser-smoke || true
             docker rm -f mewa-browser-smoke >/dev/null 2>&1 || true
             kill "$site_pid" >/dev/null 2>&1 || true
+            rm -rf "$browser_state"
           }
           trap cleanup EXIT
 
+          ready=false
           for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8787/health >/dev/null && break
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null; then
+              ready=true
+              break
+            fi
             sleep 1
           done
+          test "$ready" = true
 
           call() {
             curl -fsS \
