@@ -33,9 +33,17 @@ Private experimental development controller built around two services:
 
 The model sees ordinary Pi tools. SSH, SFTP, mounts, and browser RPC remain implementation details.
 
+## Controller image
+
+The controller is intentionally smaller than a general development container. Synara is built from its stable tagged source using its frozen Bun lockfile and release web/CLI targets. The final image contains the built Synara `dist`, locked runtime dependencies, the compiled mewa extensions, Node, Git, CA certificates, and `tini`.
+
+It does not carry the Synara monorepo source, build toolchain, a second Pi dependency tree, `ripgrep`, Docker clients, or project language runtimes. Pi uses the version locked by Synara. Host development commands continue to run through SSH.
+
+The current pins are recorded in `versions.env`.
+
 ## State contract
 
-One host directory is mounted at `/home/data`. All known controller-managed configuration, credentials, sessions, caches, and artifacts are directed below it:
+One host directory is mounted at `/home/data`. All known controller-managed configuration, credentials, sessions, and caches are directed below it:
 
 ```text
 data/
@@ -47,11 +55,12 @@ data/
 ├── .config/
 ├── .local/
 ├── .cache/
+│   └── node-compile-cache/
 └── browser/
     └── artifacts/
 ```
 
-Set its host path with `MEWA_STATE_PATH`. This state mount is separate from the development-content mounts.
+Set its host path with `MEWA_STATE_PATH`. This state mount is separate from the development-content mounts. Bootstrap rejects persistent runtime paths that escape `/home/data` and does not rewrite Pi settings when their effective content is unchanged.
 
 ## Filesystem contract
 
@@ -79,7 +88,7 @@ The image compiles and loads repo-owned extensions:
 - `mewa-question` — structured blocking questions;
 - `mewa-plan` — read-only planning mode.
 
-Bootstrap preserves existing user settings and adds safe defaults only when absent. It links Pi's global `AGENTS.md` to `/home/core/agents/AGENTS.md` and loads skills from `/home/core/agents/skills`.
+Bootstrap preserves existing user settings and adds required defaults only when absent. It links Pi's global `AGENTS.md` to `/home/core/agents/AGENTS.md` and loads skills from `/home/core/agents/skills`.
 
 Pi provider credentials and user choices stay in `/home/data/pi`. Extensions remain immutable image content from this repository.
 
@@ -108,16 +117,20 @@ docker compose up -d --build
 
 Open `http://127.0.0.1:3773` and authenticate with `SYNARA_AUTH_TOKEN`.
 
+Docker health uses Synara's `/health` readiness snapshot and requires full startup readiness, not only an open TCP port.
+
 ## Current status
 
 This branch remains a draft. It includes:
 
 - one mounted controller-state root;
+- a slim release-style Synara runtime image;
+- one shared Synara/Pi runtime dependency tree;
 - precompiled repo-owned Pi extensions;
 - hybrid mounted/SFTP Pi filesystem operations;
 - SSH-backed shell, search, and user `!` commands;
 - authenticated, quota-limited browser sessions and screenshot retrieval;
-- read-only root filesystems, health checks, restricted mounts, and CI checks.
+- read-only root filesystems, graceful shutdown, readiness health checks, restricted mounts, and CI checks.
 
 Known controller-level limitations remain:
 
