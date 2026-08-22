@@ -1,45 +1,74 @@
 # Host setup
 
-Use a dedicated Unix account for mewa. The account is both the SSH identity and the authority boundary for agent execution.
+The default Core deployment uses the existing `core` account as both the SSH identity and the authority boundary for agent execution.
 
 ## Required account properties
 
-Example:
-
-```bash
-sudo useradd --create-home --uid 1000 --shell /bin/bash mewa
-sudo install -d -o mewa -g mewa -m 0750 /data /repos
-```
-
-Choose a UID/GID that matches `MEWA_UID` and `MEWA_GID` in Compose. Existing installations may use a different UID; consistency matters more than the example value.
-
 The account should have:
 
-- read/write access to the configured mount roots;
+- read/write access to `/home/core`, `/data`, and `/repo` as required by current projects;
 - `bash`, `git`, `rg`, `fd`, and `file` available through a login shell;
-- project-specific toolchains available through its normal shell startup;
-- no unrestricted sudo unless that is a deliberate product decision.
+- Go, `uv`, Node tooling, and project-specific runtimes available through normal shell startup;
+- Docker, systemd, and sudo rights only where intentionally granted.
 
-Optional privileges should be ordinary Linux policy:
+Set `MEWA_UID` and `MEWA_GID` to the host account's numeric IDs. The same IDs must own the controller state directory and browser artifact directory.
+
+Check the account before deployment:
+
+```bash
+id core
+getent passwd core
+sudo -u core bash -lc 'printf "home=%s\n" "$HOME"; command -v git rg fd file go uv; pwd'
+```
+
+## Controller state
+
+Create one writable host directory for all mewa-managed state:
+
+```bash
+mkdir -p ./data/browser
+chown -R 1000:1000 ./data
+chmod 0700 ./data
+```
+
+Set:
 
 ```text
-Docker access       add the user to the Docker group (root-equivalent on most hosts)
-user services       systemctl --user / journalctl --user
-specific root task  narrow NOPASSWD sudoers rule for one command
+MEWA_STATE_PATH=./data
 ```
+
+It is mounted at `/home/data`. Pi, Synara, XDG, npm, Corepack, sessions, credentials, caches, and browser artifacts are directed below that root.
+
+Do not place project repositories or ordinary host data inside the state directory.
+
+## Same-path mounts
+
+The source and target path must be identical:
+
+```text
+MEWA_HOME_ROOT=/home/core
+MEWA_DATA_ROOT=/data
+MEWA_REPO_ROOT=/repo
+```
+
+All three paths must exist before `docker compose up`. Compose is configured not to create missing host paths silently.
+
+Anything available through these mounts is visible to Synara's local Files and Changes surfaces. Pi validates real paths before local file access and routes mount escapes through SFTP when fallback is enabled.
 
 ## SSH authentication
 
-Generate a dedicated key for `mewa-code`; do not reuse a personal key:
+Generate a dedicated controller key. Do not reuse a personal workstation key:
 
 ```bash
+mkdir -p secrets
 ssh-keygen -t ed25519 -f ./secrets/mewa_ed25519 -C mewa-code
-sudo -u mewa install -d -m 0700 /home/mewa/.ssh
-cat ./secrets/mewa_ed25519.pub | sudo -u mewa tee -a /home/mewa/.ssh/authorized_keys
-sudo chmod 0600 /home/mewa/.ssh/authorized_keys
+install -d -o core -g core -m 0700 /home/core/.ssh
+cat ./secrets/mewa_ed25519.pub | sudo -u core tee -a /home/core/.ssh/authorized_keys >/dev/null
+chmod 0600 /home/core/.ssh/authorized_keys
+chown core:core /home/core/.ssh/authorized_keys
 ```
 
-Record the exact host public key in `MEWA_SSH_KNOWN_HOST`. Host-key checking is mandatory; there is no insecure fallback.
+Record the exact host public key in `MEWA_SSH_KNOWN_HOST`. Host-key checking is mandatory.
 
 Recommended `authorized_keys` restrictions for the controller key:
 
@@ -47,44 +76,66 @@ Recommended `authorized_keys` restrictions for the controller key:
 no-agent-forwarding,no-X11-forwarding,no-user-rc
 ```
 
-Do not add `no-port-forwarding` if automatic dev-server forwarding is added later.
+Do not add `no-port-forwarding` if dev-server forwarding is implemented later.
 
-## Mounted roots
-
-The source and target path must be identical:
-
-```text
-MEWA_HOME_ROOT=/home/mewa
-MEWA_DATA_ROOT=/data
-MEWA_REPO_ROOT=/repos
-```
-
-All three paths must exist before `docker compose up`; Compose is configured not to create missing host paths silently.
-
-A dedicated home is strongly preferred over mounting a personal account. Anything readable by the dedicated SSH user is already accessible to agent commands on the host, but a dedicated account keeps unrelated personal configuration and credentials outside the authority boundary.
+The SSH private key is mounted as a Docker secret. It must not be stored in `/home/data`, `/home/core/agents`, or the image.
 
 ## Shell environment
 
-SSH exec channels run:
+SSH exec channels run the configured shell as a login shell:
 
 ```text
 /bin/bash -lc '<command>'
 ```
 
-Use the account's login-shell configuration to expose Go, `uv`, Node version managers, project CLIs, and other binaries. Keep interactive-only shell output guarded so non-interactive commands do not receive banners or prompts.
+Keep interactive-only shell output guarded so non-interactive commands do not receive banners or prompts. Ensure project runtime version managers initialize for non-interactive login shells when agents require them.
+
+Pi forwards only the explicit `MEWA_SSH_FORWARD_ENV` allowlist. Do not add provider keys or controller tokens to it.
+
+## Authority
+
+The `core` account's normal Linux authority defines agent authority:
+
+```text
+Docker access       membership in the Docker group, usually root-equivalent
+user services       systemctl --user and journalctl --user
+root operation      existing sudo policy or a narrow explicit sudoers rule
+```
+
+Do not add a privileged helper, Docker socket mount, system D-Bus mount, or unrestricted sudo merely to avoid configuring SSH authority correctly.
+
+## Canonical agent files
+
+The runtime expects:
+
+```text
+/home/core/agents/AGENTS.md
+/home/core/agents/skills/
+```
+
+Bootstrap links the global Pi rules into `/home/data/pi/AGENTS.md` and adds the skill directory to Pi settings. Presets under `/home/core/agents/presets` remain OpenCode-specific unless a future Pi orchestrator consumes them.
 
 ## Verification
 
-From the host running Docker:
+Verify SSH independently:
 
 ```bash
-ssh -i ./secrets/mewa_ed25519 mewa@localhost \
-  'printf "home=%s\n" "$HOME"; command -v git rg fd file; id'
+ssh -i ./secrets/mewa_ed25519 core@localhost \
+  'printf "home=%s cwd=%s\n" "$HOME" "$PWD"; command -v git rg fd file go uv; id'
 ```
 
-Then render the stack before starting it:
+Then render and start the stack:
 
 ```bash
 docker compose config --quiet
 docker compose up -d --build
 ```
+
+After startup, verify:
+
+- Synara responds on port 3773;
+- Pi discovers all four bundled mewa extensions;
+- Pi loads `/home/core/agents/AGENTS.md` and skills;
+- `read` and `bash` agree on paths under `/home/core`, `/data`, and `/repo`;
+- a symlink escaping a mounted root uses SFTP rather than container-local access;
+- browser snapshot and screenshot operations work through `mewa-browser`.
