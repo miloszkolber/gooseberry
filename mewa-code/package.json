@@ -4,12 +4,10 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "tsc -p tsconfig.check.json",
-    "start": "node src/bootstrap.mjs"
+    "check": "tsc -p tsconfig.check.json"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.81.1",
-    "@synara/cli": "0.7.3",
     "ssh2": "1.17.0",
     "typebox": "1.0.40"
   },
