@@ -16,9 +16,17 @@ RUN apt-get update \
     arm64) agent_arch=arm64 ;; \
     *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
   esac \
+  && install -d /usr/local/libexec \
   && curl --fail --location --retry 3 \
-    --output /usr/local/bin/agent-browser \
+    --output /usr/local/libexec/agent-browser \
     "https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/agent-browser-linux-${agent_arch}" \
+  && chmod 0755 /usr/local/libexec/agent-browser \
+  && printf '%s\n' \
+    '#!/bin/sh' \
+    'export PATH=/usr/local/bin:/usr/bin:/bin' \
+    'export AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium' \
+    'exec /usr/local/libexec/agent-browser "$@"' \
+    > /usr/local/bin/agent-browser \
   && chmod 0755 /usr/local/bin/agent-browser \
   && rm -rf /var/lib/apt/lists/*
 
