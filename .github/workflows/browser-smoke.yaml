@@ -65,11 +65,20 @@ jobs:
           test "$ready" = true
 
           call() {
-            curl -fsS \
+            local response status
+            response=$(mktemp)
+            status=$(curl -sS -o "$response" -w '%{http_code}' \
               -H "Authorization: Bearer $TOKEN" \
               -H 'Content-Type: application/json' \
               --data "$1" \
-              http://127.0.0.1:8787/v1/browser
+              http://127.0.0.1:8787/v1/browser)
+            cat "$response"
+            if [[ "$status" != 200 ]]; then
+              printf '\nbrowser call returned HTTP %s\n' "$status" >&2
+              rm -f "$response"
+              return 1
+            fi
+            rm -f "$response"
           }
 
           call '{"session":"smoke","command":"open","args":["http://127.0.0.1:8099"]}'
