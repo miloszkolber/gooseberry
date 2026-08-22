@@ -50,7 +50,7 @@ jobs:
             docker logs mewa-browser-smoke || true
             docker rm -f mewa-browser-smoke >/dev/null 2>&1 || true
             kill "$site_pid" >/dev/null 2>&1 || true
-            rm -rf "$browser_state"
+            sudo rm -rf "$browser_state"
           }
           trap cleanup EXIT
 
