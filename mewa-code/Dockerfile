@@ -5,7 +5,6 @@ ARG SYNARA_VERSION=0.6.3
 FROM docker.io/oven/bun:${BUN_VERSION} AS bun-runtime
 
 FROM node:${NODE_VERSION} AS extension-build
-
 WORKDIR /src/mewa
 COPY package.json tsconfig.check.json tsconfig.build.json ./
 RUN npm install --no-audit --no-fund
@@ -14,7 +13,6 @@ COPY pi ./pi
 RUN npm run build
 
 FROM node:${NODE_VERSION} AS mewa-runtime-deps
-
 WORKDIR /opt/synara/mewa
 RUN printf '%s\n' \
     '{' \
@@ -29,21 +27,14 @@ RUN printf '%s\n' \
   && npm cache clean --force
 
 FROM node:${NODE_VERSION} AS synara-build
-
 ARG SYNARA_VERSION
 ENV NODE_OPTIONS=--max-old-space-size=4096 \
     TURBO_TELEMETRY_DISABLED=1
 COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    g++ \
-    git \
-    make \
-    python3 \
+    ca-certificates curl g++ git make python3 \
   && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /src/synara
 RUN curl --fail --location --retry 3 \
     "https://github.com/Emanuele-web04/synara/archive/refs/tags/v${SYNARA_VERSION}.tar.gz" \
@@ -53,27 +44,23 @@ RUN curl --fail --location --retry 3 \
   && test -f apps/server/dist/index.mjs \
   && test -f apps/server/dist/client/index.html \
   && mkdir -p /out \
-  && cp -a apps/server/dist /out/dist \
   && node -e 'const fs=require("node:fs");const root=require("./package.json");const server=require("./apps/server/package.json");const catalog=root.workspaces.catalog;const dependencies=Object.fromEntries(Object.entries(server.dependencies).map(([name,value])=>{if(value==="catalog:"){const resolved=catalog[name];if(typeof resolved!=="string")throw new Error(`Missing catalog dependency: ${name}`);return [name,resolved]}if(typeof value==="string"&&value.startsWith("workspace:"))throw new Error(`Unbundled workspace dependency: ${name}`);return [name,value]}));const runtime={name:server.name,version:server.version,private:true,type:server.type,engines:server.engines,dependencies};fs.writeFileSync("/out/package.json",JSON.stringify(runtime,null,2)+"\n")' \
   && rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules \
-  && bun install --frozen-lockfile --ignore-scripts --filter @synara/cli --omit dev --linker hoisted \
+  && bun install --frozen-lockfile --ignore-scripts --filter @synara/cli --omit dev \
+  && cd apps/server \
   && npm_config_nodedir=/usr/local npm_config_build_from_source=true npm rebuild node-pty --foreground-scripts --no-audit --no-fund \
-  && node --input-type=module -e "await import('node-pty'); await import('@earendil-works/pi-coding-agent'); await import('typebox')"
+  && node --input-type=module -e "await import('node-pty'); await import('@earendil-works/pi-coding-agent'); await import('effect'); await import('@effect/platform-node/NodeRuntime')"
 
 FROM node:${NODE_VERSION}
-
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    git \
-    tini \
+  && apt-get install -y --no-install-recommends ca-certificates git tini \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
     NODE_COMPILE_CACHE=/home/data/.cache/node-compile-cache \
     MEWA_STATE_DIR=/home/data \
     MEWA_EXTENSION_ROOT=/opt/synara/mewa/dist/pi/extensions \
-    SYNARA_ENTRY=/opt/synara/dist/index.mjs \
+    SYNARA_ENTRY=/opt/synara/apps/server/dist/index.mjs \
     SYNARA_MODE=web \
     SYNARA_NO_BROWSER=1 \
     PI_CODING_AGENT_DIR=/home/data/pi \
@@ -87,14 +74,15 @@ ENV NODE_ENV=production \
     COREPACK_HOME=/home/data/.cache/corepack \
     NODE_REPL_HISTORY=/home/data/.local/state/node_repl_history
 
-WORKDIR /opt/synara
+WORKDIR /opt/synara/apps/server
 COPY --from=synara-build /out/package.json ./package.json
-COPY --from=synara-build /out/dist ./dist
-COPY --from=synara-build /src/synara/node_modules ./node_modules
-COPY --from=mewa-runtime-deps /opt/synara/mewa/package.json ./mewa/package.json
-COPY --from=mewa-runtime-deps /opt/synara/mewa/node_modules ./mewa/node_modules
-COPY --from=extension-build /src/mewa/dist ./mewa/dist
-COPY src/bootstrap.mjs ./mewa/bootstrap.mjs
+COPY --from=synara-build /src/synara/apps/server/dist ./dist
+COPY --from=synara-build /src/synara/node_modules /opt/synara/node_modules
+COPY --from=synara-build /src/synara/apps/server/node_modules ./node_modules
+COPY --from=mewa-runtime-deps /opt/synara/mewa/package.json /opt/synara/mewa/package.json
+COPY --from=mewa-runtime-deps /opt/synara/mewa/node_modules /opt/synara/mewa/node_modules
+COPY --from=extension-build /src/mewa/dist /opt/synara/mewa/dist
+COPY src/bootstrap.mjs /opt/synara/mewa/bootstrap.mjs
 
 USER node
 EXPOSE 3773
