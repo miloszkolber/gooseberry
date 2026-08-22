@@ -24,7 +24,6 @@ const browserDockerfile = await readFile(
 );
 
 const expectations = [
-  ["SYNARA_VERSION", codePackage.dependencies["@synara/cli"]],
   ["PI_VERSION", codePackage.dependencies["@earendil-works/pi-coding-agent"]],
   ["AGENT_BROWSER_VERSION", browserPackage.dependencies["agent-browser"]],
 ];
@@ -33,6 +32,7 @@ for (const [name, actual] of expectations) {
     throw new Error(`${name}=${versions[name]} does not match package version ${actual}`);
   }
 }
+
 for (const [name, dockerfile] of [
   ["mewa-code", codeDockerfile],
   ["mewa-browser", browserDockerfile],
@@ -40,6 +40,13 @@ for (const [name, dockerfile] of [
   if (!dockerfile.includes(`ARG NODE_VERSION=${versions.NODE_VERSION}`)) {
     throw new Error(`${name} Dockerfile does not use NODE_VERSION=${versions.NODE_VERSION}`);
   }
+}
+
+if (!codeDockerfile.includes(`ARG SYNARA_VERSION=${versions.SYNARA_VERSION}`)) {
+  throw new Error(`mewa-code Dockerfile does not use SYNARA_VERSION=${versions.SYNARA_VERSION}`);
+}
+if (codePackage.dependencies["@synara/cli"] !== undefined) {
+  throw new Error("mewa-code must consume Synara's published server artifact, not an npm dependency");
 }
 
 console.log("version metadata is consistent");
