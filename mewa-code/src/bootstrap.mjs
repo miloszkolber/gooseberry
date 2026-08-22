@@ -16,14 +16,15 @@ const piDir = process.env.PI_CODING_AGENT_DIR ?? join(stateRoot, "pi");
 const piSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR ?? join(piDir, "sessions");
 const synaraHome = process.env.SYNARA_HOME ?? join(stateRoot, "synara");
 const settingsPath = join(piDir, "settings.json");
-const agentsRoot = process.env.MEWA_AGENTS_ROOT ?? "/home/mewa/agents";
+const agentsRoot = process.env.MEWA_AGENTS_ROOT ?? "/home/core/agents";
 const agentRulesFile = process.env.MEWA_AGENT_RULES_FILE ?? join(agentsRoot, "AGENTS.md");
 const agentSkillsDir = process.env.MEWA_AGENT_SKILLS_DIR ?? join(agentsRoot, "skills");
+const extensionRoot = process.env.MEWA_EXTENSION_ROOT ?? "/opt/synara/mewa/dist/pi/extensions";
 const bundledExtensions = [
-  "/app/dist/pi/extensions/mewa-remote.js",
-  "/app/dist/pi/extensions/mewa-browser.js",
-  "/app/dist/pi/extensions/mewa-question.js",
-  "/app/dist/pi/extensions/mewa-plan.js",
+  join(extensionRoot, "mewa-remote.js"),
+  join(extensionRoot, "mewa-browser.js"),
+  join(extensionRoot, "mewa-question.js"),
+  join(extensionRoot, "mewa-plan.js"),
 ];
 
 for (const required of [
@@ -54,6 +55,12 @@ const persistentDirectories = [
 
 for (const path of persistentDirectories) {
   await mkdir(path, { recursive: true, mode: 0o700 });
+}
+
+for (const extension of bundledExtensions) {
+  if (!(await exists(extension))) {
+    throw new Error(`Bundled Pi extension is missing: ${extension}`);
+  }
 }
 
 let settings = {};
@@ -101,7 +108,7 @@ if (await exists(agentRulesFile)) {
   await ensureManagedSymlink(join(piDir, "AGENTS.md"), agentRulesFile);
 }
 
-const synara = "/app/node_modules/.bin/synara";
+const synara = process.env.SYNARA_BINARY ?? "/opt/synara/node_modules/.bin/synara";
 const args = [
   "--host",
   process.env.SYNARA_HOST ?? "0.0.0.0",
