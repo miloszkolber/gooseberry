@@ -23,14 +23,13 @@ const browserDockerfile = await readFile(
   "utf8",
 );
 
-const expectations = [
-  ["PI_VERSION", codePackage.dependencies["@earendil-works/pi-coding-agent"]],
-  ["AGENT_BROWSER_VERSION", browserPackage.dependencies["agent-browser"]],
-];
-for (const [name, actual] of expectations) {
-  if (versions[name] !== actual) {
-    throw new Error(`${name}=${versions[name]} does not match package version ${actual}`);
-  }
+if (versions.PI_VERSION !== codePackage.dependencies["@earendil-works/pi-coding-agent"]) {
+  throw new Error(
+    `PI_VERSION=${versions.PI_VERSION} does not match package version ${codePackage.dependencies["@earendil-works/pi-coding-agent"]}`,
+  );
+}
+if (browserPackage.dependencies?.["agent-browser"] !== undefined) {
+  throw new Error("mewa-browser must use the pinned native binary, not the npm lifecycle package");
 }
 
 for (const [name, dockerfile] of [
@@ -44,6 +43,11 @@ for (const [name, dockerfile] of [
 
 if (!codeDockerfile.includes(`ARG SYNARA_VERSION=${versions.SYNARA_VERSION}`)) {
   throw new Error(`mewa-code Dockerfile does not use SYNARA_VERSION=${versions.SYNARA_VERSION}`);
+}
+if (!browserDockerfile.includes(`ARG AGENT_BROWSER_VERSION=${versions.AGENT_BROWSER_VERSION}`)) {
+  throw new Error(
+    `mewa-browser Dockerfile does not use AGENT_BROWSER_VERSION=${versions.AGENT_BROWSER_VERSION}`,
+  );
 }
 if (codePackage.dependencies["@synara/cli"] !== undefined) {
   throw new Error("mewa-code must consume Synara's published server artifact, not an npm dependency");
