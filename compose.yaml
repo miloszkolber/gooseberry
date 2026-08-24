@@ -32,12 +32,20 @@ services:
       PI_CODING_AGENT_SESSION_DIR: /home/data/pi/sessions
       PI_SKIP_VERSION_CHECK: "1"
       PI_TELEMETRY: "0"
+      MEWA_EXA_ENABLED: ${MEWA_EXA_ENABLED:-1}
+      MEWA_RESTRICTED_PATHS: ${MEWA_RESTRICTED_PATHS:-/home/data}
+      EXA_API_KEY: ${EXA_API_KEY:-}
+      SIGNET_DAEMON_URL: ${SIGNET_DAEMON_URL:-}
+      SIGNET_AGENT_ID: ${SIGNET_AGENT_ID:-default}
+      SIGNET_PATH: /workspace
       MEWA_BROWSER_URL: http://mewa-browser:8787
       MEWA_BROWSER_TOKEN: ${MEWA_BROWSER_TOKEN:?set MEWA_BROWSER_TOKEN}
       TZ: ${TZ:-Europe/Warsaw}
     working_dir: /workspace
     ports:
       - "127.0.0.1:${SYNARA_PORT:-3773}:3773"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - type: bind
         source: ${MEWA_STATE_PATH:-./data}

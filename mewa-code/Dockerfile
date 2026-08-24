@@ -10,12 +10,20 @@ WORKDIR /src/mewa
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci --include=dev --no-audit --no-fund
 COPY pi ./pi
-RUN npm run build
+RUN npm run build \
+  && PI_CODING_AGENT_DIR=/src/mewa/dist/pi \
+     XDG_CONFIG_HOME=/tmp/signet-config \
+     node node_modules/@signetai/connector-pi/bin/install.js install \
+       --url http://host.docker.internal:3850 \
+       --agent-id default \
+  && test -s /src/mewa/dist/pi/extensions/signet-pi.js
 
 FROM node:${NODE_VERSION} AS mewa-runtime-deps
 WORKDIR /opt/synara/mewa
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+RUN npm ci --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund \
+  && rm -rf node_modules/@earendil-works \
+  && test ! -e node_modules/@earendil-works \
   && npm cache clean --force
 
 FROM node:${NODE_VERSION} AS synara-build
@@ -50,18 +58,21 @@ RUN curl --fail --location --retry 3 \
 
 FROM node:${NODE_VERSION}
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git tini \
+  && apt-get install -y --no-install-recommends ca-certificates git openssh-client tini \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
     NODE_COMPILE_CACHE=/home/data/.cache/node-compile-cache \
     MEWA_STATE_DIR=/home/data \
     MEWA_EXTENSION_ROOT=/opt/synara/mewa/dist/pi/extensions \
+    MEWA_EXA_ENABLED=1 \
+    MEWA_RESTRICTED_PATHS=/home/data \
     SYNARA_ENTRY=/opt/synara/apps/server/dist/index.mjs \
     SYNARA_MODE=web \
     SYNARA_NO_BROWSER=1 \
     PI_CODING_AGENT_DIR=/home/data/pi \
     PI_CODING_AGENT_SESSION_DIR=/home/data/pi/sessions \
+    PI_SUBAGENT_EXTRA_AGENT_DIRS=/opt/synara/mewa/pi/agents \
     SYNARA_HOME=/home/data/synara \
     XDG_CONFIG_HOME=/home/data/.config \
     XDG_DATA_HOME=/home/data/.local/share \
@@ -80,8 +91,18 @@ COPY --from=mewa-runtime-deps /opt/synara/mewa/package.json /opt/synara/mewa/pac
 COPY --from=mewa-runtime-deps /opt/synara/mewa/package-lock.json /opt/synara/mewa/package-lock.json
 COPY --from=mewa-runtime-deps /opt/synara/mewa/node_modules /opt/synara/mewa/node_modules
 COPY --from=extension-build /src/mewa/dist /opt/synara/mewa/dist
+COPY pi/agents /opt/synara/mewa/pi/agents
 COPY src/bootstrap.mjs /opt/synara/mewa/bootstrap.mjs
-RUN test -e /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent
+RUN set -eu \
+  && mkdir -p /opt/synara/mewa/node_modules/@earendil-works \
+  && for package in pi-agent-core pi-ai pi-coding-agent pi-tui; do \
+       test -e "/opt/synara/apps/server/node_modules/@earendil-works/$package"; \
+       test ! -e "/opt/synara/mewa/node_modules/@earendil-works/$package"; \
+       ln -s "/opt/synara/apps/server/node_modules/@earendil-works/$package" "/opt/synara/mewa/node_modules/@earendil-works/$package"; \
+     done \
+  && test -s /opt/synara/mewa/dist/pi/extensions/signet-pi.js \
+  && test -e /opt/synara/mewa/node_modules/pi-mcp-adapter/index.ts \
+  && test -e /opt/synara/mewa/node_modules/pi-subagents/index.ts
 
 USER node
 EXPOSE 3773

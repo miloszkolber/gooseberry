@@ -28,7 +28,7 @@ jobs:
         run: |
           npm --prefix mewa-code ci --include=dev --no-audit --no-fund
           npm --prefix mewa-code run check
-          npm --prefix mewa-code run build
+          npm --prefix mewa-code test
           npm --prefix mewa-browser run check
           npm --prefix mewa-browser test
           node scripts/check-versions.mjs
@@ -57,18 +57,41 @@ jobs:
             test -f /opt/synara/apps/server/dist/index.mjs
             test -f /opt/synara/apps/server/dist/client/index.html
             test -f /opt/synara/mewa/dist/pi/extensions/mewa-browser.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-guardrails.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-question.js
+            test -f /opt/synara/mewa/dist/pi/extensions/signet-pi.js
+            test -f /opt/synara/mewa/pi/agents/researcher.md
+            test -f /opt/synara/mewa/node_modules/pi-mcp-adapter/index.ts
+            test -f /opt/synara/mewa/node_modules/pi-subagents/index.ts
             test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-remote.js
             test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-plan.js
-            test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-question.js
             test ! -e /opt/synara/apps/server/src
             test ! -e /opt/synara/packages
+            command -v bash
+            command -v git
+            command -v npm
+            command -v ssh
           '
           docker run --rm --entrypoint node mewa-code:ci --input-type=module -e "
+            const fs = await import('node:fs');
+            const piRoot = '/opt/synara/apps/server/node_modules/@earendil-works';
+            for (const name of ['pi-agent-core', 'pi-ai', 'pi-coding-agent', 'pi-tui']) {
+              if (fs.readlinkSync('/opt/synara/mewa/node_modules/@earendil-works/' + name) !== piRoot + '/' + name) throw new Error('unexpected Pi peer link: ' + name);
+            }
+            const piPackage = JSON.parse(fs.readFileSync(piRoot + '/pi-coding-agent/package.json', 'utf8'));
+            if (piPackage.version !== '0.81.1') throw new Error('unexpected runtime Pi version: ' + piPackage.version);
+            const providerRoot = piRoot + '/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/';
+            for (const [file, marker] of [['openai-codex.js', 'id: \"openai-codex\"'], ['opencode.js', 'id: \"opencode\"'], ['opencode-go.js', 'id: \"opencode-go\"']]) {
+              if (!fs.readFileSync(providerRoot + file, 'utf8').includes(marker)) throw new Error('missing runtime provider: ' + marker);
+            }
             await import('node-pty');
             await import('@earendil-works/pi-coding-agent');
             await import('effect');
             await import('@effect/platform-node/NodeRuntime');
             await import('/opt/synara/mewa/dist/pi/extensions/mewa-browser.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-guardrails.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-question.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/signet-pi.js');
           "
 
       - name: Smoke Synara
@@ -80,6 +103,9 @@ jobs:
           state=$(mktemp -d)
           workspace=$(mktemp -d)
           chmod 0777 "$state" "$workspace"
+          mkdir -p "$state/.config/mcp"
+          printf '{"mcpServers":{"existing":{"url":"https://example.invalid/mcp","disabled":true}}}\n' > "$state/.config/mcp/mcp.json"
+          chmod -R 0777 "$state/.config"
           cleanup() {
             docker logs mewa-code-smoke || true
             docker rm -f mewa-code-smoke >/dev/null 2>&1 || true
@@ -98,7 +124,11 @@ jobs:
             -e MEWA_BROWSER_TOKEN="$MEWA_BROWSER_TOKEN" \
             mewa-code:ci
           for _ in $(seq 1 60); do
-            docker exec mewa-code-smoke node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))" && exit 0
+            if docker exec mewa-code-smoke node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))"; then
+              docker exec mewa-code-smoke node -e "const fs=require('node:fs');const s=JSON.parse(fs.readFileSync('/home/data/pi/settings.json'));const m=JSON.parse(fs.readFileSync('/home/data/.config/mcp/mcp.json'));if(!s.extensions.some(x=>x.endsWith('/pi-subagents/index.ts'))||!s.extensions.some(x=>x.endsWith('/pi-mcp-adapter/index.ts'))||s.subagents.disableThinking!==true||!m.mcpServers.existing||!m.mcpServers['mewa-exa'])process.exit(1)"
+              docker exec mewa-code-smoke node /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --list-models >/dev/null
+              exit 0
+            fi
             sleep 1
           done
           exit 1

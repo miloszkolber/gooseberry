@@ -22,14 +22,37 @@ const browserDockerfile = await readFile(
   new URL("../mewa-browser/Dockerfile", import.meta.url),
   "utf8",
 );
+const piProviderRoot = new URL(
+  "../mewa-code/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/",
+  import.meta.url,
+);
 
 if (versions.PI_VERSION !== codePackage.devDependencies["@earendil-works/pi-coding-agent"]) {
   throw new Error(
     `PI_VERSION=${versions.PI_VERSION} does not match package version ${codePackage.devDependencies["@earendil-works/pi-coding-agent"]}`,
   );
 }
+for (const [name, actual] of [
+  ["PI_MCP_ADAPTER_VERSION", codePackage.dependencies["pi-mcp-adapter"]],
+  ["PI_SUBAGENTS_VERSION", codePackage.dependencies["pi-subagents"]],
+  ["SIGNET_CONNECTOR_VERSION", codePackage.devDependencies["@signetai/connector-pi"]],
+]) {
+  if (versions[name] !== actual) {
+    throw new Error(`${name}=${versions[name]} does not match package version ${actual}`);
+  }
+}
 if (codePackage.dependencies.typebox !== "1.1.38") {
   throw new Error("mewa-code typebox must stay aligned with Pi 0.81.1");
+}
+for (const [file, markers] of [
+  ["openai-codex.js", ['id: "openai-codex"', "OpenAI (ChatGPT Plus/Pro)"]],
+  ["opencode.js", ['id: "opencode"', "OPENCODE_API_KEY"]],
+  ["opencode-go.js", ['id: "opencode-go"', "OPENCODE_API_KEY"]],
+]) {
+  const source = await readFile(new URL(file, piProviderRoot), "utf8");
+  for (const marker of markers) {
+    if (!source.includes(marker)) throw new Error(`Pi provider ${file} is missing ${marker}`);
+  }
 }
 if (browserPackage.dependencies?.["agent-browser"] !== undefined) {
   throw new Error("mewa-browser must use the pinned native binary, not the npm lifecycle package");

@@ -5,7 +5,7 @@
 - **mewa-code** runs Synara and Pi.
 - **mewa-browser** runs Chromium and `agent-browser` behind a small authenticated API.
 
-The integration stays close to default Pi behavior. It adds one `browser` tool and redirects mutable state below `/home/data`. It does not replace Pi's file or shell tools, select a model or thinking level, trust projects automatically, or add custom plan and subagent behavior.
+The integration stays close to default Pi behavior. It adds an isolated `browser` tool, Exa web search and fetch through MCP, subagents, optional Signet memory, a focused `question` tool, and configurable restricted-path checks. It does not replace Pi's file or shell tools, select a model or thinking level, trust projects automatically, or add custom plan behavior.
 
 ## Start locally
 
@@ -22,7 +22,19 @@ docker compose up -d --build
 
 Open `http://127.0.0.1:3773` and use `SYNARA_AUTH_TOKEN` when prompted. Pi credentials and settings persist under `data/pi`. Synara state persists under `data/synara`.
 
-The generic Compose file mounts `MEWA_WORKSPACE_PATH` at `/workspace`. Pi commands run inside `mewa-code`, not on the Docker host. The image intentionally contains only Node.js, Git, CA certificates, `tini`, Synara, Pi, and the browser extension. Add project runtimes in a derived image when a workspace needs them.
+The generic Compose file mounts `MEWA_WORKSPACE_PATH` at `/workspace`. Pi commands run inside `mewa-code`, not on the Docker host. The final controller image retains Node.js and npm, Bash, Git, OpenSSH client, CA certificates, and `tini` because normal Pi and Git workflows need them. Compilers, package source trees, and build-only dependencies stay outside the final image. Add project runtimes in a derived image when a workspace needs them.
+
+## Pi integrations
+
+`pi-subagents` is pinned and loaded from the image. Its built-in role thinking defaults are disabled unless the user has already chosen a different setting, so children inherit the current session's thinking level. The parent can still select a child model per run. The image supplies a model-neutral `researcher` role that uses the MCP proxy.
+
+`pi-mcp-adapter` is pinned to the newest release compatible with Pi 0.81.1. The bootstrap non-destructively adds an image-managed `mewa-exa` entry for Exa's hosted `web_search_exa` and `web_fetch_exa` tools to the standard user-global MCP file. Exa's free tier works without a key. Set `EXA_API_KEY` for higher limits, or set `MEWA_EXA_ENABLED=0` to remove the image-managed entry. Existing servers, comments, settings, and custom `exa` definitions are preserved. Project-level MCP files can override the image default.
+
+The Signet Pi connector is baked into the image but loaded only when `SIGNET_DAEMON_URL` is non-empty. Set `SIGNET_AGENT_ID` and `SIGNET_PATH` as needed. The default host deployment points it at the existing daemon through `host.docker.internal`.
+
+Pi 0.81.1 includes ChatGPT Plus/Pro OAuth under the `openai-codex` provider and API-key providers for OpenCode Zen (`opencode`) and OpenCode Zen Go (`opencode-go`). The image leaves provider authentication, model choice, and thinking level to Pi and the user.
+
+`MEWA_RESTRICTED_PATHS` is a PATH-style list of absolute paths. It defaults to `/home/data`, preventing normal Pi file and search tools from opening provider credentials, sessions, and application state. The guard also resolves existing symlinks and rejects shell commands that visibly reference a restricted path. Shell parsing is defense in depth, not a complete sandbox. Do not mount secrets or untrusted host paths into the controller.
 
 ## Browser behavior
 
@@ -37,7 +49,7 @@ The browser service is isolation for controller credentials, not a complete web 
 ```bash
 npm --prefix mewa-code ci --include=dev
 npm --prefix mewa-code run check
-npm --prefix mewa-code run build
+npm --prefix mewa-code test
 npm --prefix mewa-browser test
 node scripts/check-versions.mjs
 
@@ -51,6 +63,8 @@ Component versions are recorded in `versions.env`. Downloaded Synara and `agent-
 
 - Pi and Synara terminals execute inside the controller image, so host tools are unavailable unless explicitly installed or exposed.
 - Synara Files and Changes operate on mounted workspaces only.
+- The hosted Exa endpoint is externally operated and its free tier is rate-limited.
+- Restricted-path checks cannot prove the behavior of arbitrary shell programs or prevent access through every possible indirection.
 - Host development-server routing into `mewa-browser` is deployment-specific.
 - ARM64 browser downloads are checksum-pinned but are not covered by this repository's current CI.
 

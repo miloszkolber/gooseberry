@@ -12,8 +12,11 @@ The Compose defaults reduce accidental exposure:
 - Mutable controller state uses one explicit mount. Browser profiles and artifacts stay on bounded tmpfs.
 - No Docker, D-Bus, SSH, device, or host-root sockets are mounted.
 - Pi's project-trust policy is left at its upstream default.
+- Pi's file/search guard defaults to denying `/home/data`, which contains controller credentials and state.
 
 Provider credentials live under `/home/data/pi`. Do not mount controller state into a workspace or commit local `data/`. The repository ignores its default state path, but custom state paths remain the operator's responsibility.
+
+`MEWA_RESTRICTED_PATHS` accepts a PATH-style list of absolute paths. Direct file operations are checked lexically and through existing symlinks. Recursive search roots that would traverse a restricted directory are also blocked. Shell commands are rejected when their visible path arguments or protected environment-path variables overlap a restricted root. Arbitrary shell execution can hide paths through variables, generated commands, programs, or filesystem indirection, so this hook is defense in depth rather than a security boundary.
 
 ## Browser boundary
 
@@ -29,6 +32,8 @@ Use independent high-entropy values for `SYNARA_AUTH_TOKEN` and `MEWA_BROWSER_TO
 
 Treat anyone who can use Synara as able to exercise Pi's workspace and command permissions. Application authentication does not reduce the Unix permissions of the controller process.
 
+Exa requests leave the deployment and are subject to Exa's service policy. When `EXA_API_KEY` is set, the generated MCP configuration references the environment variable rather than persisting the key. Signet requests go to `SIGNET_DAEMON_URL`; expose only a trusted daemon and use its authentication option when required.
+
 ## Adding capabilities
 
-Review every extension and package as executable code. Guardrails that block secret-file reads must cover file tools, search tools, shell commands, browser uploads, and any remote transport. A tool-level denylist is defense in depth, not a replacement for filesystem permissions and mount boundaries.
+Review every extension and package as executable code. Guardrails that block secret-file reads must cover file tools, search tools, shell commands, browser uploads, subagents, and any remote transport. A tool-level denylist is defense in depth, not a replacement for filesystem permissions and mount boundaries.
