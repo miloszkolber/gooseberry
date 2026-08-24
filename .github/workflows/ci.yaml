@@ -109,7 +109,7 @@ jobs:
           cleanup() {
             docker logs mewa-code-smoke || true
             docker rm -f mewa-code-smoke >/dev/null 2>&1 || true
-            rm -rf "$state" "$workspace"
+            sudo rm -rf "$state" "$workspace"
           }
           trap cleanup EXIT
           docker run -d --name mewa-code-smoke \
