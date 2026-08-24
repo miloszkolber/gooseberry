@@ -80,7 +80,7 @@ jobs:
             }
             const piPackage = JSON.parse(fs.readFileSync(piRoot + '/pi-coding-agent/package.json', 'utf8'));
             if (piPackage.version !== '0.81.1') throw new Error('unexpected runtime Pi version: ' + piPackage.version);
-            const providerRoot = piRoot + '/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/';
+            const providerRoot = piRoot + '/pi-ai/dist/providers/';
             for (const [file, marker] of [['openai-codex.js', 'id: \"openai-codex\"'], ['opencode.js', 'id: \"opencode\"'], ['opencode-go.js', 'id: \"opencode-go\"']]) {
               if (!fs.readFileSync(providerRoot + file, 'utf8').includes(marker)) throw new Error('missing runtime provider: ' + marker);
             }
