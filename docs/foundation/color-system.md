@@ -8,6 +8,8 @@ depends-on: [submodule-web-themes]
 references: [web-typography]
 ---
 
+> This documents the imported foundation and is not product scope.
+
 # Colour system
 
 Colour arrives in **two layers**, and a component may only ever name the second one.

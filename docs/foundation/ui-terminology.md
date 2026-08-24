@@ -1,5 +1,7 @@
 # Mewa Code UI Terminology Reference
 
+> This documents the imported foundation and is not product scope.
+
 A canonical vocabulary for the Mewa Code web UI (`apps/web`), for use by the designer, ChatGPT, and the
 pi agent in design discussions.
 

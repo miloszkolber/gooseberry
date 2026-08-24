@@ -1,8 +1,8 @@
 # Mewa Code
 
-Mewa Code is a focused web interface for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent. It organizes local Git repositories and their persistent Pi sessions while leaving models, credentials, prompts, tools, extensions, compaction, retry, usage, cost, and canonical JSONL history under Pi's authority.
+Mewa Code is a focused web interface for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent. It organizes local Git repositories, optional worktrees, persistent Pi sessions, files, terminals, and local changes. Pi ships with a visible Mewa profile integrating browser QA, web search, memory, goals, and subagents while remaining authoritative for models, credentials, prompts, tools, extensions, compaction, retry, usage, cost, and canonical JSONL history.
 
-The canonical product scope is [`goal-and-requirements.md`](goal-and-requirements.md). The current branch is an oversized ThinkRail-derived foundation. Worktree-first navigation, IDE layout, editor, terminal, review, spec, workflow, website, packaging, and bundled tool systems are implementation inventory to reduce or remove, not the product definition.
+The canonical product scope is [`docs/product-baseline.md`](docs/product-baseline.md). The current branch is an oversized ThinkRail-derived foundation. Its workbench, review, spec, workflow, website, release, and compatibility systems are implementation inventory to reduce or remove. The old isolated `mewa-browser` service is not present yet and must be restored.
 
 This branch is the source foundation for the new product. It does not publish binaries or installers yet. Runtime prerequisites include `git` on PATH. Agent-backed runs require an authenticated Pi provider, which may be configured through supported Pi-backed UI actions. Mewa Code never requires a standalone `pi` executable.
 
@@ -31,7 +31,7 @@ Run the current imported launcher with `bun run --filter @mewa-code/cli dev`. Bi
 - **Shared client-host types** — `packages/contracts` reflects the imported transport surface.
 - **Web client** — `apps/web` contains the current React browser interface.
 
-The product baseline is [`goal-and-requirements.md`](goal-and-requirements.md). [`architecture.md`](architecture.md) and module `SPEC.md` files describe the imported implementation until it is simplified. They do not expand product scope.
+The product baseline is [`docs/product-baseline.md`](docs/product-baseline.md). [`docs/foundation-inventory.md`](docs/foundation-inventory.md) describes the imported implementation until it is simplified. It does not expand product scope.
 
 ## Repo layout
 
@@ -62,8 +62,7 @@ is static and does not load tracking SDKs.
 
 ## Contributing
 
-Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
-[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+Contributions are welcome. See [`docs/contributing.md`](docs/contributing.md) and the [`docs/code-of-conduct.md`](docs/code-of-conduct.md).
 
 ## License
 

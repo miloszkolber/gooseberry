@@ -6,6 +6,8 @@ title: Mewa Code typography — one JSON source, generated CSS, semantic styles
 parent: module-web
 ---
 
+> This documents the imported foundation and is not product scope.
+
 # Typography system
 
 **`styles/typography.json` is the sole source of truth for typography.** Every font family, size,
