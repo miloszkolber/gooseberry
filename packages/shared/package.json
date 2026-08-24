@@ -1,0 +1,24 @@
+{
+	"name": "@mewa-code/shared",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./shellEnv": "./src/shellEnv.ts",
+		"./freePort": "./src/freePort.ts",
+		"./startupMark": "./src/startupMark.ts",
+		"./paths": "./src/paths.ts",
+		"./codedError": "./src/codedError.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@mewa-code/contracts": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	}
+}

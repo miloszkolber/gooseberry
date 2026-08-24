@@ -1,0 +1,285 @@
+---
+import BaseHead from "../components/BaseHead.astro";
+import IdeShell from "../components/IdeShell.astro";
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+	<head>
+		<BaseHead />
+		<title>Mewa Code — the worktree IDE for the pi coding agent</title>
+		<meta
+			name="description"
+			content="Open a repo as a project, cut isolated git-worktree workspaces, and pair with the pi coding agent in a real IDE — Monaco tabs, terminals, diffs, concurrent chats, and a spec graph the agent actually reads. Open source, Apache-2.0."
+		/>
+		<meta property="og:type" content="website" />
+		<meta property="og:title" content="Mewa Code — the worktree IDE for the pi coding agent" />
+		<meta
+			property="og:description"
+			content="Git-worktree workspaces, a real editor, terminals, concurrent agent chats, and a spec graph the agent reads. Open source, Apache-2.0."
+		/>
+		<meta name="twitter:card" content="summary_large_image" />
+		<link rel="alternate" type="application/rss+xml" title="Mewa Code Blog" href="/blog/rss.xml" />
+	</head>
+	<body>
+		<IdeShell workspace="website" nav="landing" skipHref="#readme">
+			<nav class="tabstrip" aria-label="Editor tabs"></nav>
+
+			<main class="editor" id="editor-scroll" aria-label="Page content">
+				<!-- ── README.md ─ hero ── -->
+				<section class="file-section hero" id="readme" data-file="README.md">
+					<p class="file-comment">&lt;!-- README.md --&gt;</p>
+					<p class="hero-kicker">
+						<span class="pill pill-accent">Pi Coding Agent</span>
+						<span class="pill">Apache-2.0</span>
+						<span class="pill">open source</span>
+					</p>
+					<h1 class="hero-title">Mewa Code</h1>
+					<p class="hero-tagline">The worktree IDE for the <code>pi</code> coding agent.</p>
+					<p class="hero-lede">
+						Open a repo as a project. Cut isolated <strong>git-worktree workspaces</strong>. Pair
+						with a real agent across Monaco tabs, terminals, and diffs — while your project's
+						intent lives in a <strong>spec graph the agent actually reads</strong>.
+					</p>
+					<p class="hero-platforms">Foundation preview. Build and run it from source while release packaging is finalized.</p>
+					<div class="hero-ctas">
+						<a class="btn btn-primary" href="https://github.com/miloszkolber/mewa_code" target="_blank" rel="noopener noreferrer">
+							<svg class="i i-fill" aria-hidden="true"><use href="#i-github" /></svg>
+							Star on GitHub
+						</a>
+						<a class="btn" href="#agent-chat">Mewa Code in action</a>
+					</div>
+				</section>
+
+				<!-- ── why.md ── -->
+				<section class="file-section" id="why" data-file="why.md">
+					<p class="file-comment">&lt;!-- WHY Mewa Code --&gt;</p>
+					<h2>Why Mewa Code</h2>
+					<div class="beats">
+						<div class="beat">
+							<h3>Agents deserve worktrees, not your working tree.</h3>
+							<p>
+								Every workspace is a real <code>git worktree</code> — its own branch, its own
+								cwd. Run several agents in parallel; each one's mess stays on its branch, and
+								<code>main</code> stays clean until you say otherwise.
+							</p>
+						</div>
+						<div class="beat">
+							<h3>Specs are the ground truth.</h3>
+							<p>
+								Mewa Code is built spec-first, and so are your projects: a connected graph of
+								spec files lives beside the code, and the agent reads, searches, and maintains
+								it with dedicated tools. Intent survives the session.
+							</p>
+						</div>
+						<div class="beat">
+							<h3>A thin host, a real engine.</h3>
+							<p>
+								The <a href="https://pi.dev"><code>pi</code> coding agent</a>
+								runs in-process and owns models, skills, compaction, and cost. Mewa Code owns
+								the workspace, the editor, and the wire — it never assembles prompts behind
+								your back.
+							</p>
+						</div>
+					</div>
+				</section>
+
+				<!-- ── features/worktrees.md ── -->
+				<section class="file-section" id="worktrees" data-file="features/worktrees.md">
+					<p class="file-comment">&lt;!-- FEATURES / worktrees --&gt;</p>
+					<h2>Projects &rarr; workspaces</h2>
+					<p>
+						A project is any local git repo. A workspace is a <code>git worktree</code> cut from
+						it — created in one click, listed in the rail, disposable without ceremony.
+					</p>
+					<pre class="code-block"><code><span class="sx-cm"># one repo, three parallel lines of thought</span>
+~/code/my-repo                        <span class="sx-cm">← project</span>
+└─ ~/.mewa-code/worktrees/
+   ├─ workspace-1   <span class="sx-str">⎇ feature/auth</span>      <span class="sx-cm">agent A building</span>
+   ├─ workspace-2   <span class="sx-str">⎇ fix/flaky-test</span>    <span class="sx-cm">agent B fixing</span>
+   └─ workspace-3   <span class="sx-str">⎇ spike/ideas</span>       <span class="sx-cm">you, exploring</span></code></pre>
+					<ul>
+						<li>Own branch + cwd per workspace — files, diffs, terminals, and chats all scope to it.</li>
+						<li>Switch workspaces instantly; nothing reloads, nothing leaks across.</li>
+						<li>Merge the good one, delete the rest. Your repo never noticed the chaos.</li>
+					</ul>
+				</section>
+
+				<!-- ── features/editor.md ── -->
+				<section class="file-section" id="editor" data-file="features/editor.md">
+					<p class="file-comment">&lt;!-- FEATURES / editor --&gt;</p>
+					<h2>A real IDE around the agent</h2>
+					<p>Watch the agent work — or work beside it — without leaving the page.</p>
+					<div class="feature-grid">
+						<div class="feature-card">
+							<h3><svg class="i" aria-hidden="true"><use href="#i-panels-top-left" /></svg> Monaco editor tabs</h3>
+							<p>The VS Code editor engine: syntax everywhere, rendered markdown with a source toggle, file tabs per workspace.</p>
+						</div>
+						<div class="feature-card">
+							<h3><svg class="i" aria-hidden="true"><use href="#i-folder-tree" /></svg> All-files tree</h3>
+							<p>The active worktree at a glance — like the rail on the right of this very page.</p>
+						</div>
+						<div class="feature-card">
+							<h3><svg class="i" aria-hidden="true"><use href="#i-git-branch-plus" /></svg> Changes</h3>
+							<p>A live git diff of the workspace branch, so you review the agent's work as it lands.</p>
+						</div>
+						<div class="feature-card">
+							<h3><svg class="i" aria-hidden="true"><use href="#i-square-terminal" /></svg> Terminals</h3>
+							<p>Real PTYs scoped to the worktree — run the tests yourself while the agent keeps typing.</p>
+						</div>
+					</div>
+				</section>
+
+				<!-- ── features/agent-chat.md ── -->
+				<section class="file-section" id="agent-chat" data-file="features/agent-chat.md">
+					<p class="file-comment">&lt;!-- FEATURES / agent-chat --&gt;</p>
+					<h2>Chats that stream like the engine thinks</h2>
+					<p>
+						This transcript is a real <code>pi</code> session, captured in Mewa Code while it
+						worked on its own repo:
+					</p>
+					<div class="chat-demo" id="chat-demo">
+						<div class="chat-msg user" data-step>
+							Quick tour: what is Mewa Code, and what are the three rings of its architecture?
+							Keep it brief.
+						</div>
+						<div class="chat-activity" data-step>
+							<svg class="i" aria-hidden="true"><use href="#i-check" /></svg>
+							<span>read <code>goal-and-requirements.md</code> · <code>architecture.md</code></span>
+						</div>
+						<div class="chat-msg assistant">
+							<p data-step>
+								Mewa Code is a desktop-and-mobile client for the <code>pi</code> coding agent —
+								a thin host that runs <code>pi</code> in-process and bridges it to a rich UI,
+								while <code>pi</code> owns models, skills, compaction, cost, and session state.
+							</p>
+							<p data-step>The <strong>three rings</strong>:</p>
+							<ol>
+								<li data-step>
+									<strong>Engine host</strong> (<code>packages/server</code>) —
+									<code>createServer()</code> runs an HTTP+WS host plus an
+									<code>AgentSessionManager</code>: one in-process <code>pi</code> session per tab.
+								</li>
+								<li data-step>
+									<strong>The wire</strong> (<code>packages/contracts</code>) — the typed,
+									versioned protocol between host and UI. Types only.
+								</li>
+								<li data-step>
+									<strong>UI client</strong> (<code>apps/web</code>) — mobile-first React that
+									ships independently and dials any host over the wire.
+								</li>
+							</ol>
+						</div>
+						<div class="chat-done" data-step>
+							<span><svg class="i" aria-hidden="true"><use href="#i-check" /></svg> Done</span>
+							<span>5s · 25.9k tok · $0.17</span>
+						</div>
+						<div class="chat-composer" aria-hidden="true">
+							<div class="composer-box">Message the agent… (@ files · / commands · Enter to send)</div>
+							<div class="composer-row">
+								<span class="chip">Claude Opus 4.8 <svg class="i" aria-hidden="true"><use href="#i-chevron-down" /></svg></span>
+								<span class="chip chip-dim">EFFORT&nbsp;<b>Low</b></span>
+								<span class="send-btn"><svg class="i" aria-hidden="true"><use href="#i-arrow-up" /></svg></span>
+							</div>
+						</div>
+					</div>
+					<ul>
+						<li>Several sessions per workspace, streaming concurrently.</li>
+						<li>Pick the model per session; tokens and cost tick live in the header.</li>
+						<li>Steer a running turn or queue a follow-up — no waiting for the agent to finish.</li>
+						<li>Interactive tools: the agent can ask structured questions back, right in the chat.</li>
+					</ul>
+				</section>
+
+				<!-- ── features/specs.md ── -->
+				<section class="file-section" id="specs" data-file="features/specs.md">
+					<p class="file-comment">&lt;!-- FEATURES / specs --&gt;</p>
+					<h2>Specs are first-class</h2>
+					<p>
+						Every module carries a <code>SPEC.md</code> with frontmatter linking it into a graph —
+						goal, architecture, modules, tasks. The bundled <code>pi-spec-graph</code> extension
+						gives the agent <code>spec_*</code> tools to search, navigate, and maintain it, and
+						the Specs tab renders the live graph of your worktree:
+					</p>
+					<div class="spec-tree">
+						<div class="spec-row depth-0">
+							<svg class="i" aria-hidden="true"><use href="#i-book" /></svg>
+							<span>Mewa Code — product goal and scope</span>
+							<b class="spec-badge badge-accent">main spec</b>
+						</div>
+						<div class="spec-row depth-1">
+							<svg class="i" aria-hidden="true"><use href="#i-fork" /></svg>
+							<span>Mewa Code — top-level architecture</span>
+							<b class="spec-badge">arch</b>
+						</div>
+						<div class="spec-row depth-2">
+							<svg class="i" aria-hidden="true"><use href="#i-box" /></svg>
+							<span>Engine host (server library)</span>
+							<b class="spec-badge">module</b>
+						</div>
+						<div class="spec-row depth-3">
+							<svg class="i" aria-hidden="true"><use href="#i-box" /></svg>
+							<span>agent — in-process pi sessions</span>
+							<b class="spec-badge">submodule</b>
+						</div>
+						<div class="spec-row depth-2">
+							<svg class="i" aria-hidden="true"><use href="#i-box" /></svg>
+							<span>Web UI client</span>
+							<b class="spec-badge">module</b>
+						</div>
+					</div>
+					<pre class="code-block"><code><span class="sx-punct">---</span>
+<span class="sx-prop">id:</span> <span class="sx-str">module-server</span>
+<span class="sx-prop">type:</span> <span class="sx-str">module-design</span>
+<span class="sx-prop">status:</span> <span class="sx-str">active</span>
+<span class="sx-prop">parent:</span> <span class="sx-str">architecture</span>
+<span class="sx-punct">---</span></code></pre>
+					<p>
+						Plain markdown, plain frontmatter, versioned with the code — reading the specs is
+						enough to understand an area and formulate the next task. The agent keeps them honest
+						as it builds.
+					</p>
+				</section>
+
+				<section class="file-section" id="development" data-file="DEVELOPMENT.md">
+					<p class="file-comment"># DEVELOPMENT</p>
+					<h2>Build from source</h2>
+					<pre class="code-block install-block"><code><span class="line-copy" data-copy="bun install"><span class="sx-fn">bun</span> install</span>
+<span class="line-copy" data-copy="bun run build"><span class="sx-fn">bun</span> run build</span>
+<span class="line-copy" data-copy="bun run --filter @mewa-code/cli dev"><span class="sx-fn">bun</span> run --filter @mewa-code/cli dev</span></code></pre>
+					<p>No release artifacts are published from the foundation branch.</p>
+				</section>
+
+				<!-- ── CONTRIBUTING.md ─ footer ── -->
+				<section class="file-section footer-section" id="contributing" data-file="CONTRIBUTING.md">
+					<p class="file-comment">&lt;!-- CONTRIBUTING --&gt;</p>
+					<h2>Open source, spec-first</h2>
+					<p>
+						Mewa Code is an open-source project, licensed
+						<a href="https://github.com/miloszkolber/mewa_code/blob/main/LICENSE">Apache-2.0</a>.
+						The repo is developed spec-first — the top-level specs are the product's ground truth,
+						and this website is itself a module with a <code>SPEC.md</code>.
+					</p>
+					<nav class="footer-links" aria-label="Project links">
+						<a href="https://github.com/miloszkolber/mewa_code"><svg class="i i-fill" aria-hidden="true"><use href="#i-github" /></svg>GitHub</a>
+						<a href="https://github.com/miloszkolber/mewa_code/issues"><svg class="i" aria-hidden="true"><use href="#i-bug" /></svg>Issues</a>
+						<a href="https://github.com/miloszkolber/mewa_code/blob/main/CONTRIBUTING.md"><svg class="i" aria-hidden="true"><use href="#i-git-pull-request" /></svg>Contributing</a>
+						<a href="https://github.com/miloszkolber/mewa_code/blob/main/CODE_OF_CONDUCT.md"><svg class="i" aria-hidden="true"><use href="#i-scale" /></svg>Code of Conduct</a>
+					</nav>
+				</section>
+			</main>
+
+			<Fragment slot="filetree">
+				<a class="ft-row file" href="#readme"><svg class="i" aria-hidden="true"><use href="#i-file" /></svg>README.md</a>
+				<a class="ft-row file depth-1" href="#why"><svg class="i" aria-hidden="true"><use href="#i-circle-help" /></svg>WHY Mewa Code</a>
+				<a class="ft-row file depth-1" href="#worktrees"><svg class="i" aria-hidden="true"><use href="#i-blocks" /></svg>FEATURES</a>
+				<a class="ft-row file depth-2" href="#worktrees"><svg class="i" aria-hidden="true"><use href="#i-git-branch" /></svg>worktrees</a>
+				<a class="ft-row file depth-2" href="#editor"><svg class="i" aria-hidden="true"><use href="#i-square-pen" /></svg>editor</a>
+				<a class="ft-row file depth-2" href="#agent-chat"><svg class="i" aria-hidden="true"><use href="#i-message-square" /></svg>agent-chat</a>
+				<a class="ft-row file depth-2" href="#specs"><svg class="i" aria-hidden="true"><use href="#i-file-text" /></svg>specs</a>
+				<a class="ft-row file depth-1" href="#development"><svg class="i" aria-hidden="true"><use href="#i-square-terminal" /></svg>DEVELOPMENT</a>
+				<a class="ft-row file depth-1" href="#contributing"><svg class="i" aria-hidden="true"><use href="#i-git-pull-request" /></svg>CONTRIBUTING</a>
+			</Fragment>
+		</IdeShell>
+	</body>
+</html>

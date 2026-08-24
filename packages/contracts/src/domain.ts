@@ -1,0 +1,535 @@
+export type TabStatus = "idle" | "running" | "waiting" | "error";
+
+export interface Project {
+	id: string;
+	name: string;
+	path: string;
+	slug: string;
+	lastOpened: number;
+	closed?: true;
+	trusted?: boolean;
+	acknowledgedSkills?: string[];
+	disabledSkills?: string[];
+	disabledGroups?: string[];
+}
+
+export type ProjectPathStatus = { kind: "repo" | "initable" | "missing" | "notDirectory" };
+
+export interface DiffStats {
+	added: number;
+	removed: number;
+}
+
+export interface Workspace {
+	id: string;
+	projectId: string;
+	kind?: "default" | "external";
+	name: string;
+	branch: string;
+	worktreePath: string;
+	baseBranch: string;
+	diffBase?: string;
+	renamed?: boolean;
+	diffStats?: DiffStats;
+	skillOverrides?: Record<string, "on" | "off">;
+}
+
+export interface OpenBranchReview {
+	kind: "pull-request" | "merge-request";
+	number: number;
+}
+
+export type ExistingWorktreeCandidate =
+	| { path: string; branch: string; status: "available" }
+	| { path: string; status: "detached" };
+
+export interface EditorInfo {
+	id: string;
+	label: string;
+	kind: "gui" | "terminal";
+}
+
+export type WorkspaceSkillChange = "none" | "detected" | "unknown";
+
+export interface WorkspaceFsChangedPayload {
+	workspaceId: string;
+	paths: string[];
+	truncated: boolean;
+	skillChange: WorkspaceSkillChange;
+}
+
+export interface Session {
+	id: string;
+	workspaceId: string;
+	sessionId: string;
+	title: string;
+	status: TabStatus;
+}
+
+export type FileKind = "file" | "dir";
+
+export interface FileNode {
+	path: string;
+	name: string;
+	kind: FileKind;
+	gitignored?: boolean;
+	children?: FileNode[];
+}
+
+export interface SpecGraphNode {
+	id: string;
+	type: string;
+	title: string;
+	status?: string;
+	path: string;
+	parent?: string;
+	dependsOn: string[];
+	references: string[];
+	implements: string[];
+	tags: string[];
+}
+
+export interface SpecGraphSnapshot {
+	nodes: SpecGraphNode[];
+}
+
+export type TodoStatus = "pending" | "in_progress" | "done";
+export type TodoOrigin = "agent" | "user";
+
+export type TodoArtifactKind = "file" | "change" | "spec" | "commit";
+
+export interface TodoArtifact {
+	kind: TodoArtifactKind;
+	path?: string;
+	label?: string;
+	specId?: string;
+	sha?: string;
+	files?: GitFileChange[];
+}
+
+export interface TodoItem {
+	id: string;
+	title: string;
+	status: TodoStatus;
+	origin: TodoOrigin;
+	note?: string;
+	artifacts?: TodoArtifact[];
+	createdAt: string;
+	updatedAt: string;
+}
+
+export type TodoGroupStatus = "pending" | "active" | "done";
+
+export interface TodoGroupItem {
+	id: string;
+	title: string;
+	todos: TodoItem[];
+	status: TodoGroupStatus;
+}
+
+export interface TodoPlan {
+	todos: TodoItem[];
+	groups: TodoGroupItem[];
+}
+
+export type GitFileStatus = "added" | "modified" | "deleted" | "renamed" | "untracked";
+
+export interface GitFileChange {
+	path: string;
+	status: GitFileStatus;
+	added?: number;
+	removed?: number;
+}
+
+export interface GitStatus {
+	branch: string;
+	changes: GitFileChange[];
+}
+
+export type GitDiffScope =
+	| { kind: "branch" }
+	| { kind: "uncommitted" }
+	| { kind: "commit"; sha: string }
+	| { kind: "pinned"; baseRef: string };
+
+export interface GitCommit {
+	sha: string;
+	shortSha: string;
+	subject: string;
+	author: string;
+	committedAt: string;
+}
+
+export interface BranchList {
+	local: string[];
+	remote: string[];
+	defaultBranch: string;
+}
+
+export type ProviderAuthKind = "oauth" | "api-key" | "env" | "other";
+
+export interface ProviderStatus {
+	id: string;
+	name: string;
+	configured: boolean;
+	kind?: ProviderAuthKind;
+	detail?: string;
+	canOAuth?: boolean;
+	canApiKey?: boolean;
+	canLogout?: boolean;
+}
+
+export interface ProviderStatusReport {
+	providers: ProviderStatus[];
+}
+
+export type LoginFrame =
+	| { kind: "authUrl"; url: string; instructions?: string }
+	| { kind: "deviceCode"; userCode: string; verificationUri: string; expiresInSeconds?: number }
+	| { kind: "select"; message: string; options: { id: string; label: string }[] }
+	| {
+			kind: "prompt";
+			message: string;
+			placeholder?: string;
+			allowEmpty?: boolean;
+			secret?: boolean;
+	  }
+	| { kind: "progress"; message: string }
+	| { kind: "success" }
+	| { kind: "error"; message: string };
+
+export interface LoginPush {
+	loginId: string;
+	providerId: string;
+	frame: LoginFrame;
+}
+
+export interface LoginReply {
+	loginId: string;
+	value: string;
+}
+
+export interface GithubAuthStatus {
+	connected: boolean;
+	login?: string;
+	scopes?: string[];
+}
+
+export type ThemeId = string;
+
+export type LayoutToolId = "projects" | "specs" | "files" | "changes" | "review";
+
+export interface LayoutFileTab {
+	kind: "file";
+	id: string;
+	name: string;
+	path: string;
+}
+
+export interface LayoutDiffTab {
+	kind: "diff";
+	id: string;
+	name: string;
+	path: string;
+	scope: GitDiffScope;
+}
+
+export interface LayoutChatTab {
+	kind: "chat";
+	id: string;
+	name: string;
+	sessionId: string;
+}
+
+export interface LayoutDocumentTab {
+	kind: "document";
+	id: string;
+	name: string;
+	documentKind: "todo-plan";
+	sourceId: string;
+	docPath: string;
+}
+
+export interface LayoutTerminalTab {
+	kind: "terminal";
+	id: string;
+	name: string;
+	tabKey: string;
+}
+
+export interface LayoutToolTab {
+	kind: "tool";
+	id: string;
+	name: string;
+	tool: LayoutToolId;
+}
+
+export type LayoutCenterTab =
+	| LayoutFileTab
+	| LayoutDiffTab
+	| LayoutChatTab
+	| LayoutDocumentTab
+	| LayoutTerminalTab;
+export type LayoutSideTab = LayoutToolTab | LayoutTerminalTab;
+export type LayoutTab = LayoutCenterTab | LayoutSideTab;
+
+export interface LayoutCenterGroup {
+	kind: "group";
+	id: string;
+	tabs: LayoutCenterTab[];
+	previewTabId?: string;
+}
+
+export interface LayoutCenterSplit {
+	kind: "split";
+	id: string;
+	direction: "horizontal" | "vertical";
+	weights: [number, number];
+	children: [LayoutCenterNode, LayoutCenterNode];
+}
+
+export type LayoutCenterNode = LayoutCenterGroup | LayoutCenterSplit;
+
+export interface LayoutSideGroup {
+	id: string;
+	weight: number;
+	folded: boolean;
+	tabs: LayoutSideTab[];
+}
+
+export interface LayoutSideRegion {
+	visible: boolean;
+	width: number;
+	groups: LayoutSideGroup[];
+}
+
+export interface LayoutToolRestoreTarget {
+	side: "left" | "right";
+	groupId?: string;
+	index: number;
+}
+
+export interface WorkspaceLayoutDocument {
+	version: 1;
+	center: LayoutCenterNode;
+	left: LayoutSideRegion;
+	right: LayoutSideRegion;
+	toolRestoreTargets: Partial<Record<LayoutToolId, LayoutToolRestoreTarget>>;
+}
+
+export interface WorkspaceLayoutSnapshot {
+	workspaceId: string;
+	revision: number;
+	document: WorkspaceLayoutDocument;
+}
+
+export interface LayoutReplaceParams {
+	workspaceId: string;
+	mutationId: string;
+	expectedRevision: number | null;
+	document: WorkspaceLayoutDocument;
+}
+
+export interface LayoutChangedPayload {
+	snapshot: WorkspaceLayoutSnapshot;
+	mutationId: string;
+}
+
+export type LayoutReplaceResult =
+	| { status: "accepted"; payload: LayoutChangedPayload }
+	| { status: "conflict"; current: WorkspaceLayoutSnapshot | null };
+
+export interface LayoutPresetCenterGroup {
+	kind: "group";
+	id: string;
+}
+export interface LayoutPresetCenterSplit {
+	kind: "split";
+	id: string;
+	direction: "horizontal" | "vertical";
+	weights: [number, number];
+	children: [LayoutPresetCenterNode, LayoutPresetCenterNode];
+}
+export type LayoutPresetCenterNode = LayoutPresetCenterGroup | LayoutPresetCenterSplit;
+
+export interface LayoutPresetSideGroup {
+	id: string;
+	weight: number;
+	folded: boolean;
+	tools: LayoutToolId[];
+}
+export interface LayoutPresetSideRegion {
+	visible: boolean;
+	width: number;
+	groups: LayoutPresetSideGroup[];
+}
+
+export interface LayoutPreset {
+	id: string;
+	name: string;
+	center: LayoutPresetCenterNode;
+	left: LayoutPresetSideRegion;
+	right: LayoutPresetSideRegion;
+}
+
+export interface LayoutSettings {
+	defaultPresetId: string;
+	customPresets: LayoutPreset[];
+	maxSideGroups: number;
+}
+
+export interface AppConfig {
+	theme: ThemeId;
+	terminalReplayKb: number;
+	layout: LayoutSettings;
+}
+
+export const TERMINAL_REPLAY_KB = { min: 0, max: 1024, default: 64 } as const;
+
+export const DEFAULT_CONFIG: AppConfig = {
+	theme: "dark",
+	terminalReplayKb: TERMINAL_REPLAY_KB.default,
+	layout: {
+		defaultPresetId: "balanced",
+		customPresets: [],
+		maxSideGroups: 6,
+	},
+};
+
+export const TODO_NUDGE_PREFIX = "[mewa-code:todo-nudge] ";
+
+export function isControlMessage(text: string): boolean {
+	return text.startsWith(TODO_NUDGE_PREFIX);
+}
+
+export const IMAGE_MAX_BASE64_BYTES = 4.5 * 1024 * 1024;
+
+export function base64EncodedLength(byteLength: number): number {
+	return Math.ceil(byteLength / 3) * 4;
+}
+
+export const ACCEPTED_IMAGE_TYPES: readonly string[] = [
+	"image/png",
+	"image/jpeg",
+	"image/gif",
+	"image/webp",
+];
+
+export const REQUEST_IMAGE_BASE64_BUDGET = 24 * 1024 * 1024;
+
+export function isRetriedAttempt(
+	messages: readonly { role: string; stopReason?: string }[],
+	index: number,
+): boolean {
+	const message = messages[index];
+	if (message?.role !== "assistant" || message.stopReason !== "error") return false;
+	return messages[index + 1]?.role === "assistant";
+}
+
+export type HistoryScope =
+	| { kind: "chat"; sessionId: string }
+	| { kind: "workspace"; workspaceId: string }
+	| { kind: "project"; projectId: string }
+	| { kind: "all" };
+
+export interface PromptHit {
+	text: string;
+	timestamp: number;
+	sessionId: string;
+	sessionTitle?: string;
+	workspaceId?: string;
+	projectId?: string;
+	cwd: string;
+	messageIndex?: number;
+	anchorText?: string;
+}
+
+export interface MessageHit extends PromptHit {
+	role: "user" | "assistant";
+	snippet: string;
+	messageIndex: number;
+	anchorText: string;
+}
+
+export const MAX_HISTORY_LIMIT = 200;
+
+export const MAX_HISTORY_QUERY_LENGTH = 200;
+
+export interface HistorySearchResult {
+	prompts: PromptHit[];
+	messages: MessageHit[];
+	promptTotal: number;
+	messageTotal: number;
+	indexing: boolean;
+}
+
+export type TemplateScope = "global" | "project";
+
+export interface TemplateInfo {
+	name: string;
+	description?: string;
+	argumentHint?: string;
+	scope: TemplateScope;
+	filePath: string;
+}
+
+export interface Template extends TemplateInfo {
+	content: string;
+}
+
+export type ReviewCommentKind = "inline" | "diff" | "file" | "review";
+
+export type ReviewCommentStatus = "draft" | "sent" | "resolved" | "dismissed";
+
+export type ReviewAnchorState = "anchored" | "moved" | "outdated";
+
+export type ReviewSelector =
+	| { kind: "lineRange"; startLine: number; endLine: number }
+	| { kind: "textQuote"; exact: string; prefix: string; suffix: string }
+	| { kind: "diffHunk"; hunkHeader: string }
+	| { kind: "structural"; scheme: string; ref: string };
+
+export interface ReviewAnchor {
+	path: string;
+	side: "base" | "worktree";
+	baseRef?: string;
+	scope?: GitDiffScope;
+	contentHash?: string;
+	selectors: ReviewSelector[];
+}
+
+export interface ReviewComment {
+	id: string;
+	reviewId: string;
+	kind: ReviewCommentKind;
+	anchor: ReviewAnchor | null;
+	body: string;
+	status: ReviewCommentStatus;
+	anchorState: ReviewAnchorState;
+	sessionId?: string;
+	resolvedBy?: "agent" | "user";
+	resolveNote?: string;
+	createdAt: number;
+	sentAt?: number;
+	resolvedAt?: number;
+}
+
+export interface Review {
+	id: string;
+	workspaceId: string;
+	status: "open" | "closed";
+	baseSha: string;
+	fileSessions?: Record<string, string>;
+	doneFiles?: string[];
+	createdAt: number;
+	closedAt?: number;
+}
+
+export interface ReviewSnapshot {
+	review: Review;
+	comments: ReviewComment[];
+}
+
+export interface ReviewChangedPayload extends ReviewSnapshot {
+	workspaceId: string;
+}

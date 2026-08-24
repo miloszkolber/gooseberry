@@ -1,0 +1,298 @@
+import { afterEach, beforeEach, expect, jest, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ModelsRefreshOptions, ModelsRefreshResult } from "@earendil-works/pi-ai";
+import {
+	type CatalogRefreshRuntime,
+	configurePiRuntime,
+	configurePiRuntimeGenerationInitializer,
+	getPiRuntime,
+	preparePiRuntimeGeneration,
+	refreshCatalogs,
+	refreshCatalogsDetached,
+} from "./piRuntime";
+
+let priorOffline: string | undefined;
+beforeEach(() => {
+	priorOffline = process.env.PI_OFFLINE;
+	delete process.env.PI_OFFLINE;
+});
+afterEach(() => {
+	if (priorOffline === undefined) delete process.env.PI_OFFLINE;
+	else process.env.PI_OFFLINE = priorOffline;
+});
+
+async function isolatedRuntime() {
+	const agentDir = mkdtempSync(join(tmpdir(), "trpi-runtime-"));
+	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	configurePiRuntime(null);
+	try {
+		return { runtime: await getPiRuntime(), agentDir };
+	} finally {
+		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
+	}
+}
+
+function cleanup(agentDir: string): void {
+	configurePiRuntime(null);
+	rmSync(agentDir, { recursive: true, force: true });
+}
+
+test("the process-local initializer applies to every fresh runtime generation", async () => {
+	const agentDir = mkdtempSync(join(tmpdir(), "trpi-generation-initializer-"));
+	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	configurePiRuntime(null);
+	let calls = 0;
+	configurePiRuntimeGenerationInitializer((runtime) => {
+		calls += 1;
+		runtime.registerProvider("generation-initializer-probe", { name: "Generation initializer" });
+	});
+	try {
+		const first = await preparePiRuntimeGeneration([]);
+		const second = await preparePiRuntimeGeneration([]);
+		expect(first.outcome).toBe("prepared");
+		expect(second.outcome).toBe("prepared");
+		if (first.outcome !== "prepared" || second.outcome !== "prepared") return;
+		expect(first.generation.runtime.getRegisteredProviderIds()).toContain(
+			"generation-initializer-probe",
+		);
+		expect(first.generation.providerStatusIds).toContain("generation-initializer-probe");
+		expect(second.generation.runtime.getRegisteredProviderIds()).toContain(
+			"generation-initializer-probe",
+		);
+		expect(second.generation.providerStatusIds).toContain("generation-initializer-probe");
+		expect(calls).toBe(2);
+	} finally {
+		configurePiRuntime(null);
+		configurePiRuntimeGenerationInitializer();
+		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+});
+
+test("candidate generation reloads an opaque extension replaced at the same path", async () => {
+	const root = mkdtempSync(join(tmpdir(), "trpi-extension-generation-"));
+	const agentDir = join(root, "agent");
+	const extensionPath = join(root, "opaque-extension.ts");
+	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
+	mkdirSync(agentDir, { recursive: true });
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		writeFileSync(
+			extensionPath,
+			'export default function syntheticExtension(pi) { pi.registerProvider("opaque-probe", { name: "Opaque" }); }\n',
+		);
+		const initial = await preparePiRuntimeGeneration([extensionPath]);
+		expect(initial.outcome).toBe("prepared");
+		if (initial.outcome !== "prepared") return;
+		expect(initial.generation.runtime.getRegisteredProviderIds()).toContain("opaque-probe");
+		expect(initial.generation.providerStatusIds).not.toContain("opaque-probe");
+		writeFileSync(extensionPath, 'throw new Error("private replacement diagnostic");\n');
+		expect(await preparePiRuntimeGeneration([extensionPath])).toEqual({
+			outcome: "failed",
+			reason: "candidate-failed",
+		});
+	} finally {
+		configurePiRuntime(null);
+		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("refresh() on the shared runtime never opts into the network (provider.status must not stall on pi.dev)", async () => {
+	const { runtime, agentDir } = await isolatedRuntime();
+	try {
+		expect(process.env.PI_OFFLINE).toBeUndefined();
+
+		await runtime.setRuntimeApiKey("anthropic", "sk-test-never-used");
+		const originalFetch = globalThis.fetch;
+		const fetched: string[] = [];
+		globalThis.fetch = ((input: string | URL | Request) => {
+			fetched.push(String(input instanceof Request ? input.url : input));
+			return Promise.reject(new Error("unit tests never touch the network"));
+		}) as typeof fetch;
+		try {
+			await runtime.refresh();
+			expect(fetched).toEqual([]);
+
+			await runtime.refresh({ allowNetwork: true, force: true });
+			expect(fetched.length).toBeGreaterThan(0);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	} finally {
+		cleanup(agentDir);
+	}
+});
+
+test("a user-set PI_OFFLINE survives runtime creation untouched", async () => {
+	process.env.PI_OFFLINE = "yes";
+	const { agentDir } = await isolatedRuntime();
+	try {
+		expect(process.env.PI_OFFLINE).toBe("yes");
+	} finally {
+		cleanup(agentDir);
+	}
+});
+
+const OK: ModelsRefreshResult = { aborted: false, errors: new Map() };
+
+function fakeRuntime() {
+	const calls: ModelsRefreshOptions[] = [];
+	let settle = { resolve: (_: ModelsRefreshResult) => {}, reject: (_: unknown) => {} };
+	const runtime: CatalogRefreshRuntime = {
+		refresh: (options?: ModelsRefreshOptions) => {
+			calls.push(options ?? {});
+			return new Promise<ModelsRefreshResult>((resolve, reject) => {
+				settle = { resolve, reject };
+			});
+		},
+	};
+	return {
+		runtime,
+		calls,
+		resolve: (result: ModelsRefreshResult = OK) => settle.resolve(result),
+		reject: (err: unknown) => settle.reject(err),
+	};
+}
+
+const settled = () => new Promise<void>((r) => setTimeout(r, 0));
+
+test("an implicit trigger opts into the network per-call but stays behind pi's freshness throttle", () => {
+	const { runtime, calls } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(1);
+	const options = calls[0];
+	expect(options?.allowNetwork).toBe(true);
+	expect(options?.force).toBe(false);
+	expect(options?.signal).toBeInstanceOf(AbortSignal);
+});
+
+test("an explicit refresh forces past the freshness throttle", () => {
+	const { runtime, calls } = fakeRuntime();
+	void refreshCatalogs(runtime, { force: true });
+	expect(calls[0]?.force).toBe(true);
+});
+
+test("a forced refresh does not settle for an in-flight throttled pass — it queues behind it", async () => {
+	const { runtime, calls, resolve } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	const forced = refreshCatalogs(runtime, { force: true });
+	expect(calls.length).toBe(1);
+
+	resolve();
+	await settled();
+	expect(calls.length).toBe(2);
+	expect(calls[1]?.force).toBe(true);
+	resolve();
+	await forced;
+});
+
+test("an implicit trigger joins an in-flight forced pass (a forced result satisfies it)", () => {
+	const { runtime, calls } = fakeRuntime();
+	void refreshCatalogs(runtime, { force: true });
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(1);
+});
+
+test("single-flight: repeated triggers while one refresh is pending don't stack network tasks", async () => {
+	const { runtime, calls, resolve } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	refreshCatalogsDetached(runtime);
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(1);
+
+	resolve();
+	await settled();
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(2);
+});
+
+test("a rejected refresh is swallowed and does not wedge future refreshes", async () => {
+	const { runtime, calls, reject } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	reject(new Error("pi.dev unreachable"));
+	await settled();
+
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(2);
+});
+
+test("an aborted (timed-out) refresh is tolerated and frees the single-flight slot", async () => {
+	const { runtime, calls, resolve } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	resolve({ aborted: true, errors: new Map() });
+	await settled();
+
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(2);
+});
+
+test("a caller's await is bounded even when pi's pass never settles", async () => {
+	jest.useFakeTimers();
+	try {
+		const { runtime, calls } = fakeRuntime();
+		const awaited = refreshCatalogs(runtime, { force: true });
+		jest.advanceTimersByTime(15_000);
+		await awaited;
+
+		void refreshCatalogs(runtime, { force: true });
+		expect(calls.length).toBe(1);
+	} finally {
+		jest.useRealTimers();
+	}
+});
+
+test("per-provider failures in a completed refresh are tolerated (result is only logged)", async () => {
+	const { runtime, calls, resolve } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	resolve({ aborted: false, errors: new Map([["someprovider", new Error("boom")]]) });
+	await settled();
+
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(2);
+});
+
+test("awaited refresh shares the single-flight slot with a detached trigger", async () => {
+	const { runtime, calls, resolve } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	const awaited = refreshCatalogs(runtime);
+	expect(calls.length).toBe(1);
+
+	let done = false;
+	void awaited.then(() => {
+		done = true;
+	});
+	await settled();
+	expect(done).toBe(false);
+	resolve();
+	await awaited;
+	expect(calls.length).toBe(1);
+});
+
+test("awaited refresh RESOLVES on a failed refresh (caller then serves the current snapshot)", async () => {
+	const { runtime, reject } = fakeRuntime();
+	const awaited = refreshCatalogs(runtime);
+	reject(new Error("pi.dev unreachable"));
+	await awaited;
+});
+
+test("awaited refresh under PI_OFFLINE resolves immediately without a network task", async () => {
+	process.env.PI_OFFLINE = "1";
+	const { runtime, calls } = fakeRuntime();
+	await refreshCatalogs(runtime);
+	expect(calls.length).toBe(0);
+});
+
+test("PI_OFFLINE disables the refresh entirely", () => {
+	process.env.PI_OFFLINE = "1";
+	const { runtime, calls } = fakeRuntime();
+	refreshCatalogsDetached(runtime);
+	expect(calls.length).toBe(0);
+});
