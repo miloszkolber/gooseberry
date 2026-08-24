@@ -1,8 +1,8 @@
-name: Validate mewa draft
+name: CI
 
 on:
   push:
-    branches: [main, "draft/**"]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  validate-and-build:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -21,212 +21,131 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: mewa-code/package-lock.json
 
-      - name: Validate mewa-code sources
-        working-directory: mewa-code
+      - name: Validate sources
         run: |
-          npm install --no-audit --no-fund
-          npm run check
-          npm run build
-          node --check test/pi-remote-smoke.mjs
-          test -f dist/src/remote-workspace.js
-          test -f dist/pi/extensions/mewa-remote.js
-          test -f dist/pi/extensions/mewa-browser.js
-          test -f dist/pi/extensions/mewa-question.js
-          test -f dist/pi/extensions/mewa-plan.js
-
-      - name: Validate browser policy
-        working-directory: mewa-browser
-        run: |
-          npm run check
-          npm test
-
-      - name: Validate version and runtime metadata
-        run: node scripts/check-versions.mjs
+          npm --prefix mewa-code ci --include=dev --no-audit --no-fund
+          npm --prefix mewa-code run check
+          npm --prefix mewa-code run build
+          npm --prefix mewa-browser run check
+          npm --prefix mewa-browser test
+          node scripts/check-versions.mjs
+          git diff --check
 
       - name: Render Compose configuration
         env:
           SYNARA_AUTH_TOKEN: ci-synara-token
           MEWA_BROWSER_TOKEN: ci-browser-token
-          MEWA_SSH_HOST: host.docker.internal
-          MEWA_SSH_USER: core
-          MEWA_SSH_KNOWN_HOST: host.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICI
-          MEWA_SSH_PRIVATE_KEY_FILE: /tmp/mewa/key
           MEWA_STATE_PATH: /tmp/mewa/state
-          MEWA_HOME_ROOT: /tmp/mewa/home
-          MEWA_DATA_ROOT: /tmp/mewa/host-data
-          MEWA_REPO_ROOT: /tmp/mewa/repo
-          MEWA_AGENTS_ROOT: /tmp/mewa/home/agents
-          MEWA_AGENT_RULES_FILE: /tmp/mewa/home/agents/AGENTS.md
-          MEWA_AGENT_SKILLS_DIR: /tmp/mewa/home/agents/skills
+          MEWA_WORKSPACE_PATH: /tmp/mewa/workspace
         run: |
-          mkdir -p \
-            /tmp/mewa/state/browser \
-            /tmp/mewa/home/agents/skills \
-            /tmp/mewa/host-data \
-            /tmp/mewa/repo
-          printf '%s\n' '# CI agent rules' > /tmp/mewa/home/agents/AGENTS.md
-          printf '%s\n' placeholder > /tmp/mewa/key
+          mkdir -p /tmp/mewa/state/browser /tmp/mewa/workspace
           docker compose config --quiet
 
-      - name: Source hygiene
-        run: git diff --check
+      - name: Build images
+        run: |
+          docker build --tag mewa-code:ci mewa-code
+          docker build --tag mewa-browser:ci mewa-browser
 
-  build:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v4
-
-      - name: Build mewa-code
-        uses: docker/build-push-action@v7
-        with:
-          context: mewa-code
-          push: false
-          load: true
-          tags: mewa-code:ci
-          cache-from: type=gha,scope=mewa-code
-          cache-to: type=gha,mode=max,scope=mewa-code
-
-      - name: Verify slim runtime layout
+      - name: Verify controller image
         run: |
           docker image inspect mewa-code:ci --format 'mewa-code image size: {{.Size}} bytes'
           docker run --rm --entrypoint sh mewa-code:ci -c '
             set -eu
             test -f /opt/synara/apps/server/dist/index.mjs
             test -f /opt/synara/apps/server/dist/client/index.html
-            test -f /opt/synara/mewa/dist/pi/extensions/mewa-remote.js
             test -f /opt/synara/mewa/dist/pi/extensions/mewa-browser.js
-            test -f /opt/synara/mewa/dist/pi/extensions/mewa-question.js
-            test -f /opt/synara/mewa/dist/pi/extensions/mewa-plan.js
+            test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-remote.js
+            test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-plan.js
+            test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-question.js
             test ! -e /opt/synara/apps/server/src
             test ! -e /opt/synara/packages
-            test ! -e /opt/mewa
           '
           docker run --rm --entrypoint node mewa-code:ci --input-type=module -e "
             await import('node-pty');
             await import('@earendil-works/pi-coding-agent');
             await import('effect');
             await import('@effect/platform-node/NodeRuntime');
-            await import('/opt/synara/mewa/dist/pi/extensions/mewa-remote.js');
             await import('/opt/synara/mewa/dist/pi/extensions/mewa-browser.js');
-            await import('/opt/synara/mewa/dist/pi/extensions/mewa-question.js');
-            await import('/opt/synara/mewa/dist/pi/extensions/mewa-plan.js');
           "
 
-      - name: Smoke Synara, Pi tools, mounts, SSH, and SFTP
+      - name: Smoke Synara
         env:
           SYNARA_AUTH_TOKEN: ci-synara-token
           MEWA_BROWSER_TOKEN: ci-browser-token
         run: |
           set -euo pipefail
-          work=$(mktemp -d)
-          state="$work/state"
-          project="$work/project"
-          host_image="$work/host-image"
-          mkdir -p "$state" "$project" "$host_image"
-
+          state=$(mktemp -d)
+          workspace=$(mktemp -d)
+          chmod 0777 "$state" "$workspace"
           cleanup() {
             docker logs mewa-code-smoke || true
-            docker logs mewa-host-smoke || true
-            docker rm -f mewa-code-smoke mewa-host-smoke >/dev/null 2>&1 || true
-            docker network rm mewa-smoke >/dev/null 2>&1 || true
-            sudo rm -rf "$work"
+            docker rm -f mewa-code-smoke >/dev/null 2>&1 || true
+            rm -rf "$state" "$workspace"
           }
           trap cleanup EXIT
-
-          git -C "$project" init -q
-          git -C "$project" config user.name CI
-          git -C "$project" config user.email ci@example.invalid
-          printf '%s\n' '# mewa integration smoke' > "$project/README.md"
-          git -C "$project" add README.md
-          git -C "$project" commit -qm init
-
-          ssh-keygen -q -t ed25519 -N '' -f "$work/controller"
-          cp "$work/controller.pub" "$host_image/authorized_keys"
-          cat > "$host_image/Dockerfile" <<'EOF'
-          FROM debian:bookworm-slim
-          RUN apt-get update \
-            && apt-get install -y --no-install-recommends \
-              bash ca-certificates fd-find file git openssh-server ripgrep \
-            && rm -rf /var/lib/apt/lists/* \
-            && useradd -m -u 1000 -s /bin/bash ci \
-            && passwd -d ci \
-            && install -d -m 0700 -o ci -g ci /home/ci/.ssh \
-            && install -d -m 0755 /run/sshd \
-            && ln -s /usr/bin/fdfind /usr/local/bin/fd \
-            && ssh-keygen -A \
-            && printf '%s\n' \
-              'PasswordAuthentication no' \
-              'KbdInteractiveAuthentication no' \
-              'PubkeyAuthentication yes' \
-              'PermitRootLogin no' \
-              'UsePAM no' \
-              > /etc/ssh/sshd_config.d/mewa-smoke.conf
-          COPY --chown=ci:ci authorized_keys /home/ci/.ssh/authorized_keys
-          RUN chmod 0600 /home/ci/.ssh/authorized_keys
-          CMD ["/usr/sbin/sshd", "-D", "-e"]
-          EOF
-          docker build -q -t mewa-host-smoke:ci "$host_image"
-
-          sudo chown -R 1000:1000 "$state" "$project"
-          sudo chown 1000:1000 "$work/controller"
-          sudo chmod 0600 "$work/controller"
-
-          docker network create mewa-smoke >/dev/null
-          docker run -d --name mewa-host-smoke \
-            --network mewa-smoke \
-            --network-alias mewa-host \
-            -v "$project:/repo/smoke" \
-            mewa-host-smoke:ci
-
-          host_key=$(docker exec mewa-host-smoke sh -c "awk '{print \$1 \" \" \$2}' /etc/ssh/ssh_host_ed25519_key.pub")
-
           docker run -d --name mewa-code-smoke \
-            --network mewa-smoke \
             --read-only \
             --tmpfs /tmp:exec,nosuid,size=256m,mode=1777 \
             --tmpfs /run:nosuid,size=32m,mode=755 \
             -v "$state:/home/data" \
-            -v "$project:/repo/smoke" \
-            -v "$work/controller:/run/secrets/mewa_ssh_key:ro" \
-            -v "$PWD/mewa-code/test/pi-remote-smoke.mjs:/tmp/pi-remote-smoke.mjs:ro" \
-            -w /repo/smoke \
-            -e HOME=/home/ci \
+            -v "$workspace:/workspace" \
+            -w /workspace \
             -e SYNARA_AUTH_TOKEN="$SYNARA_AUTH_TOKEN" \
             -e SYNARA_ALLOW_INSECURE_REMOTE=1 \
             -e MEWA_BROWSER_TOKEN="$MEWA_BROWSER_TOKEN" \
-            -e MEWA_BROWSER_URL=http://127.0.0.1:9 \
-            -e MEWA_SSH_HOST=mewa-host \
-            -e MEWA_SSH_PORT=22 \
-            -e MEWA_SSH_USER=ci \
-            -e MEWA_SSH_PRIVATE_KEY=/run/secrets/mewa_ssh_key \
-            -e "MEWA_SSH_KNOWN_HOST=mewa-host $host_key" \
-            -e MEWA_LOCAL_ROOTS=/repo \
-            -e MEWA_SFTP_FALLBACK=true \
-            -e MEWA_SMOKE_CWD=/repo/smoke \
             mewa-code:ci
-
-          ready=false
           for _ in $(seq 1 60); do
-            if docker exec mewa-code-smoke node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))"; then
-              ready=true
-              break
-            fi
+            docker exec mewa-code-smoke node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))" && exit 0
             sleep 1
           done
-          test "$ready" = true
+          exit 1
 
-          docker exec mewa-code-smoke node /tmp/pi-remote-smoke.mjs
-          test "$(sudo cat "$project/mounted.txt")" = mounted-ok
-          docker exec --user ci mewa-host-smoke sh -lc 'test "$(cat ~/sftp-smoke.txt)" = sftp-ok'
-
-      - name: Build mewa-browser
-        uses: docker/build-push-action@v7
-        with:
-          context: mewa-browser
-          push: false
-          load: false
-          tags: mewa-browser:ci
-          cache-from: type=gha,scope=mewa-browser
-          cache-to: type=gha,mode=max,scope=mewa-browser
+      - name: Smoke browser
+        env:
+          TOKEN: browser-smoke-token
+        run: |
+          set -euo pipefail
+          state=$(mktemp -d)
+          site=$(mktemp -d)
+          mkdir -p "$state/artifacts"
+          chmod 0777 "$state" "$state/artifacts"
+          printf '<!doctype html><title>mewa smoke</title><button id="ok">Ready</button>\n' > "$site/index.html"
+          python3 -m http.server 8099 --directory "$site" >/tmp/mewa-browser-site.log 2>&1 &
+          site_pid=$!
+          cleanup() {
+            docker logs mewa-browser-smoke || true
+            docker rm -f mewa-browser-smoke >/dev/null 2>&1 || true
+            kill "$site_pid" >/dev/null 2>&1 || true
+            sudo rm -rf "$state" "$site"
+          }
+          trap cleanup EXIT
+          docker run -d --name mewa-browser-smoke \
+            --network host \
+            --read-only \
+            --shm-size 512m \
+            --tmpfs /tmp:exec,nosuid,size=512m,mode=1777 \
+            --tmpfs /run:nosuid,size=32m,mode=755 \
+            -v "$state:/state" \
+            -e MEWA_BROWSER_TOKEN="$TOKEN" \
+            mewa-browser:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8787/health >/dev/null && break
+            sleep 1
+          done
+          call() {
+            curl -fsS \
+              -H "Authorization: Bearer $TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data "$1" \
+              http://127.0.0.1:8787/v1/browser
+          }
+          call '{"session":"smoke","command":"open","args":["http://127.0.0.1:8099"]}'
+          call '{"session":"smoke","command":"snapshot","args":["--compact"]}' | grep -q Ready
+          call '{"session":"smoke","command":"screenshot","args":["screen.png"]}' | grep -q screen.png
+          curl -fsS -H "Authorization: Bearer $TOKEN" \
+            http://127.0.0.1:8787/v1/artifacts/smoke/screen.png -o /tmp/mewa-screen.png
+          test -s /tmp/mewa-screen.png
+          call '{"session":"smoke","command":"close","args":[]}'

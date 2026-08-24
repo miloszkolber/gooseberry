@@ -5,9 +5,6 @@ import { Type } from "typebox";
 const commandSchema = Type.Union(
   [
     "open",
-    "goto",
-    "navigate",
-    "pushstate",
     "back",
     "forward",
     "reload",
@@ -22,10 +19,6 @@ const commandSchema = Type.Union(
     "uncheck",
     "select",
     "press",
-    "key",
-    "keydown",
-    "keyup",
-    "keyboard",
     "scroll",
     "scrollintoview",
     "wait",
@@ -34,16 +27,9 @@ const commandSchema = Type.Union(
     "screenshot",
     "get",
     "is",
-    "find",
     "set",
-    "frame",
-    "dialog",
-    "console",
-    "errors",
-    "highlight",
     "a11y",
     "vitals",
-    "web-vitals",
   ].map((value) => Type.Literal(value)),
 );
 
@@ -96,6 +82,39 @@ async function readJsonBounded(response: Response, maximum = 1024 * 1024) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
+async function readBytesBounded(response: Response, maximum: number): Promise<Uint8Array> {
+  const length = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(length) && length > maximum) {
+    throw new Error("mewa-browser screenshot exceeded 64 MiB");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maximum) {
+      await reader.cancel();
+      throw new Error("mewa-browser screenshot exceeded 64 MiB");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function boundedSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 export default function mewaBrowser(pi: ExtensionAPI) {
   const baseUrl = (process.env.MEWA_BROWSER_URL ?? "http://mewa-browser:8787").replace(/\/$/, "");
   const token = process.env.MEWA_BROWSER_TOKEN;
@@ -120,7 +139,8 @@ export default function mewaBrowser(pi: ExtensionAPI) {
           command: params.command,
           args: params.args ?? [],
         }),
-        signal,
+        redirect: "error",
+        signal: boundedSignal(signal, 130_000),
       });
       const result = (await readJsonBounded(response)) as {
         outcome?: string;
@@ -150,17 +170,19 @@ export default function mewaBrowser(pi: ExtensionAPI) {
       if (result.artifact?.url) {
         const artifactResponse = await fetch(`${baseUrl}${result.artifact.url}`, {
           headers: { authorization: `Bearer ${token}` },
-          signal,
+          redirect: "error",
+          signal: boundedSignal(signal, 30_000),
         });
         if (!artifactResponse.ok) throw new Error("mewa-browser could not retrieve screenshot artifact");
-        const bytes = new Uint8Array(await artifactResponse.arrayBuffer());
-        if (bytes.byteLength > 64 * 1024 * 1024) {
-          throw new Error("mewa-browser screenshot exceeded 64 MiB");
+        const mimeType = artifactResponse.headers.get("content-type")?.split(";", 1)[0] ?? "";
+        if (!new Set(["image/png", "image/jpeg", "image/webp"]).has(mimeType)) {
+          throw new Error(`mewa-browser returned an unsupported screenshot type: ${mimeType || "missing"}`);
         }
+        const bytes = await readBytesBounded(artifactResponse, 64 * 1024 * 1024);
         content.push({
           type: "image",
           data: Buffer.from(bytes).toString("base64"),
-          mimeType: artifactResponse.headers.get("content-type") ?? "image/png",
+          mimeType,
         });
       }
 

@@ -23,9 +23,9 @@ const browserDockerfile = await readFile(
   "utf8",
 );
 
-if (versions.PI_VERSION !== codePackage.dependencies["@earendil-works/pi-coding-agent"]) {
+if (versions.PI_VERSION !== codePackage.devDependencies["@earendil-works/pi-coding-agent"]) {
   throw new Error(
-    `PI_VERSION=${versions.PI_VERSION} does not match package version ${codePackage.dependencies["@earendil-works/pi-coding-agent"]}`,
+    `PI_VERSION=${versions.PI_VERSION} does not match package version ${codePackage.devDependencies["@earendil-works/pi-coding-agent"]}`,
   );
 }
 if (codePackage.dependencies.typebox !== "1.1.38") {
@@ -55,6 +55,9 @@ for (const [name, value] of [
 if (!codeDockerfile.includes("synara/archive/refs/tags/v${SYNARA_VERSION}.tar.gz")) {
   throw new Error("mewa-code must build Synara from the pinned tagged source archive");
 }
+if (!codeDockerfile.includes("sha256sum --check --strict")) {
+  throw new Error("mewa-code must verify the Synara source archive checksum");
+}
 if (!codeDockerfile.includes("bun run build --filter=@synara/web --filter=@synara/cli")) {
   throw new Error("mewa-code must use Synara's release build targets");
 }
@@ -80,6 +83,9 @@ if (!browserDockerfile.includes(`ARG AGENT_BROWSER_VERSION=${versions.AGENT_BROW
   throw new Error(
     `mewa-browser Dockerfile does not use AGENT_BROWSER_VERSION=${versions.AGENT_BROWSER_VERSION}`,
   );
+}
+if (!browserDockerfile.includes("sha256sum --check")) {
+  throw new Error("mewa-browser must verify the agent-browser binary checksum");
 }
 if (codePackage.dependencies["@synara/cli"] !== undefined) {
   throw new Error("mewa-code must not depend on the optional Synara npm publication");

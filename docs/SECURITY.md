@@ -1,50 +1,34 @@
-# Security model
+# Security
 
-`mewa_code` is a single-user development system. It is not a sandbox or a multi-tenant service.
+## Trust model
 
-## Authority
+This stack is a development tool, not a sandbox for hostile repositories or prompts. Pi can read and modify its mounted workspace and run commands with the controller user's permissions. Synara and Pi extensions execute as trusted code.
 
-Pi can ask its tools to read, write, edit, search, and execute commands. The effective authority is:
+The Compose defaults reduce accidental exposure:
 
-- local file tools: permissions of the numeric `mewa-code` container user on the configured bind mounts;
-- SFTP and shell tools: permissions of the dedicated SSH user;
-- browser tool: the bounded `mewa-browser` command policy;
-- Synara UI: anyone holding `SYNARA_AUTH_TOKEN` can direct the controller.
+- Synara is published on host loopback only and requires a token.
+- The browser API is reachable only from the Compose network and uses a separate token.
+- Both containers run as a non-root UID/GID with read-only root filesystems.
+- Mutable controller state uses one explicit mount. Browser profiles and artifacts stay on bounded tmpfs.
+- No Docker, D-Bus, SSH, device, or host-root sockets are mounted.
+- Pi's project-trust policy is left at its upstream default.
 
-Do not give the SSH account access that agents should not have. Membership in the Docker group is normally root-equivalent.
-
-## Credentials
-
-- The controller SSH private key is a Docker secret and is not stored in the mounted home.
-- The exact SSH host key is pinned; unknown or changed keys fail closed.
-- LLM credentials stay in Pi's private `/var/lib/mewa/pi` state.
-- Browser and Synara tokens are separate.
-- Only environment names listed by `MEWA_SSH_FORWARD_ENV` are sent to host commands.
-
-A dedicated host home is recommended. Mounting a personal home places all of its readable content inside the same authority boundary as the agent.
-
-## Container restrictions
-
-Both containers use:
-
-- non-root users;
-- read-only root filesystems;
-- `no-new-privileges`;
-- explicit writable volumes/tmpfs;
-- disabled core dumps;
-- no Docker, D-Bus, journal, or device sockets.
-
-These restrictions reduce accidental container reach but do not constrain what the dedicated SSH account can do on the host.
+Provider credentials live under `/home/data/pi`. Do not mount controller state into a workspace or commit local `data/`. The repository ignores its default state path, but custom state paths remain the operator's responsibility.
 
 ## Browser boundary
 
-`mewa-browser` exposes no generic shell. It rejects arbitrary browser options, non-HTTP URL schemes, credential-bearing URLs, reused screenshot targets, symlink artifacts, oversized requests/output/state, and concurrent commands in one session. Failed or timed-out sessions are closed and their transient state is removed.
+The browser API allows only selected `agent-browser` commands and HTTP(S) URLs without embedded credentials. It rejects local and executable URL schemes, arbitrary CLI options, malformed requests, oversized output, unsafe artifact paths, and unbounded session storage.
 
-The service joins an internal control network and a normal outbound network. Its bearer token remains required even on the internal network.
+These checks do not provide destination isolation. Chromium can access any HTTP(S) address reachable from its network, potentially including loopback-like gateways, LAN services, or cloud metadata endpoints. Use network policy or a proxy when untrusted prompts must not reach private services.
 
-## Exposure
+Chromium currently runs with `--no-sandbox` because the container supplies the isolation boundary. Keep the browser separate from provider credentials and workspaces. Do not weaken the container boundary with privileged mode, host networking, broad mounts, or host-control sockets.
 
-- Keep Synara bound to loopback unless protected by a trusted reverse proxy or private network.
-- Use HTTPS for any non-loopback browser access.
-- Rotate Synara, browser, and SSH credentials independently.
-- Review diffs and host-side changes before promoting agent output.
+## Tokens and exposure
+
+Use independent high-entropy values for `SYNARA_AUTH_TOKEN` and `MEWA_BROWSER_TOKEN`. Keep `.env` outside version control. If Synara is exposed beyond host loopback, terminate TLS in a trusted reverse proxy, configure `SYNARA_PUBLIC_URL`, and disable insecure remote HTTP.
+
+Treat anyone who can use Synara as able to exercise Pi's workspace and command permissions. Application authentication does not reduce the Unix permissions of the controller process.
+
+## Adding capabilities
+
+Review every extension and package as executable code. Guardrails that block secret-file reads must cover file tools, search tools, shell commands, browser uploads, and any remote transport. A tool-level denylist is defense in depth, not a replacement for filesystem permissions and mount boundaries.

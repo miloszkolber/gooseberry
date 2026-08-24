@@ -1,34 +1,26 @@
 ARG NODE_VERSION=24-bookworm-slim
 ARG BUN_VERSION=1.3.12
 ARG SYNARA_VERSION=0.6.3
+ARG SYNARA_SHA256=59cce6e976303d145ba18c2085a9056d0c80db0bcd90d163cf626e1c164e2b6f
 
 FROM docker.io/oven/bun:${BUN_VERSION} AS bun-runtime
 
 FROM node:${NODE_VERSION} AS extension-build
 WORKDIR /src/mewa
-COPY package.json tsconfig.check.json tsconfig.build.json ./
-RUN npm install --no-audit --no-fund
-COPY src ./src
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --include=dev --no-audit --no-fund
 COPY pi ./pi
 RUN npm run build
 
 FROM node:${NODE_VERSION} AS mewa-runtime-deps
 WORKDIR /opt/synara/mewa
-RUN printf '%s\n' \
-    '{' \
-    '  "name": "@mewa/runtime",' \
-    '  "private": true,' \
-    '  "type": "module",' \
-    '  "dependencies": {' \
-    '    "ssh2": "1.17.0",' \
-    '    "typebox": "1.1.38"' \
-    '  }' \
-    '}' > package.json \
-  && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
   && npm cache clean --force
 
 FROM node:${NODE_VERSION} AS synara-build
 ARG SYNARA_VERSION
+ARG SYNARA_SHA256
 ENV NODE_OPTIONS=--max-old-space-size=4096 \
     TURBO_TELEMETRY_DISABLED=1
 COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
@@ -38,8 +30,11 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/synara
 RUN curl --fail --location --retry 3 \
+    --output /tmp/synara.tar.gz \
     "https://github.com/Emanuele-web04/synara/archive/refs/tags/v${SYNARA_VERSION}.tar.gz" \
-    | tar -xz --strip-components=1 \
+  && echo "${SYNARA_SHA256}  /tmp/synara.tar.gz" | sha256sum --check --strict \
+  && tar -xzf /tmp/synara.tar.gz --strip-components=1 \
+  && rm /tmp/synara.tar.gz \
   && bun install --frozen-lockfile --ignore-scripts \
   && bun run build --filter=@synara/web --filter=@synara/cli \
   && test -f apps/server/dist/index.mjs \
@@ -82,14 +77,11 @@ COPY --from=synara-build /src/synara/apps/server/dist ./dist
 COPY --from=synara-build /src/synara/node_modules /opt/synara/node_modules
 COPY --from=synara-build /src/synara/apps/server/node_modules ./node_modules
 COPY --from=mewa-runtime-deps /opt/synara/mewa/package.json /opt/synara/mewa/package.json
+COPY --from=mewa-runtime-deps /opt/synara/mewa/package-lock.json /opt/synara/mewa/package-lock.json
 COPY --from=mewa-runtime-deps /opt/synara/mewa/node_modules /opt/synara/mewa/node_modules
 COPY --from=extension-build /src/mewa/dist /opt/synara/mewa/dist
 COPY src/bootstrap.mjs /opt/synara/mewa/bootstrap.mjs
-RUN test -e /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent \
-  && mkdir -p /opt/synara/mewa/node_modules/@earendil-works \
-  && ln -s \
-    /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent \
-    /opt/synara/mewa/node_modules/@earendil-works/pi-coding-agent
+RUN test -e /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent
 
 USER node
 EXPOSE 3773

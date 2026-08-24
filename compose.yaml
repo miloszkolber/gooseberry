@@ -8,11 +8,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     user: "${MEWA_UID:-1000}:${MEWA_GID:-1000}"
-    env_file:
-      - path: .env
-        required: false
     environment:
-      HOME: ${MEWA_HOME_ROOT:-/home/core}
+      HOME: /home/data
       MEWA_STATE_DIR: /home/data
       XDG_CONFIG_HOME: /home/data/.config
       XDG_DATA_HOME: /home/data/.local/share
@@ -35,25 +32,10 @@ services:
       PI_CODING_AGENT_SESSION_DIR: /home/data/pi/sessions
       PI_SKIP_VERSION_CHECK: "1"
       PI_TELEMETRY: "0"
-      MEWA_AGENTS_ROOT: ${MEWA_AGENTS_ROOT:-/home/core/agents}
-      MEWA_AGENT_RULES_FILE: ${MEWA_AGENT_RULES_FILE:-/home/core/agents/AGENTS.md}
-      MEWA_AGENT_SKILLS_DIR: ${MEWA_AGENT_SKILLS_DIR:-/home/core/agents/skills}
-      MEWA_SSH_HOST: ${MEWA_SSH_HOST:?set MEWA_SSH_HOST}
-      MEWA_SSH_PORT: ${MEWA_SSH_PORT:-22}
-      MEWA_SSH_USER: ${MEWA_SSH_USER:-core}
-      MEWA_SSH_PRIVATE_KEY: /run/secrets/mewa_ssh_key
-      MEWA_SSH_KNOWN_HOST: ${MEWA_SSH_KNOWN_HOST:?set a pinned SSH host key}
-      MEWA_SSH_SHELL: ${MEWA_SSH_SHELL:-/bin/bash}
-      MEWA_SSH_FORWARD_ENV: ${MEWA_SSH_FORWARD_ENV:-PI_SESSION_ID,PI_PROVIDER,PI_MODEL,PI_REASONING_LEVEL,CI}
-      MEWA_SSH_MAX_OUTPUT_BYTES: ${MEWA_SSH_MAX_OUTPUT_BYTES:-4194304}
-      MEWA_LOCAL_ROOTS: ${MEWA_HOME_ROOT:-/home/core},${MEWA_DATA_ROOT:-/data},${MEWA_REPO_ROOT:-/repo}
-      MEWA_SFTP_FALLBACK: ${MEWA_SFTP_FALLBACK:-true}
       MEWA_BROWSER_URL: http://mewa-browser:8787
       MEWA_BROWSER_TOKEN: ${MEWA_BROWSER_TOKEN:?set MEWA_BROWSER_TOKEN}
       TZ: ${TZ:-Europe/Warsaw}
-    working_dir: ${MEWA_REPO_ROOT:-/repo}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    working_dir: /workspace
     ports:
       - "127.0.0.1:${SYNARA_PORT:-3773}:3773"
     volumes:
@@ -63,25 +45,10 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${MEWA_HOME_ROOT:-/home/core}
-        target: ${MEWA_HOME_ROOT:-/home/core}
+        source: ${MEWA_WORKSPACE_PATH:-.}
+        target: /workspace
         bind:
           create_host_path: false
-      - type: bind
-        source: ${MEWA_DATA_ROOT:-/data}
-        target: ${MEWA_DATA_ROOT:-/data}
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${MEWA_REPO_ROOT:-/repo}
-        target: ${MEWA_REPO_ROOT:-/repo}
-        bind:
-          create_host_path: false
-    secrets:
-      - mewa_ssh_key
-    networks:
-      - default
-      - browser-control
     read_only: true
     tmpfs:
       - /tmp:exec,nosuid,size=256m,mode=1777
@@ -117,28 +84,21 @@ services:
       BROWSER_ARTIFACT_ROOT: /state/artifacts
       BROWSER_STATE_ROOT: /tmp/mewa-browser
       BROWSER_MAX_ARTIFACT_BYTES: ${BROWSER_MAX_ARTIFACT_BYTES:-67108864}
+      BROWSER_MAX_TOTAL_ARTIFACT_BYTES: ${BROWSER_MAX_TOTAL_ARTIFACT_BYTES:-268435456}
       BROWSER_MAX_STATE_BYTES: ${BROWSER_MAX_STATE_BYTES:-268435456}
+      BROWSER_MAX_SESSIONS: ${BROWSER_MAX_SESSIONS:-16}
       BROWSER_COMMAND_TIMEOUT_MS: ${BROWSER_COMMAND_TIMEOUT_MS:-120000}
       TZ: ${TZ:-Europe/Warsaw}
     expose:
       - "8787"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - type: bind
-        source: ${MEWA_STATE_PATH:-./data}/browser
-        target: /state
-        bind:
-          create_host_path: false
-    networks:
-      - default
-      - browser-control
     read_only: true
     shm_size: "512m"
     tmpfs:
       - /tmp:exec,nosuid,size=512m,mode=1777
       - /run:nosuid,size=32m,mode=755
-      - /home/browser:nosuid,size=64m,mode=700,uid=1000,gid=1000
+      - /state:nosuid,size=320m,mode=700,uid=${MEWA_UID:-1000},gid=${MEWA_GID:-1000}
     ulimits:
       core: 0
     security_opt:
@@ -155,11 +115,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-
-secrets:
-  mewa_ssh_key:
-    file: ${MEWA_SSH_PRIVATE_KEY_FILE:-./secrets/mewa_ed25519}
-
-networks:
-  browser-control:
-    internal: true

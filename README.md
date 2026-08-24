@@ -1,141 +1,57 @@
 # mewa_code
 
-Private experimental development controller built around two services:
+`mewa_code` packages [Synara](https://github.com/Emanuele-web04/synara), its bundled [Pi](https://pi.dev/) runtime, and an isolated browser service as two containers:
 
-- **mewa-code** — Synara + Pi, repo-owned Pi extensions, selected same-path host mounts, and transparent host execution over SSH.
-- **mewa-browser** — isolated Chromium + `agent-browser` with a bounded authenticated API.
+- **mewa-code** runs Synara and Pi.
+- **mewa-browser** runs Chromium and `agent-browser` behind a small authenticated API.
 
-## Architecture
+The integration stays close to default Pi behavior. It adds one `browser` tool and redirects mutable state below `/home/data`. It does not replace Pi's file or shell tools, select a model or thinking level, trust projects automatically, or add custom plan and subagent behavior.
 
-```text
-                       mewa-browser
-                  Chromium + agent-browser
-                            ▲
-                            │ bounded browser tool
-                            │
-┌───────────────────────────┴──────────────────────────┐
-│ mewa-code                                            │
-│                                                     │
-│ Synara + Pi                                         │
-│ /home/data         all controller state             │
-│ /home/core         same-path host mount             │
-│ /data              same-path host mount             │
-│ /repo              same-path host mount             │
-│                                                     │
-│ read/write/edit/ls local mount, SFTP fallback       │
-│ grep/find/bash     SSH host                         │
-└───────────────────────────┬──────────────────────────┘
-                            │ SSH
-                            ▼
-                       Core development host
-               Git, project runtimes, Docker, systemd
-```
+## Start locally
 
-The model sees ordinary Pi tools. SSH, SFTP, mounts, and browser RPC remain implementation details.
-
-## Controller image
-
-The controller is intentionally smaller than a general development container. Synara is built from its stable tagged source using its frozen Bun lockfile and release web/CLI targets. The final image contains the built Synara `dist`, locked runtime dependencies, the compiled mewa extensions, Node, Git, CA certificates, and `tini`.
-
-It does not carry the Synara monorepo source, build toolchain, a second Pi dependency tree, `ripgrep`, Docker clients, or project language runtimes. Pi uses the version locked by Synara. Host development commands continue to run through SSH.
-
-The current pins are recorded in `versions.env`.
-
-## State contract
-
-One host directory is mounted at `/home/data`. All known controller-managed configuration, credentials, sessions, and caches are directed below it:
-
-```text
-data/
-├── pi/
-│   ├── auth.json
-│   ├── settings.json
-│   └── sessions/
-├── synara/
-├── .config/
-├── .local/
-├── .cache/
-│   └── node-compile-cache/
-└── browser/
-    └── artifacts/
-```
-
-Set its host path with `MEWA_STATE_PATH`. This state mount is separate from the development-content mounts. Bootstrap rejects persistent runtime paths that escape `/home/data` and does not rewrite Pi settings when their effective content is unchanged.
-
-## Filesystem contract
-
-Configured development roots are mounted at the same absolute path on the host and in `mewa-code`:
-
-```text
-host        /home/core   /data   /repo
-mewa-code   /home/core   /data   /repo
-```
-
-Pi selects the backend per path:
-
-1. Existing paths whose resolved real path remains inside an approved mount use the local bind mount.
-2. Paths outside those roots, including symlinks that escape them, use SFTP when fallback is enabled.
-3. `grep`, `find`, and process execution always run on the SSH host.
-
-This keeps `~`, repository paths, file tools, and shell commands coherent while preventing controller internals from becoming the development environment.
-
-## Preconfigured Pi
-
-The image compiles and loads repo-owned extensions:
-
-- `mewa-remote` — transparent mounted-filesystem, SFTP, and SSH tools;
-- `mewa-browser` — bounded visual testing through the separate browser service;
-- `mewa-question` — structured blocking questions;
-- `mewa-plan` — read-only planning mode.
-
-Bootstrap preserves existing user settings and adds required defaults only when absent. It links Pi's global `AGENTS.md` to `/home/core/agents/AGENTS.md` and loads skills from `/home/core/agents/skills`.
-
-Pi provider credentials and user choices stay in `/home/data/pi`. Extensions remain immutable image content from this repository.
-
-## Host prerequisites
-
-The SSH account defaults to `core` and should have:
-
-- access to `/home/core`, `/data`, and `/repo`;
-- `bash`, `git`, `rg`, `fd`, and `file` on `PATH`;
-- the project runtimes agents may invoke;
-- Docker, systemd, or sudo rights only when intentionally granted.
-
-The SSH account is the host authority boundary. `mewa-code` does not mount Docker, D-Bus, journal, or other privileged host sockets.
-
-## Start
+Requirements: Docker Compose, a writable state directory owned by the configured UID/GID, and a workspace that can be mounted into the controller.
 
 ```bash
 cp .env.example .env
-mkdir -p data/browser secrets
+mkdir -p data
 chown -R 1000:1000 data
-# Put the controller SSH private key at secrets/mewa_ed25519.
-# Verify /home/core, /data, and /repo exist.
+# Replace both example tokens in .env.
 docker compose config --quiet
 docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:3773` and authenticate with `SYNARA_AUTH_TOKEN`.
+Open `http://127.0.0.1:3773` and use `SYNARA_AUTH_TOKEN` when prompted. Pi credentials and settings persist under `data/pi`. Synara state persists under `data/synara`.
 
-Docker health uses Synara's `/health` readiness snapshot and requires full startup readiness, not only an open TCP port.
+The generic Compose file mounts `MEWA_WORKSPACE_PATH` at `/workspace`. Pi commands run inside `mewa-code`, not on the Docker host. The image intentionally contains only Node.js, Git, CA certificates, `tini`, Synara, Pi, and the browser extension. Add project runtimes in a derived image when a workspace needs them.
 
-## Current status
+## Browser behavior
 
-This branch remains a draft. It includes:
+The `browser` tool supports a bounded visual-QA command set: HTTP(S) navigation, page snapshots and reads, screenshots, common interactions, accessibility checks, web vitals, viewport changes, and session close.
 
-- one mounted controller-state root;
-- a slim release-style Synara runtime image;
-- one shared Synara/Pi runtime dependency tree;
-- precompiled repo-owned Pi extensions;
-- hybrid mounted/SFTP Pi filesystem operations;
-- SSH-backed shell, search, and user `!` commands;
-- authenticated, quota-limited browser sessions and screenshot retrieval;
-- read-only root filesystems, graceful shutdown, readiness health checks, restricted mounts, and CI checks.
+`mewa-browser` applies bearer authentication, request and process deadlines, output limits, session limits, per-session and global storage quotas, and guarded artifact retrieval. Browser profiles and screenshots are temporary. A successful session close removes them immediately. Failed cleanup can retain screenshots until the browser container restarts.
 
-Known controller-level limitations remain:
+The browser service is isolation for controller credentials, not a complete web sandbox. It can reach HTTP(S) destinations available from its Docker network, including private services. See [docs/SECURITY.md](docs/SECURITY.md).
 
-- Synara's standalone terminal starts inside `mewa-code`, while Pi `bash` runs on the host.
-- Synara Files and Changes cover mounted roots, but not SFTP-only paths.
-- host development ports are not forwarded automatically to `mewa-browser` yet.
+## Build and test
 
-See `docs/ARCHITECTURE.md`, `docs/HOST_SETUP.md`, and `docs/SYNARA_REMOTE.md`.
+```bash
+npm --prefix mewa-code ci --include=dev
+npm --prefix mewa-code run check
+npm --prefix mewa-code run build
+npm --prefix mewa-browser test
+node scripts/check-versions.mjs
+
+docker build -t mewa-code:local mewa-code
+docker build -t mewa-browser:local mewa-browser
+```
+
+Component versions are recorded in `versions.env`. Downloaded Synara and `agent-browser` artifacts are checksum-verified during image builds.
+
+## Current limits
+
+- Pi and Synara terminals execute inside the controller image, so host tools are unavailable unless explicitly installed or exposed.
+- Synara Files and Changes operate on mounted workspaces only.
+- Host development-server routing into `mewa-browser` is deployment-specific.
+- ARM64 browser downloads are checksum-pinned but are not covered by this repository's current CI.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the runtime contract and [NOTICE.md](NOTICE.md) for upstream attribution.

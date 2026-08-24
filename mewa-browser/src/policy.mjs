@@ -2,8 +2,12 @@ const MAX_WAIT_MS = 30_000;
 const MAX_ARGS = 64;
 const MAX_ARG_BYTES = 16 * 1024;
 
-const navigationCommands = new Set(["open", "goto", "navigate", "pushstate"]);
-const browserCommands = new Set(["back", "forward", "reload", "close", "quit", "exit"]);
+// Keep the API focused on the small set of operations needed for visual QA.
+// In particular, state management, debugging, JavaScript evaluation, file
+// access, and browser configuration commands must not be reachable through
+// this service.
+const navigationCommands = new Set(["open", "back", "forward", "reload"]);
+const browserCommands = new Set(["close"]);
 const interactionCommands = new Set([
   "click",
   "dblclick",
@@ -15,13 +19,8 @@ const interactionCommands = new Set([
   "uncheck",
   "select",
   "press",
-  "key",
-  "keydown",
-  "keyup",
-  "keyboard",
   "scroll",
   "scrollintoview",
-  "scrollinto",
   "wait",
 ]);
 const observationCommands = new Set([
@@ -30,24 +29,17 @@ const observationCommands = new Set([
   "screenshot",
   "get",
   "is",
-  "find",
-  "set",
-  "frame",
-  "dialog",
-  "console",
-  "errors",
-  "highlight",
   "a11y",
   "vitals",
-  "web-vitals",
-  "help",
 ]);
+const visualCommands = new Set(["set"]);
 
 export const allowedCommands = new Set([
   ...navigationCommands,
   ...browserCommands,
   ...interactionCommands,
   ...observationCommands,
+  ...visualCommands,
 ]);
 
 const optionsByCommand = new Map([
@@ -67,12 +59,10 @@ const optionsByCommand = new Map([
   ],
   ["screenshot", new Set(["--json", "--annotate"])],
   ["a11y", new Set(["--json", "--selector", "--tags"])],
-  ["find", new Set(["--json", "--name", "--exact"])],
-  ["console", new Set(["--json", "--clear"])],
-  ["errors", new Set(["--json", "--clear"])],
+  ["scroll", new Set(["--json", "--selector"])],
 ]);
 
-const valueOptions = new Set(["--timeout", "--selector", "--depth", "--filter", "--name", "--tags"]);
+const valueOptions = new Set(["--timeout", "--selector", "--depth", "--tags"]);
 const booleanOptions = new Set([
   "--json",
   "-i",
@@ -80,8 +70,6 @@ const booleanOptions = new Set([
   "--interactive",
   "--compact",
   "--annotate",
-  "--clear",
-  "--exact",
 ]);
 
 export class BrowserPolicyError extends Error {
@@ -183,26 +171,71 @@ function parseArguments(command, rawArgs) {
   return { args, positionals };
 }
 
+function requireArity(command, values, minimum, maximum = minimum) {
+  if (values.length < minimum || values.length > maximum) {
+    const expected = minimum === maximum ? `exactly ${minimum}` : `between ${minimum} and ${maximum}`;
+    reject(`${command} requires ${expected} positional argument${maximum === 1 ? "" : "s"}`);
+  }
+}
+
+function requireSelector(command, values) {
+  requireArity(command, values, 1);
+}
+
 function validatePositionals(command, parsed) {
   const values = parsed.positionals.map((entry) => entry.value);
   if (navigationCommands.has(command)) {
-    if (values.length !== 1 || !safeHttpUrl(values[0])) {
+    if (command === "open" && (values.length !== 1 || !safeHttpUrl(values[0]))) {
       reject(`${command} requires exactly one http(s) URL without credentials`);
     }
+    if (command !== "open") requireArity(command, values, 0);
   }
+  if (browserCommands.has(command)) requireArity(command, values, 0);
 
-  if (["read", "a11y", "vitals", "web-vitals"].includes(command)) {
+  if (["read", "a11y", "vitals"].includes(command)) {
     if (values.length > 1 || (values.length === 1 && !safeHttpUrl(values[0]))) {
       reject(`${command} accepts at most one plain http(s) URL`);
     }
   }
+
+  if (["click", "dblclick", "focus", "hover", "check", "uncheck", "scrollintoview"].includes(command)) {
+    requireSelector(command, values);
+  }
+
+  if (["fill", "type", "select"].includes(command)) requireArity(command, values, 2);
+  if (command === "press") requireArity(command, values, 1);
+
+  if (command === "scroll") {
+    requireArity(command, values, 1, 2);
+    if (!("up down left right".split(" ").includes(values[0]))) {
+      reject("scroll direction must be up, down, left, or right");
+    }
+    if (values.length === 2 && !isPositiveInteger(values[1], 10_000)) {
+      reject("scroll distance must be a whole number from 1 through 10000");
+    }
+  }
+
+  if (command === "snapshot") requireArity(command, values, 0);
 
   if (command === "get") {
     const kinds = new Set(["text", "html", "value", "attr", "title", "url", "count", "box", "styles"]);
     if (values.length < 1 || !kinds.has(values[0])) {
       reject("get requires a permitted information type");
     }
-    if (values[0] === "url" && values.length > 1) reject("get url accepts no selector");
+    if (values[0] === "url" || values[0] === "title") {
+      requireArity(command, values, 1);
+    } else if (values[0] === "attr") {
+      requireArity(command, values, 3);
+    } else {
+      requireArity(command, values, 2);
+    }
+  }
+
+  if (command === "is") {
+    const checks = new Set(["visible", "enabled", "checked"]);
+    if (values.length !== 2 || !checks.has(values[0])) {
+      reject("is requires one permitted state check and one selector");
+    }
   }
 
   if (command === "wait") {
