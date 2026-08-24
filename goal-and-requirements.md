@@ -2,74 +2,205 @@
 id: goal-and-requirements
 type: goal-and-requirements
 status: active
-title: Mewa Code — product goal and scope
-covers: [product-goal, v1-scope, v2-scope, engine-decision]
-tags: [product, scope]
+title: Mewa Code product baseline
+covers: [product-goal, web-ui, pi-contract, scope, security, delivery]
+tags: [product, baseline]
 ---
 
-## Goal
+## Authority
 
-Mewa Code is a desktop-and-mobile client for the `pi` coding agent. The product
-is a thin host that bridges `pi` to a rich UI and, over time, layers spec-driven workflows on top.
+This document is the canonical product baseline for the Mewa Code simplification. It records the user's explicit decisions from the August 2026 design conversation, keeps only compatible constraints from the pre-ThinkRail Mewa implementation, and treats ThinkRail as implementation material rather than product scope.
 
-## Engine
+When sources disagree, use this order:
 
-PI agent only. No second runtime (no `claude-agent-sdk`), in V1 or V2. `pi` owns the model registry,
-system prompt, skills/extensions, compaction, retry behavior, stats, cost, and canonical JSONL session
-state. Every feature influences the agent by what we **feed** `pi` — prompt context, files, `pi`'s own
-skills/extensions — and which flags we spawn it with, never by assembling the prompt ourselves. Mewa Code
-does not inject its own defaults, maintain a second model/credential registry, recompute Pi-reported stats,
-or mutate Pi configuration except through explicit user actions such as provider login or settings changes.
-The only current host-level settings exception disables Pi's automatic image resizing in memory so the
-transport can preserve raw image inputs and apply its documented provider safety guard.
+1. The latest explicit user decision.
+2. This baseline.
+3. Pi's documented behavior and public SDK contract.
+4. Current implementation documents as evidence of what exists, not proof that it should remain.
+5. Older Mewa and upstream ThinkRail documents as historical context only.
 
-This is the target contract. The imported foundation still injects inherited bundled workflow, web,
-visualization, spec-graph, todo, and host-bridge extensions. Separating mandatory UI adapters from optional
-Pi extensions is follow-up adaptation work and is not claimed complete by the foundation import.
+## Product definition
 
-## V1 — Worktree IDE + cheap wins
+Mewa Code is a separate product, developed in the existing `mewa_code` repository, that provides a focused web interface for the Pi Coding Agent. “OpenChamber-like” means a simple project-and-session sidebar leading to a focused chat view with persistent history. It does not import OpenChamber's implementation or entire feature set. Mewa Code makes Pi's existing state and events understandable in a browser and adds only explicitly chosen Pi extensions. It is not a new agent framework, workflow platform, full IDE, GitHub client, or repackaged ThinkRail product.
 
-A Mewa Code, git-worktree IDE, driven by a CLI you run that opens a browser UI.
-The shell is built first, `pi` connected last:
+The browser UI and a local engine host are the product. A native desktop application, public marketing website, and hosted cloud service are not required. The host may be used on the same machine or over a trusted private network when exposure and authentication are configured safely.
 
-- **Projects → workspaces**: open a git repo as a project; a workspace is a `git worktree` (own branch +
-  cwd) under `~/.mewa-code/worktrees` — plus one built-in, non-removable **Default workspace** per
-  project (the project folder itself), offered as an explicit choice on the project's Welcome so
-  newcomers aren't lost in the worktree model, and any **existing worktree** the user attaches in place
-  from the project menu (Mewa Code uses its cwd, never touches its checkout).
-- **Desktop workbench**: a recursively splittable center for files, diffs, registered documents, chats, and terminals,
-  bounded to four visible groups; Projects / Specs / All files / Changes / Review live in movable,
-  independently foldable vertical side groups. Terminal tabs may move between center and sides. Each
-  workspace's structural layout is host-persisted and shared across clients, while active selection/focus
-  remains local so clients do not steal one another's attention.
-- A workspace-local **Review** surface for the current worktree: GitHub-style anchored file/diff drafts
-  are collected without starting the agent, then sent as structured context into per-file `pi` chats;
-  sent records persist and the agent can resolve them. This is local review, not PR-provider integration.
-- Cheap wins `pi` already emits: per-session model pick (#1), token/cost display (#3), and skill
-  catalog/autocomplete (#2), including read-through reuse of portable Agent Skills a user already keeps
-  for major coding agents — Pi remains the parser/runtime; no copying or vendor-semantic emulation. A
-  repo's **committed** skill aliases load only after an explicit **per-project trust** grant (a clone's are
-  attacker-controlled); personal + bundled skills load regardless.
-- Multiple chat sessions per workspace, streaming concurrently (#5).
-- A bundled **spec-graph** pi extension (`pi-spec-graph`): the agent searches, navigates, and manages
-  the project's specs via `spec_*` tools + a skill.
-- A read-only **Specs** side tool: the active worktree's spec-graph rendered as its `parent` tree, backed
-  by the same `pi-spec-graph` core model host-side;
-  opening a node opens the spec file as an editor tab. Viewer only — no editing, drift detection, or
-  graph canvas.
-- Mewa Code branding: **green accent** (`#8dff4f` on the dark-family themes, `#2e7d16` on the light
-  ones — inverse by appearance so it clears AA on both), Darcula background, **Orbitron** for the brand
-  display role, Geist / Geist Mono for UI and code.
-- On-disk state under `~/.mewa-code`.
+## Pi agent contract
 
-V1 is explicitly **not**: the workflow **product layer** (a runtime/engine, configurable pipelines —
-the skill-based workflow *system*, skills + an always-on rule with no runtime machinery, ships as the
-bundled `pi-mewa-code-workflow` extension); the spec-graph **product layer** beyond the read-only viewer
-(drift detection, pre-build approval, living graph — the pi-side spec capability ships as the bundled
-extension above); PR / Checks beyond the active workspace's optional open GitHub PR / GitLab MR number, self-improvement, automations, per-step model routing, cost ledger.
+Pi is the only agent runtime. Mewa Code uses Pi's in-process SDK and does not add a second harness such as the Claude Agent SDK.
 
-## V2 — the product
+Pi remains authoritative for:
 
-Workflow layer (#8), spec layer (#9: pre-build approval → drift detection → living spec graph, building
-on the V1 spec-graph extension), self-improvement (#4), configurable automations (#6), remote/phone over
-Tailscale (#7), and deepened parallelism / cost ledger / per-step routing.
+- provider credentials and authentication
+- provider and model catalogs
+- selected model and thinking level
+- system prompt and normal agent behavior
+- built-in tools
+- user and project skills and extensions
+- project trust
+- retry and compaction behavior
+- token, context, and cost accounting
+- canonical JSONL session history
+
+Mewa Code may expose those capabilities and invoke explicit user actions, but it must not maintain competing registries, silently rewrite Pi settings, recompute Pi statistics, replace Pi's file or shell tools, select a model on the user's behalf, auto-trust a repository, or inject an always-on workflow prompt.
+
+With Mewa product extensions disabled, a Mewa Code session should behave like stock Pi with the same Pi configuration, except for one mandatory protected-state safety guard. UI transport adapters may project Pi state and events, but they must not register agent-facing tools, alter the system prompt, or change resource discovery. The safety guard may deny Pi and Mewa credential or state roots across file, search, visible shell-path, subagent, and extension access. It must not alter prompts, add general tools, or restrict the selected repository. Any other agent-facing Mewa feature must be an identifiable Pi extension enabled through an explicit user choice.
+
+Pi dependencies use one exact, internally consistent version across the complete package family. Simple routine update discovery should identify the newest stable Pi release, update the family together, and validate the focused integration surface. Runtime dependency ranges must not float silently.
+
+## Required web UI capabilities
+
+### Repositories and projects
+
+- A project is a local Git repository selected by the user.
+- The UI lists known projects and allows a repository to be opened, removed from the known-project list, and reopened without deleting the repository or its Pi sessions.
+- Sessions are grouped by repository so it is always clear which working directory and Git state a session belongs to.
+- The repository's normal working tree is the default workspace. Mewa Code must not force a new branch or Git worktree for every session.
+- Worktree support is deferred. It must not shape the baseline project or session model.
+
+### Sessions and chat
+
+- A project can have multiple persistent Pi sessions.
+- At minimum, users can create, select, resume, and abort active generation in a Pi session without disposing that session or affecting unrelated sessions. Rename, retry controls, and deletion are optional follow-up interactions unless Pi requires them for correct lifecycle handling.
+- Multiple sessions may run concurrently without events, drafts, models, or usage data crossing between them.
+- Reloading the page or restarting the host reconstructs sessions from host and Pi state. The browser is a projection, not the canonical session store.
+- Streaming text, thinking, tool calls, tool results, errors, retries, compaction, and completion state are represented without inventing a second lifecycle.
+- The UI exposes Pi's current model and thinking level per session and allows explicit user changes through Pi.
+- The UI exposes Pi-supported provider status and credential actions. Authentication, model choice, thinking level, and settings remain explicit user choices carried out through Pi rather than Mewa-owned configuration.
+
+### Images
+
+- A user can attach multiple images to one message.
+- The composer provides previews and allows individual attachments to be removed before sending. These are derived interaction requirements needed to make multi-image submission controllable, not a separate media-management feature.
+- Validation and size handling respect Pi and provider limits and fail clearly before a bad request is sent.
+- Image handling must not silently discard attachments or convert a multi-image message into separate turns.
+
+### Usage and context
+
+- Each session shows the token usage, cost, and context-window information Pi reports.
+- Usage is attributed to the correct session and updated from Pi events or Pi session state.
+- Mewa Code does not estimate a competing total when Pi already supplies the value.
+- A later cross-session ledger is optional. It is not required for the baseline.
+
+### Local Git
+
+- The UI shows local repository status and changed files.
+- Users can inspect readable local diffs for tracked changes. Untracked files must appear in status, but rendering their full contents is not required.
+- Git operations are scoped to the selected repository and never assume a GitHub remote.
+- GitHub accounts, pull requests, checks, issues, review submission, and provider-specific metadata are not required.
+
+### Session goals
+
+- A session may have one visible, editable goal that survives reload and resume.
+- Agent-facing goal behavior is implemented as a small Pi extension, not by replacing Pi's system prompt in the host.
+- The UI shows the active goal and any extension-reported status without turning goals into a general workflow or specification engine.
+- The goal extension is enabled for a session when the user creates or enables a goal. A session without the feature enabled retains stock Pi agent-facing behavior.
+- Clearing the goal removes the active stored goal and disables its agent-facing extension behavior for future turns. Existing Pi transcript history is unchanged.
+
+### Subagents
+
+- Mewa Code supports Pi subagents by adopting or adapting a Pi extension rather than creating a separate orchestration runtime.
+- A child inherits the parent session's model and thinking defaults unless the user explicitly chooses an override.
+- The UI shows parent-child relationships, child status, relevant output, completion, and failure.
+- Subagent sessions and events remain isolated from unrelated sessions.
+- Vendor-specific subagent formats do not need to be emulated.
+- The subagent extension is enabled explicitly for a parent session. It is not an app-wide or project-wide default and is not part of the neutral default extension set.
+
+## State and boundaries
+
+- Pi credentials, settings, extensions, skills, and canonical sessions remain in Pi-owned storage.
+- Mewa Code stores only its own project registry, UI preferences, session presentation metadata, and extension-specific product state under its own state root.
+- Credentials and application state must never appear as repository files or become browseable through the project file surface.
+- Pi and Mewa state roots are protected from project-scoped file and search tools, retained subagents, and optional extensions. Existing symlinks must not turn a project path into access to a protected root.
+- Shell-command filtering around protected paths is defense in depth, not a complete sandbox. The stronger boundary is filesystem layout and avoiding credential or state mounts inside repositories.
+- Persistent writes use bounded paths and safe replacement. A failed update preserves the last valid state.
+- The web client does not import or bundle provider runtime implementations.
+
+## Security and privacy
+
+Mewa Code is a trusted development tool, not a sandbox for hostile repositories or prompts. Pi may read, modify, and execute within the selected repository with the host user's permissions. The UI must make that authority clear.
+
+- Bind to loopback by default.
+- Require an explicit authentication boundary before non-loopback use. A trusted private-network identity layer such as Tailscale may provide that boundary.
+- Do not expose provider credentials, Pi state, host-control sockets, or unrelated host paths to repositories.
+- Do not add product analytics, tracking pixels, or hidden telemetry.
+- Clearly state that prompts and selected context are sent to the configured model provider under that provider's terms.
+- Optional browser automation or web-search integrations are executable extensions and require separate review. Browser isolation from credentials and repository mounts remains mandatory if browser automation returns.
+
+## Delivery and engineering constraints
+
+- Keep the product small. Delete inherited features, abstractions, documentation, dependencies, and tests that do not support this baseline.
+- Prefer Pi behavior and Pi extensions over host-side replicas.
+- Add tests for observable baseline behavior and meaningful failure cases. Do not preserve or add tests merely because an inherited feature once existed.
+- During development, run the narrowest relevant checks. Reserve broad end-to-end suites for changes that cross the real browser-host boundary or for a deliberate release gate.
+- No production deployment, binary release, installer, self-update channel, public website, or automated release pipeline is required while the product is being simplified.
+- Preserve accurate Apache-2.0 attribution and complete legal review before any public distribution.
+
+## Explicit non-goals
+
+The following inherited capabilities are not baseline requirements and should not survive solely because ThinkRail implemented them:
+
+- a worktree-first project model
+- a recursively dockable IDE workbench or shared multi-client layout document
+- a full Monaco-based code editor
+- persistent browser terminals or terminal layout orchestration
+- spec graphs, specification approval, drift detection, or spec-driven workflow routing
+- local GitHub-style review drafts and agent-resolved review comments
+- GitHub or GitLab integration
+- bundled web access, visualization, todo, shipping, brainstorming, or project-setup workflows
+- compatibility layers for other agents' private skill, hook, model, macro, or subagent formats
+- automatic model calls for workspace naming
+- a workflow engine, automations, self-improvement loop, or per-step model router
+- a native desktop shell, mobile application, public website, blog, survey, or launch material
+- release installers, self-update, multi-platform packaging, or release-site infrastructure
+
+Files, a lightweight editor, a terminal, optional worktrees, web search, browser visual QA, memory, and additional Pi extensions may be considered later. They are not part of the clean baseline unless a newer user decision promotes them.
+
+## Implementation order
+
+The simplification should preserve or establish the smallest vertical slice first:
+
+1. Open a local repository and list its Pi sessions.
+2. Create and resume a Pi session in that repository.
+3. Send text and multiple images and render Pi's streamed result.
+4. Select Pi model and thinking settings explicitly.
+5. Show Pi-reported usage, cost, and context.
+6. Show local Git status and diffs.
+7. Add the focused session-goal extension and UI.
+8. Add the focused subagent extension and UI.
+
+Anything not needed for those steps should be removed, deferred, or justified separately.
+
+## Acceptance baseline
+
+The target is met when all of the following are true:
+
+1. With the same Pi configuration and Mewa product extensions disabled, a Mewa Code session has the same agent-facing prompt, tools, model defaults, trust, retry, compaction, skills, and extensions as stock Pi, except for the narrow protected-state safety guard. UI transport adapters do not add tools or prompt text.
+2. A user can open a repository, create several sessions, run them concurrently, reload the browser, restart the host, and resume the correct Pi histories.
+3. A user can send several images in one message and see clear validation failures before provider submission.
+4. Session model, thinking level, token usage, cost, and context reflect Pi's own state.
+5. Local status and diffs work without a remote or GitHub account.
+6. Setting a session goal activates its focused Pi extension. Clearing it removes the active goal and restores neutral behavior for future turns.
+7. Explicitly enabling subagents allows a child to run through its Pi extension and makes its relationship, progress, result, and failure visible in the parent UI.
+8. Pi credentials and state are not exposed through repository browsing, project-scoped file/search tools, symlink traversal, retained subagents, logs, telemetry, or client bundles. Shell restrictions remain documented defense in depth rather than a sandbox claim.
+9. Tests and dependencies correspond to retained product behavior rather than the imported foundation's feature inventory.
+
+## Current foundation gap
+
+The ThinkRail-derived branch is much larger than this baseline. It currently includes forced or prominent worktree concepts, spec graph, review, terminal and editor workbench systems, a marketing website, binary packaging, compatibility skill discovery, and automatically bundled workflow, web, visualization, spec, and todo extensions. Its test suite primarily proves that inherited product. Those systems are candidates for removal, not presumptive requirements.
+
+## Decision trace
+
+| Classification | Baseline decisions |
+|---|---|
+| Explicit current decisions | Separate Mewa Code product in the existing repository; focused OpenChamber-like web UI; in-process Pi SDK with Pi as sole agent authority; repositories group sessions; normal working tree by default; multiple persistent sessions; multiple images per message; Pi-reported usage, cost, and context; local Git status and diff without GitHub; session goals through a Pi extension; subagents through a Pi extension; newest stable exact Pi package family with simple routine update discovery and validation; proportional tests and narrow validation. |
+| Compatible constraints retained from pre-import Mewa | User-controlled Pi credentials, model, thinking, and settings; child model/thinking inheritance by default; protected credential and state roots; loopback default and authenticated non-loopback exposure; trusted-development-tool rather than sandbox claim; no hidden product telemetry; isolated review before adding browser automation. |
+| Derived interaction necessities | A selectable project list; create/select/resume session operations; reconstruction after reload; image previews and removal before multi-image submission; provider status and Pi-backed credential actions when the web UI is the primary interface. These details support an explicit requirement but do not create broader management products. |
+| Deferred decisions | Whether any lightweight file viewer, editor, terminal, worktree support, remote-access packaging, browser visual QA, web search, memory, native shell, or release packaging returns after the core baseline works. Deferred features are removed from the simplification target unless promoted by a newer user decision. |
+
+## Provenance reviewed
+
+- Current Mewa Code design conversation, August 2026: latest product choices and scope corrections.
+- Pre-import Mewa at `65a8d6b`: Pi-default preservation, subagent inheritance, state isolation, trusted-development-tool model, credential separation, safe non-loopback exposure, and optional browser isolation.
+- ThinkRail at `eab4755127ee80426e9438c520735c57410072d3`: implementation capability inventory only.
+- Existing `README.md`, `architecture.md`, and module `SPEC.md` files: current foundation behavior and coupling, not automatic product requirements.

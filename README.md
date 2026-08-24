@@ -1,21 +1,10 @@
 # Mewa Code
 
-Mewa Code is a thin desktop-and-mobile client for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-coding agent. It runs Pi in-process and bridges it to a rich, mobile-first UI. Pi owns models,
-skills/extensions, compaction, retry behavior, stats, cost, credentials, and canonical JSONL session state.
-Mewa Code owns the workspace, editor, terminals, wire, and host lifecycle.
+Mewa Code is a focused web interface for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent. It organizes local Git repositories and their persistent Pi sessions while leaving models, credentials, prompts, tools, extensions, compaction, retry, usage, cost, and canonical JSONL history under Pi's authority.
 
-This imported foundation does not yet fully meet that target boundary. It still loads inherited bundled
-workflow, web, visualization, spec-graph, todo, and host-bridge extensions while those are separated into
-required UI adapters and explicitly enabled optional Pi extensions.
+The canonical product scope is [`goal-and-requirements.md`](goal-and-requirements.md). The current branch is an oversized ThinkRail-derived foundation. Worktree-first navigation, IDE layout, editor, terminal, review, spec, workflow, website, packaging, and bundled tool systems are implementation inventory to reduce or remove, not the product definition.
 
-**V1 is a Worktree IDE:** open a git repo as a project, create workspaces as `git worktree`s with their own
-branch and cwd, and work across Monaco tabs, git Changes, terminals, a read-only spec-graph viewer, local
-review, and multiple concurrent Pi chat sessions.
-
-This branch is the source foundation for the new product. It does not publish binaries or installers yet.
-Runtime prerequisites are `git` on PATH and an authenticated Pi provider. Mewa Code never requires a
-standalone `pi` executable.
+This branch is the source foundation for the new product. It does not publish binaries or installers yet. Runtime prerequisites include `git` on PATH. Agent-backed runs require an authenticated Pi provider, which may be configured through supported Pi-backed UI actions. Mewa Code never requires a standalone `pi` executable.
 
 ## Quick start
 
@@ -29,59 +18,39 @@ standalone `pi` executable.
 
 ```bash
 git clone <repo-url>
-cd mewa-code
+cd mewa_code
 bun install
 bun run dev
 ```
 
-Run the V1 CLI entrypoint with `bun run --filter @mewa-code/cli dev`, or build a standalone binary with
-`bun run build:binary`.
+Run the current imported launcher with `bun run --filter @mewa-code/cli dev`. Binary packaging exists in the foundation but is not part of the simplification baseline.
 
 ## Architecture
 
-- **Engine host** — `packages/server` and `packages/shared`, launched by `apps/cli`. `createServer()` is a
-  `Bun.serve` HTTP+WS host with one in-process Pi `AgentSession` per chat tab.
-- **The wire** — `packages/contracts`, the typed and versioned protocol.
-- **UI client** — `apps/web`, a mobile-first React client that depends on `packages/contracts` only and can
-  ship independently of the host.
+- **Engine host** — `packages/server` and `packages/shared`, currently launched by `apps/cli`, run Pi in-process and serve the browser connection.
+- **Shared client-host types** — `packages/contracts` reflects the imported transport surface.
+- **Web client** — `apps/web` contains the current React browser interface.
 
-The canonical product and design specs are [`goal-and-requirements.md`](goal-and-requirements.md) and
-[`architecture.md`](architecture.md). Module boundaries and spec-first workflow are documented in
-[`AGENTS.md`](AGENTS.md).
+The product baseline is [`goal-and-requirements.md`](goal-and-requirements.md). [`architecture.md`](architecture.md) and module `SPEC.md` files describe the imported implementation until it is simplified. They do not expand product scope.
 
 ## Repo layout
 
 ```
 apps/
-  cli/        V1 entrypoint: boot host and open browser
-  web/        mobile-first UI client
-  desktop/    Electrobun launcher, deferred
-  website/    unpublished static site preview
+  cli/        current entrypoint: boot host and open browser
+  web/        browser UI client
+  desktop/    inherited deferred launcher, not baseline scope
+  website/    inherited unpublished preview, removal candidate
 packages/
   server/     createServer(): Bun.serve + AgentSessionManager
   contracts/  the wire, types-only
   shared/     server-side helpers
-  spec-graph/ portable Pi extension: spec_* tools + skill
+  spec-graph/ inherited extension, not baseline scope
 ```
 
 ## Development checks
 
-```bash
-bun run check:deps
-bun run check:seams
-bun run lint
-bun run typecheck
-bun run test
-```
-
-End-to-end tests drive the real UI against isolated hosts:
-
-```bash
-bun run e2e
-bun run e2e:serial
-bun run e2e:full
-bun run e2e:agent
-```
+Run the narrowest check or focused test for the code being changed. Use repository-wide type checking or builds when a change crosses package boundaries. The inherited full unit and end-to-end suites are not routine gates during simplification, and tests for removed features should be deleted with those features.
 
 ## Privacy
 
