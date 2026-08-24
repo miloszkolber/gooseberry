@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mewa-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mewa-code/package-lock.json
+
+      - name: Validate sources
+        run: |
+          npm --prefix mewa-code ci --include=dev --no-audit --no-fund
+          npm --prefix mewa-code run check
+          npm --prefix mewa-code test
+          npm --prefix mewa-browser run check
+          npm --prefix mewa-browser test
+          node scripts/check-versions.mjs
+          git diff --check
+
+      - name: Render Compose configuration
+        env:
+          SYNARA_AUTH_TOKEN: ci-synara-token
+          MEWA_BROWSER_TOKEN: ci-browser-token
+          MEWA_STATE_PATH: /tmp/mewa/state
+          MEWA_WORKSPACE_PATH: /tmp/mewa/workspace
+        run: |
+          mkdir -p /tmp/mewa/state/browser /tmp/mewa/workspace
+          docker compose config --quiet
+
+      - name: Build images
+        run: |
+          docker build --tag mewa-code:ci mewa-code
+          docker build --tag mewa-browser:ci mewa-browser
+
+      - name: Verify controller image
+        run: |
+          docker image inspect mewa-code:ci --format 'mewa-code image size: {{.Size}} bytes'
+          docker run --rm --entrypoint sh mewa-code:ci -c '
+            set -eu
+            test -f /opt/synara/apps/server/dist/index.mjs
+            test -f /opt/synara/apps/server/dist/client/index.html
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-browser.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-guardrails.js
+            test -f /opt/synara/mewa/dist/pi/extensions/mewa-question.js
+            test -f /opt/synara/mewa/dist/pi/extensions/signet-pi.js
+            test -f /opt/synara/mewa/pi/agents/researcher.md
+            test -f /opt/synara/mewa/node_modules/pi-mcp-adapter/index.ts
+            test -f /opt/synara/mewa/node_modules/pi-subagents/index.ts
+            test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-remote.js
+            test ! -e /opt/synara/mewa/dist/pi/extensions/mewa-plan.js
+            test ! -e /opt/synara/apps/server/src
+            test ! -e /opt/synara/packages
+            command -v bash
+            command -v git
+            command -v npm
+            command -v ssh
+          '
+          docker run --rm --entrypoint node mewa-code:ci --input-type=module -e "
+            const fs = await import('node:fs');
+            const piRoot = '/opt/synara/apps/server/node_modules/@earendil-works';
+            for (const name of ['pi-agent-core', 'pi-ai', 'pi-coding-agent', 'pi-tui']) {
+              if (fs.readlinkSync('/opt/synara/mewa/node_modules/@earendil-works/' + name) !== piRoot + '/' + name) throw new Error('unexpected Pi peer link: ' + name);
+            }
+            const piPackage = JSON.parse(fs.readFileSync(piRoot + '/pi-coding-agent/package.json', 'utf8'));
+            if (piPackage.version !== '0.81.1') throw new Error('unexpected runtime Pi version: ' + piPackage.version);
+            const providerRoot = piRoot + '/pi-ai/dist/providers/';
+            for (const [file, marker] of [['openai-codex.js', 'id: \"openai-codex\"'], ['opencode.js', 'id: \"opencode\"'], ['opencode-go.js', 'id: \"opencode-go\"']]) {
+              if (!fs.readFileSync(providerRoot + file, 'utf8').includes(marker)) throw new Error('missing runtime provider: ' + marker);
+            }
+            await import('node-pty');
+            await import('@earendil-works/pi-coding-agent');
+            await import('effect');
+            await import('@effect/platform-node/NodeRuntime');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-browser.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-guardrails.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/mewa-question.js');
+            await import('/opt/synara/mewa/dist/pi/extensions/signet-pi.js');
+          "
+
+      - name: Smoke Synara
+        env:
+          SYNARA_AUTH_TOKEN: ci-synara-token
+          MEWA_BROWSER_TOKEN: ci-browser-token
+        run: |
+          set -euo pipefail
+          state=$(mktemp -d)
+          workspace=$(mktemp -d)
+          chmod 0777 "$state" "$workspace"
+          mkdir -p "$state/.config/mcp"
+          printf '{"mcpServers":{"existing":{"url":"https://example.invalid/mcp","disabled":true}}}\n' > "$state/.config/mcp/mcp.json"
+          chmod -R 0777 "$state/.config"
+          cleanup() {
+            docker logs mewa-code-smoke || true
+            docker rm -f mewa-code-smoke >/dev/null 2>&1 || true
+            sudo rm -rf "$state" "$workspace"
+          }
+          trap cleanup EXIT
+          docker run -d --name mewa-code-smoke \
+            --read-only \
+            --tmpfs /tmp:exec,nosuid,size=256m,mode=1777 \
+            --tmpfs /run:nosuid,size=32m,mode=755 \
+            -v "$state:/home/data" \
+            -v "$workspace:/workspace" \
+            -w /workspace \
+            -e SYNARA_AUTH_TOKEN="$SYNARA_AUTH_TOKEN" \
+            -e SYNARA_ALLOW_INSECURE_REMOTE=1 \
+            -e MEWA_BROWSER_TOKEN="$MEWA_BROWSER_TOKEN" \
+            mewa-code:ci
+          for _ in $(seq 1 60); do
+            if docker exec mewa-code-smoke node -e "fetch('http://127.0.0.1:3773/health').then(r=>r.json()).then(v=>process.exit(v.status==='ok'&&v.startupReady===true?0:1)).catch(()=>process.exit(1))"; then
+              docker exec mewa-code-smoke node -e "const fs=require('node:fs');const s=JSON.parse(fs.readFileSync('/home/data/pi/settings.json'));const m=JSON.parse(fs.readFileSync('/home/data/.config/mcp/mcp.json'));if(!s.extensions.some(x=>x.endsWith('/pi-subagents/index.ts'))||!s.extensions.some(x=>x.endsWith('/pi-mcp-adapter/index.ts'))||s.subagents.disableThinking!==true||!m.mcpServers.existing||!m.mcpServers['mewa-exa'])process.exit(1)"
+              docker exec mewa-code-smoke node /opt/synara/apps/server/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --list-models >/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Smoke browser
+        env:
+          TOKEN: browser-smoke-token
+        run: |
+          set -euo pipefail
+          state=$(mktemp -d)
+          site=$(mktemp -d)
+          mkdir -p "$state/artifacts"
+          chmod 0777 "$state" "$state/artifacts"
+          printf '<!doctype html><title>mewa smoke</title><button id="ok">Ready</button>\n' > "$site/index.html"
+          python3 -m http.server 8099 --directory "$site" >/tmp/mewa-browser-site.log 2>&1 &
+          site_pid=$!
+          cleanup() {
+            docker logs mewa-browser-smoke || true
+            docker rm -f mewa-browser-smoke >/dev/null 2>&1 || true
+            kill "$site_pid" >/dev/null 2>&1 || true
+            sudo rm -rf "$state" "$site"
+          }
+          trap cleanup EXIT
+          docker run -d --name mewa-browser-smoke \
+            --network host \
+            --read-only \
+            --shm-size 512m \
+            --tmpfs /tmp:exec,nosuid,size=512m,mode=1777 \
+            --tmpfs /run:nosuid,size=32m,mode=755 \
+            -v "$state:/state" \
+            -e MEWA_BROWSER_TOKEN="$TOKEN" \
+            mewa-browser:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8787/health >/dev/null && break
+            sleep 1
+          done
+          call() {
+            curl -fsS \
+              -H "Authorization: Bearer $TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data "$1" \
+              http://127.0.0.1:8787/v1/browser
+          }
+          call '{"session":"smoke","command":"open","args":["http://127.0.0.1:8099"]}'
+          call '{"session":"smoke","command":"snapshot","args":["--compact"]}' | grep -q Ready
+          call '{"session":"smoke","command":"screenshot","args":["screen.png"]}' | grep -q screen.png
+          curl -fsS -H "Authorization: Bearer $TOKEN" \
+            http://127.0.0.1:8787/v1/artifacts/smoke/screen.png -o /tmp/mewa-screen.png
+          test -s /tmp/mewa-screen.png
+          call '{"session":"smoke","command":"close","args":[]}'

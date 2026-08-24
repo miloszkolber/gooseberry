@@ -1,0 +1,22 @@
+{
+  "name": "@mewa/code",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "pi-mcp-adapter": "2.21.0",
+    "pi-subagents": "0.56.0",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.81.1",
+    "@signetai/connector-pi": "0.214.5",
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2"
+  }
+}
