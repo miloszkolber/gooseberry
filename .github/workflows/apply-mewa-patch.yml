@@ -77,6 +77,20 @@ jobs:
           )
           if "export function resolveWorktreeFile" not in text:
               files.write_text(text.rstrip() + "\n" + helper)
+
+          compose = Path("../compose.yaml")
+          text = compose.read_text()
+          probes = (
+              "fetch('http://127.0.0.1:24242/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+              "fetch('http://127.0.0.1:8787/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+          )
+          for probe in probes:
+              unquoted = f"                - {probe}"
+              quoted = f'                - "{probe}"'
+              if unquoted not in text:
+                  raise SystemExit(f"expected Compose health probe not found: {probe}")
+              text = text.replace(unquoted, quoted, 1)
+          compose.write_text(text)
           PY
           bun run format
 
