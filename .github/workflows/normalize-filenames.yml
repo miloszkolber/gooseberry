@@ -53,14 +53,18 @@ jobs:
 
           agents = Path("AGENTS.md")
           text = agents.read_text()
-          section = """## Source naming
-
-- Source directories and source, test, component, and script filenames use lowercase kebab-case.
-- Conventional lowercase entry and barrel names such as hindex.ts`, `main.tsx`, and `vite.config.ts` remain unchanged; suffixes such as `.test.tsx` stay dot-separated.
-- React components, types, and exports may use PascalCase inside files, but filesystem paths remain kebab-case.
-- `bun run check:filenames` enforces this convention across Mewa Code and the browser service.
-
-"""
+          section = "\n".join(
+              [
+                  "## Source naming",
+                  "",
+                  "- Source directories and source, test, component, and script filenames use lowercase kebab-case.",
+                  "- Conventional lowercase entry and barrel names such as `index.ts`, `main.tsx`, and `vite.config.ts` remain unchanged; suffixes such as `.test.tsx` stay dot-separated.",
+                  "- React components, types, and exports may use PascalCase inside files, but filesystem paths remain kebab-case.",
+                  "- `bun run check:filenames` enforces this convention across Mewa Code and the browser service.",
+                  "",
+                  "",
+              ]
+          )
           if "## Source naming" not in text:
               marker = "## Verification\n"
               if marker not in text:
