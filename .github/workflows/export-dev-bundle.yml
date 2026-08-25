@@ -1,0 +1,43 @@
+name: Temporary development bundle
+
+on:
+  push:
+    branches: ["rewrite/mewa-code-foundation"]
+    paths:
+      - ".github/workflows/export-dev-bundle.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: rewrite/mewa-code-foundation
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install locked dependencies
+        working-directory: mewa-code
+        run: bun install --frozen-lockfile
+      - name: Create development bundle
+        run: |
+          mkdir -p /tmp/mewa-dev-bundle
+          cp "$(command -v bun)" /tmp/mewa-dev-bundle/bun
+          tar --exclude=.git -czf /tmp/mewa-dev-bundle/repo.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mewa-dev-bundle
+          path: /tmp/mewa-dev-bundle
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove temporary workflow
+        run: |
+          git rm .github/workflows/export-dev-bundle.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: remove temporary development bundle workflow"
+          git push origin HEAD:rewrite/mewa-code-foundation
