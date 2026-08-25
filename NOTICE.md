@@ -1,16 +1,16 @@
-# Notices
+# Notice
 
-`mewa_code` is an independent private integration project.
+Mewa Code is derived from JetBrains ThinkRail, available at
+https://github.com/JetBrains/thinkrail, imported from commit
+`eab4755127ee80426e9438c520735c57410072d3`.
 
-It uses or adapts interfaces from the following upstream projects, each under its own license and trademarks:
+This repository is a rebranded and modified derivative. The upstream Apache-2.0 license and JetBrains
+copyright notice are preserved in [`LICENSE`](LICENSE). The initial import, including the added Mewa Code
+copyright line in `LICENSE`, was modified during rebranding or adaptation. Mewa Code changes the product
+identity, package names, host integrations, and user-facing documentation while retaining the underlying
+license terms.
 
-- Synara — MIT — https://github.com/Emanuele-web04/synara
-- Pi Coding Agent — MIT — https://github.com/earendil-works/pi
-- pi-subagents — MIT — https://github.com/nicobailon/pi-subagents
-- pi-mcp-adapter — MIT — https://github.com/nicobailon/pi-mcp-adapter
-- Signet Pi connector — Apache-2.0 — https://github.com/Signet-AI/signetai
-- agent-browser — Apache-2.0 — https://github.com/vercel-labs/agent-browser
-
-The browser policy and operational hardening are adapted from the author's `miloszkolber/opencode-docker` project. No OpenChamber or OpenCode source is included in the mewa images.
-
-Review the upstream license files before publishing derived container images.
+No binary or installer release is published from this foundation branch. Future distributions must include
+the Apache-2.0 license, this notice, and the applicable third-party notices alongside the release artifacts.
+This repository notice records provenance and modifications, but it is not a legal opinion. Apache-2.0
+source-distribution compliance must be reviewed before this branch is published.

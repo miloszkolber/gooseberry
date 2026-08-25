@@ -1,5 +1,11 @@
+.git
+.github
 node_modules
-dist
+**/node_modules
+**/dist
+test-results*
+docs
 *.log
-.env
-secrets
+*.test.ts
+*.test.tsx
+*.test.mjs

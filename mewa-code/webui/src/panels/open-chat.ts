@@ -1,0 +1,89 @@
+import { messagesToRuntime } from "../chat/hydrate";
+import { chatTabId, toast, useAppStore } from "../store";
+import { errorText, getSessionMessagesWithSkillBaseline } from "../transport";
+
+/** Open a session in the fixed editor strip. The legacy navigation argument is ignored. */
+export async function openChatInTab(
+	workspaceId: string,
+	sessionId: string,
+	_requestedNavigation?: unknown,
+	background = false,
+): Promise<void> {
+	const initial = useAppStore.getState();
+	const requestConnectionGeneration =
+		initial.status === "connected" ? initial.connectionGeneration : null;
+	if (
+		initial.removedWorkspaceIds[workspaceId] ||
+		initial.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+	) {
+		return;
+	}
+	const options = background ? { activate: false } : undefined;
+	const store = useAppStore.getState();
+	const tab = (store.tabsByWorkspace[workspaceId] ?? []).find(
+		(t) => t.kind === "chat" && t.sessionId === sessionId,
+	);
+	if (tab) {
+		store.openTab(tab, "keep", options);
+		return;
+	}
+	if (store.sessions[sessionId]) {
+		store.openTab(
+			{
+				kind: "chat",
+				id: chatTabId(workspaceId, sessionId),
+				workspaceId,
+				name: "Chat",
+				sessionId,
+			},
+			"keep",
+			options,
+		);
+		return;
+	}
+	try {
+		const {
+			result: { summary, messages },
+			syncedTick,
+		} = await getSessionMessagesWithSkillBaseline({ sessionId, workspaceId });
+		const current = useAppStore.getState();
+		if (
+			requestConnectionGeneration !== null &&
+			current.connectionGeneration !== requestConnectionGeneration &&
+			!current.removedWorkspaceIds[workspaceId] &&
+			!current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+		) {
+			return openChatInTab(workspaceId, sessionId, undefined, background);
+		}
+		current.hydrateSession(
+			summary,
+			messagesToRuntime(messages, summary.lastSettlement),
+			!background,
+			summary.live ? undefined : syncedTick,
+			options,
+		);
+		const settled = useAppStore.getState();
+		const installed =
+			settled.sessions[sessionId] !== undefined &&
+			(settled.tabsByWorkspace[workspaceId] ?? []).some(
+				(tab) => tab.kind === "chat" && tab.sessionId === sessionId,
+			);
+		if (
+			!installed &&
+			!background &&
+			!settled.removedWorkspaceIds[workspaceId] &&
+			!settled.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+		) {
+			toast.error("The chat could not be restored.", "Couldn't open the chat");
+		}
+	} catch (err) {
+		const current = useAppStore.getState();
+		if (
+			!background &&
+			!current.removedWorkspaceIds[workspaceId] &&
+			!current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+		) {
+			toast.error(errorText(err), "Couldn't open the chat");
+		}
+	}
+}

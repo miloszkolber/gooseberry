@@ -1,0 +1,70 @@
+name: Container images
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/container-images.yml"
+      - "compose.yaml"
+      - ".env.example"
+      - "mewa-code/**"
+      - "mewa-browser/**"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - ".github/workflows/container-images.yml"
+      - "compose.yaml"
+      - ".env.example"
+      - "mewa-code/**"
+      - "mewa-browser/**"
+
+concurrency:
+  group: container-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Source validation
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    name: Build ${{ matrix.image }} image
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: controller
+            context: ./mewa-code
+            file: ./mewa-code/Dockerfile
+          - image: browser
+            context: ./mewa-browser
+            file: ./mewa-browser/Dockerfile
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build container image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

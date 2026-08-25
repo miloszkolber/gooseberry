@@ -1,10 +1,10 @@
 {
-  "name": "@mewa/browser",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "start": "node src/server.mjs",
-    "check": "node --check src/server.mjs && node --check src/policy.mjs && node --check test/policy.test.mjs && node --check test/server.test.mjs",
-    "test": "node --test test/*.test.mjs"
-  }
+	"name": "@mewa/browser",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "node src/server.mjs",
+		"check": "node --check src/server.mjs && node --check src/policy.mjs && node --check src/token.mjs && node --check test/policy.test.mjs && node --check test/server.test.mjs && node --check test/token.test.mjs",
+		"test": "node --test test/*.test.mjs"
+	}
 }

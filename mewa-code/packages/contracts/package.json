@@ -1,0 +1,19 @@
+{
+	"name": "@mewa-code/contracts",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"test": "bun test",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-agent-core": "catalog:",
+		"@types/bun": "catalog:",
+		"@earendil-works/pi-ai": "catalog:",
+		"typescript": "catalog:"
+	}
+}

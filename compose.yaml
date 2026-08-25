@@ -1,125 +1,126 @@
-name: mewa-code
-
+# Development and trusted private-network deployment example.
+# Keep the controller publish binding on loopback unless an external
+# authentication boundary is already in place for non-loopback access.
 services:
-  mewa-code:
-    build:
-      context: ./mewa-code
-    container_name: mewa-code
-    restart: unless-stopped
-    stop_grace_period: 30s
-    user: "${MEWA_UID:-1000}:${MEWA_GID:-1000}"
-    environment:
-      HOME: /home/data
-      MEWA_STATE_DIR: /home/data
-      XDG_CONFIG_HOME: /home/data/.config
-      XDG_DATA_HOME: /home/data/.local/share
-      XDG_STATE_HOME: /home/data/.local/state
-      XDG_CACHE_HOME: /home/data/.cache
-      NODE_COMPILE_CACHE: /home/data/.cache/node-compile-cache
-      NPM_CONFIG_CACHE: /home/data/.cache/npm
-      NPM_CONFIG_USERCONFIG: /home/data/.config/npm/npmrc
-      COREPACK_HOME: /home/data/.cache/corepack
-      NODE_REPL_HISTORY: /home/data/.local/state/node_repl_history
-      SYNARA_MODE: web
-      SYNARA_NO_BROWSER: "1"
-      SYNARA_HOST: 0.0.0.0
-      SYNARA_PORT: 3773
-      SYNARA_AUTH_TOKEN: ${SYNARA_AUTH_TOKEN:?set SYNARA_AUTH_TOKEN}
-      SYNARA_ALLOW_INSECURE_REMOTE: ${SYNARA_ALLOW_INSECURE_REMOTE:-1}
-      SYNARA_PUBLIC_URL: ${SYNARA_PUBLIC_URL:-}
-      SYNARA_HOME: /home/data/synara
-      PI_CODING_AGENT_DIR: /home/data/pi
-      PI_CODING_AGENT_SESSION_DIR: /home/data/pi/sessions
-      PI_SKIP_VERSION_CHECK: "1"
-      PI_TELEMETRY: "0"
-      MEWA_EXA_ENABLED: ${MEWA_EXA_ENABLED:-1}
-      MEWA_RESTRICTED_PATHS: ${MEWA_RESTRICTED_PATHS:-/home/data}
-      EXA_API_KEY: ${EXA_API_KEY:-}
-      SIGNET_DAEMON_URL: ${SIGNET_DAEMON_URL:-}
-      SIGNET_AGENT_ID: ${SIGNET_AGENT_ID:-default}
-      SIGNET_PATH: /workspace
-      MEWA_BROWSER_URL: http://mewa-browser:8787
-      MEWA_BROWSER_TOKEN: ${MEWA_BROWSER_TOKEN:?set MEWA_BROWSER_TOKEN}
-      TZ: ${TZ:-Europe/Warsaw}
-    working_dir: /workspace
-    ports:
-      - "127.0.0.1:${SYNARA_PORT:-3773}:3773"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - type: bind
-        source: ${MEWA_STATE_PATH:-./data}
-        target: /home/data
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${MEWA_WORKSPACE_PATH:-.}
-        target: /workspace
-        bind:
-          create_host_path: false
-    read_only: true
-    tmpfs:
-      - /tmp:exec,nosuid,size=256m,mode=1777
-      - /run:nosuid,size=32m,mode=755
-    ulimits:
-      core: 0
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - >-
-          fetch('http://127.0.0.1:3773/health').then(async r=>{
-          if(!r.ok)throw new Error(String(r.status));const v=await r.json();
-          if(v.status!=='ok'||v.startupReady!==true)process.exit(1);
-          }).catch(()=>process.exit(1));
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    mewa:
+        build:
+            context: ./mewa-code
+            dockerfile: Dockerfile
+            target: controller
+        image: core/mewa-code-controller
+        container_name: mewa-controller
+        restart: unless-stopped
+        working_dir: "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+        command:
+            - bun
+            - /app/mewa-code.js
+            - --no-open
+            - "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+        read_only: true
+        environment:
+            MEWA_CODE_HOST: "0.0.0.0"
+            MEWA_CODE_PORT: "24242"
+            MEWA_CODE_DATA_DIR: "/var/lib/mewa"
+            PI_CODING_AGENT_DIR: "/home/bun/.pi/agent"
+            MEWA_BROWSER_URL: "http://mewa-browser:8787"
+            MEWA_CODE_TOKEN: "${MEWA_CODE_TOKEN:?set a dedicated MEWA_CODE_TOKEN before starting the stack}"
+            MEWA_CODE_ALLOWED_ORIGINS: "${MEWA_CODE_ALLOWED_ORIGINS:-}"
+            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:?set an independent MEWA_BROWSER_TOKEN before starting the stack}"
+            MEWA_MOUNT_ROOTS: "${MEWA_MOUNT_ROOTS:?set absolute same-path mount roots}"
+            MEWA_SSH_HOST: "${MEWA_SSH_HOST:?set the SSH host name or address}"
+            MEWA_SSH_USER: "${MEWA_SSH_USER:?set the SSH host user}"
+            MEWA_SSH_PORT: "${MEWA_SSH_PORT:-22}"
+            MEWA_SSH_CONNECT_TIMEOUT_SECONDS: "${MEWA_SSH_CONNECT_TIMEOUT_SECONDS:-15}"
+            MEWA_SSH_KEEPALIVE_INTERVAL_SECONDS: "${MEWA_SSH_KEEPALIVE_INTERVAL_SECONDS:-15}"
+            MEWA_SSH_KEEPALIVE_COUNT_MAX: "${MEWA_SSH_KEEPALIVE_COUNT_MAX:-3}"
+            MEWA_SSH_PRIVATE_KEY_FILE: "/run/secrets/mewa_ssh_key"
+            MEWA_SSH_KNOWN_HOSTS_FILE: "/run/secrets/mewa_ssh_known_hosts"
+        ports:
+            - "127.0.0.1:${MEWA_CODE_PORT:-24242}:24242"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        volumes:
+            - mewa-state:/var/lib/mewa
+            - pi-state:/home/bun/.pi
+            - type: bind
+              source: "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+              target: "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+              read_only: false
+              bind:
+                  create_host_path: false
+            - type: bind
+              source: "${MEWA_SSH_PRIVATE_KEY_FILE:?set the host SSH private-key file}"
+              target: /run/secrets/mewa_ssh_key
+              read_only: true
+              bind:
+                  create_host_path: false
+            - type: bind
+              source: "${MEWA_SSH_KNOWN_HOSTS_FILE:?set the host SSH known-hosts file}"
+              target: /run/secrets/mewa_ssh_known_hosts
+              read_only: true
+              bind:
+                  create_host_path: false
+        tmpfs:
+            - /tmp:size=64m,mode=1777
+            - /run:size=16m,mode=755,uid=1000,gid=1000
+        depends_on:
+            mewa-browser:
+                condition: service_healthy
+        healthcheck:
+            test:
+                - CMD
+                - bun
+                - -e
+                - "fetch('http://127.0.0.1:24242/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+            interval: 30s
+            timeout: 5s
+            start_period: 10s
+            retries: 3
+        networks:
+            - mewa
 
-  mewa-browser:
-    build:
-      context: ./mewa-browser
-    container_name: mewa-browser
-    restart: unless-stopped
-    user: "${MEWA_UID:-1000}:${MEWA_GID:-1000}"
-    environment:
-      PORT: 8787
-      MEWA_BROWSER_TOKEN: ${MEWA_BROWSER_TOKEN:?set MEWA_BROWSER_TOKEN}
-      BROWSER_ARTIFACT_ROOT: /state/artifacts
-      BROWSER_STATE_ROOT: /tmp/mewa-browser
-      BROWSER_MAX_ARTIFACT_BYTES: ${BROWSER_MAX_ARTIFACT_BYTES:-67108864}
-      BROWSER_MAX_TOTAL_ARTIFACT_BYTES: ${BROWSER_MAX_TOTAL_ARTIFACT_BYTES:-268435456}
-      BROWSER_MAX_STATE_BYTES: ${BROWSER_MAX_STATE_BYTES:-268435456}
-      BROWSER_MAX_SESSIONS: ${BROWSER_MAX_SESSIONS:-16}
-      BROWSER_COMMAND_TIMEOUT_MS: ${BROWSER_COMMAND_TIMEOUT_MS:-120000}
-      TZ: ${TZ:-Europe/Warsaw}
-    expose:
-      - "8787"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    read_only: true
-    shm_size: "512m"
-    tmpfs:
-      - /tmp:exec,nosuid,size=512m,mode=1777
-      - /run:nosuid,size=32m,mode=755
-      - /state:nosuid,size=320m,mode=700,uid=${MEWA_UID:-1000},gid=${MEWA_GID:-1000}
-    ulimits:
-      core: 0
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - >-
-          require('node:http').get('http://127.0.0.1:8787/health',r=>
-          process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1));
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+    mewa-browser:
+        build:
+            context: ./mewa-browser
+            dockerfile: Dockerfile
+        image: core/mewa-browser
+        container_name: mewa-browser
+        restart: unless-stopped
+        read_only: true
+        environment:
+            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:?set an independent MEWA_BROWSER_TOKEN before starting the stack}"
+            PORT: "8787"
+            BROWSER_ARTIFACT_ROOT: "/state/artifacts"
+            BROWSER_STATE_ROOT: "/state/browser"
+            BROWSER_MAX_ARTIFACT_BYTES: "67108864"
+            BROWSER_MAX_TOTAL_ARTIFACT_BYTES: "268435456"
+            BROWSER_MAX_STATE_BYTES: "268435456"
+            BROWSER_MAX_SESSIONS: "16"
+        expose:
+            - "8787"
+        tmpfs:
+            - /tmp:size=128m,mode=1777,uid=1000,gid=1000
+            - /run:size=16m,mode=755,uid=1000,gid=1000
+            - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000
+            - /state/artifacts:size=256m,mode=700,uid=1000,gid=1000
+            - /state/browser:size=256m,mode=700,uid=1000,gid=1000
+        healthcheck:
+            test:
+                - CMD
+                - node
+                - -e
+                - "fetch('http://127.0.0.1:8787/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+            interval: 30s
+            timeout: 5s
+            start_period: 10s
+            retries: 3
+        networks:
+            - mewa
+
+volumes:
+    mewa-state:
+    pi-state:
+
+networks:
+    mewa:
+        internal: false
