@@ -1,25 +1,32 @@
 # Mewa Code
 
-Mewa Code is a focused web interface for the Pi Coding Agent. The product baseline is [`docs/product-baseline.md`](docs/product-baseline.md).
+Mewa Code is a focused Web UI and ACP host for the Pi Coding Agent. It is intended to replace the parts of OpenChamber that are useful for day-to-day coding: directory-based projects, persistent sessions, goals and tasks, integrated subagents, multi-image prompts, Pi-reported usage, local Git visibility, and read-only file browsing.
 
-## Run with Compose
+Pi remains the agent runtime. Mewa adds a small product shell and a curated set of SDK extensions without replacing Pi's normal provider, model, session, tool, retry, compaction, or trust behavior.
 
-Copy `.env.example` to `.env`, set separate controller and browser tokens, and start the controller plus isolated browser service:
+## Runtime model
+
+- The controller embeds Pi through its SDK.
+- Pi's normal `bash` tool executes transparently through SSH on the development host.
+- Repository files, Git status and diffs, and file previews use approved same-path mounts.
+- Chromium runs in the separate `mewa-browser` service.
+- Browser and ACP are the supported interfaces. There is no TUI or Web UI terminal.
+
+## Development status
+
+The active rewrite is on `rewrite/mewa-code-foundation`. The authoritative scope is in [`docs/product-baseline.md`](docs/product-baseline.md), with implementation sequencing in [`docs/implementation-plan.md`](docs/implementation-plan.md).
+
+## Local deployment
+
+Copy `.env.example` to `.env`, configure the admitted project roots and SSH credentials, then start the controller and isolated browser service:
 
 ```bash
 cp .env.example .env
+docker compose up -d --build
 ```
 
-The controller publishes on `127.0.0.1:24242` by default. Read the baseline and [`docs/README.md`](docs/README.md) for scope and current documentation.
-
-Open the UI with the controller token in a one-time URL fragment, for example `http://127.0.0.1:24242/#token=<MEWA_CODE_TOKEN>`. The UI saves the fragment in tab-scoped session storage and removes it from the address before opening its WebSocket. The token is never sent to `mewa-browser` or placed in a WebSocket URL query.
-
-Compose requires an absolute `MEWA_WORKSPACE_PATH`, matching `MEWA_MOUNT_ROOTS`, and a pinned SSH key plus known-hosts file. Repository files stay on same-path mounts, while Pi bash and browser terminals execute through the configured host SSH account. See [`docs/architecture.md`](docs/architecture.md) and [`docs/security.md`](docs/security.md).
-
-## Develop
-
-The Bun workspace lives in [`mewa-code/`](mewa-code/). Follow [`mewa-code/README.md`](mewa-code/README.md) for local development checks.
+The controller binds to loopback by default. Provider authentication is completed through Pi. Signet memory is optional.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). See [`NOTICE.md`](NOTICE.md) for attribution and provenance.
+Apache-2.0. See [`NOTICE.md`](NOTICE.md) for attribution and provenance.
