@@ -1,0 +1,34 @@
+{
+	"name": "@mewa-code/server",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./agent": "./src/agent/index.ts",
+		"./acp": "./src/acp/index.ts"
+	},
+	"scripts": {
+		"dev": "bun run --watch src/dev.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@agentclientprotocol/sdk": "catalog:",
+		"@earendil-works/pi-ai": "catalog:",
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@mewa-code/contracts": "workspace:*",
+		"@mewa-code/pi-mewa-browser": "workspace:*",
+		"@mewa-code/shared": "workspace:*",
+		"@signetai/connector-pi": "0.157.3",
+		"@stroncium/procfs": "1.2.1",
+		"bun-pty": "0.4.10",
+		"pi-web-access": "0.13.0",
+		"trash": "10.1.1",
+		"typebox": "catalog:"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	}
+}

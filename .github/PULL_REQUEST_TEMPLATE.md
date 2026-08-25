@@ -8,7 +8,7 @@ Closes #...
 
 ## Checklist
 
-- [ ] Fast gates pass: `bun run lint`, `bun run typecheck`, `bun run test`
-- [ ] E2E suite passes for app-affecting changes (`bun run e2e`, or `bun run e2e:full` when touching agent behavior)
+- [ ] Fast gates pass from `mewa-code/`: `bun run lint`, `bun run typecheck`, `bun run test`
+- [ ] `mewa-browser` checks and tests pass when changing the browser service
 - [ ] Relevant documentation under `docs/` reflects boundary, contract, or behavior changes
 - [ ] I have read the [Contributing guide](../docs/contributing.md) and agree to the [Code of Conduct](../docs/code-of-conduct.md)

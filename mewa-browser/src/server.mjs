@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { BrowserPolicyError, screenshotFilename, validateBrowserRequest } from "./policy.mjs";
+import { assertStrongToken } from "./token.mjs";
 
 const FIXED_ORIGIN = "http://mewa-browser.invalid";
 const TEMP_ARTIFACT_PATTERN = /^\.mewa-screenshot-[A-Za-z0-9_-]+\.tmp$/;
@@ -956,7 +957,7 @@ function requestHandler(req, res) {
 }
 
 export async function startServer() {
-	if (!authToken.trim()) throw new Error("MEWA_BROWSER_TOKEN is required");
+	assertStrongToken(authToken);
 	await access(agentBrowser, constants.X_OK);
 	await access(browserConfig, constants.R_OK);
 	await initializeStorage();

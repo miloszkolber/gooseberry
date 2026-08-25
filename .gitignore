@@ -4,22 +4,14 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .idea/
-test-results/
-playwright-report/
-blob-report/
-playwright/.cache/
-e2e/screenshots/
-# Workflow-test run log is local evidence, not a committed record.
-e2e/.workflow-runs.jsonl
-
-.playwright-mcp/
+test-results*/
 .claude/
 .mockups/
 .superpowers/
 .gsd/
 
-# Build-only manifests written transiently by apps/cli/scripts/build-binary.ts
-apps/cli/src/*.generated.ts
+# Build-only manifests written transiently by the controller.
+mewa-code/apps/controller/src/*.generated.ts
 # Scratch files `bun build --compile` leaves behind when a binary build is interrupted
 *.bun-build
 
@@ -27,8 +19,3 @@ apps/cli/src/*.generated.ts
 .env
 .env.local
 .env.*.local
-test-results-binary/
-playwright-report-binary/
-
-# Astro's generated type cache
-.astro/

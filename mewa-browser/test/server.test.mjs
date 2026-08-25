@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
 
-const token = "server-test-token";
+const token = "server-test-token-0123456789abcdef0123456789";
 const serviceRoot = await mkdtemp(join(tmpdir(), "mewa-browser-test-"));
 const artifactRoot = join(serviceRoot, "artifacts");
 const stateRoot = join(serviceRoot, "state");
@@ -263,19 +263,21 @@ test("cleans timed-out and output-limited sessions", async () => {
 	await assert.rejects(access(join(stateRoot, "output-session")));
 });
 
-test("requires an independent browser API token before listening", async () => {
-	const missingToken = spawn(process.execPath, ["src/server.mjs"], {
-		cwd: new URL("..", import.meta.url),
-		env: {
-			...process.env,
-			PORT: String(await freePort()),
-			MEWA_BROWSER_TOKEN: "",
-		},
-		stdio: ["ignore", "ignore", "ignore"],
-	});
-	const exitCode = await new Promise((resolveExit, rejectExit) => {
-		missingToken.once("error", rejectExit);
-		missingToken.once("close", resolveExit);
-	});
-	assert.notEqual(exitCode, 0);
+test("requires a strong independent browser API token before listening", async () => {
+	for (const invalidToken of ["", "short-browser-token", "INVALID_REPLACE_WITH_RANDOM_BROWSER_TOKEN"]) {
+		const invalid = spawn(process.execPath, ["src/server.mjs"], {
+			cwd: new URL("..", import.meta.url),
+			env: {
+				...process.env,
+				PORT: String(await freePort()),
+				MEWA_BROWSER_TOKEN: invalidToken,
+			},
+			stdio: ["ignore", "ignore", "ignore"],
+		});
+		const exitCode = await new Promise((resolveExit, rejectExit) => {
+			invalid.once("error", rejectExit);
+			invalid.once("close", resolveExit);
+		});
+		assert.notEqual(exitCode, 0);
+	}
 });

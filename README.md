@@ -1,66 +1,25 @@
 # Mewa Code
 
-Mewa Code is a focused web interface for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent. It organizes local Git repositories, optional worktrees, persistent Pi sessions, files, terminals, and local changes. Pi ships with a visible Mewa profile integrating browser QA, web search, memory, goals, and subagents while remaining authoritative for models, credentials, prompts, tools, extensions, compaction, retry, usage, cost, and canonical JSONL history.
+Mewa Code is a focused web interface for the Pi Coding Agent. The product baseline is [`docs/product-baseline.md`](docs/product-baseline.md).
 
-The canonical product scope is [`docs/product-baseline.md`](docs/product-baseline.md). Legacy review, spec, workflow, website, release, visualization, todo, template, and GitHub systems have been removed from this focused foundation. The isolated `mewa-browser` service is restored under `mewa-browser/` and exposed to Pi through the focused browser extension package.
+## Run with Compose
 
-This branch is the source foundation for the new product. It does not publish binaries or installers yet. Runtime prerequisites include `git` on PATH. Agent-backed runs require an authenticated Pi provider, which may be configured through supported Pi-backed UI actions. Mewa Code never requires a standalone `pi` executable.
-
-## Quick start
-
-### Prerequisites
-
-- **Bun** ≥ 1.3
-- **Node.js** ≥ 22.19 for the in-process Pi engine
-- An authenticated Pi provider for agent-backed runs
-
-### Develop
+Copy `.env.example` to `.env`, set separate controller and browser tokens, and start the controller plus isolated browser service:
 
 ```bash
-git clone <repo-url>
-cd mewa_code
-bun install
-bun run dev
+cp .env.example .env
 ```
 
-Run the local launcher with `bun run --filter @mewa-code/cli dev`.
+The controller publishes on `127.0.0.1:24242` by default. Read the baseline and [`docs/README.md`](docs/README.md) for scope and current documentation.
 
-## Architecture
+Open the UI with the controller token in a one-time URL fragment, for example `http://127.0.0.1:24242/#token=<MEWA_CODE_TOKEN>`. The UI saves the fragment in tab-scoped session storage and removes it from the address before opening its WebSocket. The token is never sent to `mewa-browser` or placed in a WebSocket URL query.
 
-- **Engine host** — `packages/server` and `packages/shared`, currently launched by `apps/cli`, run Pi in-process and serve the browser connection.
-- **Shared client-host types** — `packages/contracts` reflects the imported transport surface.
-- **Web client** — `apps/web` contains the current React browser interface.
+Compose requires an absolute `MEWA_WORKSPACE_PATH`, matching `MEWA_MOUNT_ROOTS`, and a pinned SSH key plus known-hosts file. Repository files stay on same-path mounts, while Pi bash and browser terminals execute through the configured host SSH account. See [`docs/architecture.md`](docs/architecture.md) and [`docs/security.md`](docs/security.md).
 
-The product baseline is [`docs/product-baseline.md`](docs/product-baseline.md). [`docs/foundation-inventory.md`](docs/foundation-inventory.md) describes the imported implementation until it is simplified. It does not expand product scope.
+## Develop
 
-## Repo layout
-
-```
-apps/
-  cli/        current entrypoint: boot host and open browser
-  web/        browser UI client
-  desktop/    inherited deferred launcher, not baseline scope
-packages/
-  server/     createServer(): Bun.serve + AgentSessionManager
-  contracts/  the wire, types-only
-  shared/     server-side helpers
-```
-
-## Development checks
-
-Run the narrowest check or focused test for the code being changed. Use repository-wide type checking or builds when a change crosses package boundaries. The inherited full unit and end-to-end suites are not routine gates during simplification, and tests for removed features should be deleted with those features.
-
-## Privacy
-
-Mewa Code does not include product analytics, PostHog, Google Tag Manager, tracking pixels, or hidden
-telemetry. Local credentials, files, transcripts, and Pi's canonical session files remain on the host unless
-an explicit feature or configured extension sends them elsewhere. Requests to the selected model provider
-transmit prompts and supplied context according to that provider's terms.
-
-## Contributing
-
-Contributions are welcome. See [`docs/contributing.md`](docs/contributing.md) and the [`docs/code-of-conduct.md`](docs/code-of-conduct.md).
+The Bun workspace lives in [`mewa-code/`](mewa-code/). Follow [`mewa-code/README.md`](mewa-code/README.md) for local development checks.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). See [`NOTICE.md`](NOTICE.md) for attribution and provenance.

@@ -9,6 +9,7 @@ Requirements are Bun 1.3 or newer, Node.js 22.19 or newer for Pi, Git, and an au
 ```bash
 git clone <repo-url>
 cd mewa_code
+cd mewa-code
 bun install
 bun run dev
 ```
@@ -23,7 +24,7 @@ Keep changes focused. Remove dependencies, protocol methods, documentation, and 
 
 Run the narrowest relevant check while developing. Add or retain tests for observable product behavior and meaningful failures, not inherited coverage totals.
 
-Use repository-wide type checking or builds when a change crosses package boundaries. Use browser end-to-end tests only when the change crosses the real browser-host boundary. Agent-backed tests require explicit intent because they use provider credentials and tokens.
+Use repository-wide type checking or builds when a change crosses package boundaries. Run the focused `mewa-browser` checks when changing its service. Agent-backed tests require explicit intent because they use provider credentials and tokens.
 
 ## Submitting changes
 

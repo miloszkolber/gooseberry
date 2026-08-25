@@ -132,8 +132,9 @@ Pi dependencies use one exact, internally consistent version across the complete
 
 ### Subagents
 
-- Mewa Code supports Pi subagents by adopting or adapting a Pi extension rather than creating a separate orchestration runtime.
+- Mewa Code supports Pi subagents through one small built-in blocking extension rather than a separate orchestration runtime or spawned process.
 - A child inherits the parent session's model and thinking defaults unless the user explicitly chooses an override.
+- The child is a persistent normal Pi session in the process-global session registry, with the parent's runtime generation, admitted workspace, settings, guards, and integrations.
 - The UI shows parent-child relationships, child status, relevant output, completion, and failure.
 - Subagent sessions and events remain isolated from unrelated sessions.
 - Vendor-specific subagent formats do not need to be emulated.
@@ -143,6 +144,8 @@ Pi dependencies use one exact, internally consistent version across the complete
 
 - Pi credentials, settings, extensions, skills, and canonical sessions remain in Pi-owned storage.
 - Mewa Code stores only its own project registry, UI preferences, session presentation metadata, and extension-specific product state under its own state root.
+- Repository, file, editor, local Git, diff, and worktree paths are served only from approved absolute same-path bind mounts. `MEWA_MOUNT_ROOTS` is mandatory for project/workspace admission. `/`, state roots, missing mounts, and symlink escapes are rejected, and persisted projects outside the configured roots fail clearly.
+- Pi's model-facing `bash` tool retains Pi's public schema and renderer while its execution backend uses the system OpenSSH client on the configured host. Browser terminals use OpenSSH PTYs through `bun-pty`. SSH is an implementation boundary, not a model-facing tool, and SFTP is not part of the product.
 - Credentials and application state must never appear as repository files or become browseable through the project file surface.
 - Pi and Mewa state roots are protected from project-scoped file and search tools, retained subagents, and optional extensions. Existing symlinks must not turn a project path into access to a protected root.
 - Shell-command filtering around protected paths is defense in depth, not a complete sandbox. The stronger boundary is filesystem layout and avoiding credential or state mounts inside repositories.
@@ -152,6 +155,10 @@ Pi dependencies use one exact, internally consistent version across the complete
 ## Security and privacy
 
 Mewa Code is a trusted development tool, not a sandbox for hostile repositories or prompts. Pi may read, modify, and execute within the selected repository with the host user's permissions. The UI must make that authority clear.
+
+- Installed Pi extensions and subagents are trusted controller code. Protected-state and path guards reduce accidental exposure but are defense in depth, not a sandbox.
+- The configured SSH account, host-side Unix permissions, pinned known-hosts file, shell, and SSH policy are the exact process-execution authority. Controller provider and browser tokens are not forwarded to remote commands.
+- Browser and ACP clients are the primary interface. Mewa Code has no TUI, and the isolated `mewa-browser` service receives neither SSH material nor repository mounts.
 
 - Bind to loopback by default.
 - Require an explicit authentication boundary before non-loopback use. A trusted private-network identity layer such as Tailscale may provide that boundary.
@@ -166,6 +173,7 @@ Mewa Code is a trusted development tool, not a sandbox for hostile repositories 
 - Prefer Pi behavior and Pi extensions over host-side replicas.
 - Add tests for observable baseline behavior and meaningful failure cases. Do not preserve or add tests merely because an inherited feature once existed.
 - During development, run the narrowest relevant checks. Reserve broad end-to-end suites for changes that cross the real browser-host boundary or for a deliberate release gate.
+- CI may validate source and build multi-architecture images without publishing them. Public distribution remains deferred until complete legal review.
 - No production deployment, binary release, installer, self-update channel, public website, or automated release pipeline is required while the product is being simplified.
 - Preserve accurate Apache-2.0 attribution and complete legal review before any public distribution.
 
@@ -237,7 +245,7 @@ The target is met when all of the following are true:
 
 ## Current foundation gap
 
-The ThinkRail-derived product systems and dockable shared layout have been removed. The retained project, session, chat, file, editor, diff, terminal, worktree, browser, web-access, memory, goal, and subagent surfaces now form the focused Mewa baseline. Release readiness still requires an enforceable protected-state boundary for child subagents and arbitrary in-process Pi extensions, plus built-image inspection proving the final controller and browser contents satisfy the container acceptance criteria.
+The ThinkRail-derived product systems and dockable shared layout have been removed. The retained project, session, chat, file, editor, diff, terminal, worktree, browser, web-access, memory, goal, and subagent surfaces now form the focused Mewa baseline. In-process child sessions already inherit their parent's runtime generation, admitted workspace, settings, guards, and integrations. Arbitrary installed extensions and subagents are trusted controller code, not sandboxed code. Built-image and live-boundary validation proving the final controller and browser contents satisfy the container acceptance criteria remains unverified.
 
 ## Decision trace
 

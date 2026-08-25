@@ -1,8 +1,0 @@
-#!/bin/sh
-# e2e stub for VS Code's CLI (`code`). Deterministic: no real editor launches — it just appends its
-# argv to $MEWA_CODE_E2E_EDITOR_LOG (see fixtures/paths.ts `E2E_EDITOR_LOG`), one line per call, so a
-# test can assert the workspace row's "Open in VS Code" launched with the right worktree path.
-if [ -n "$MEWA_CODE_E2E_EDITOR_LOG" ]; then
-	echo "$@" >>"$MEWA_CODE_E2E_EDITOR_LOG"
-fi
-exit 0

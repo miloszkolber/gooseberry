@@ -1,1 +1,0 @@
-bun run check:deps && bun run typography:check && bun run colors:check && bun run lint && bun run typecheck
