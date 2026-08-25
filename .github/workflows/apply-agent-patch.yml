@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
           test -s .agent-patch
           test -s .agent-message
+          cp .agent-message /tmp/agent-message
           git apply --index --whitespace=error .agent-patch
           rm -f .agent-patch .agent-message .snapshot-trigger
           git add -A
@@ -53,10 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          message="$(cat .git/../.agent-message 2>/dev/null || true)"
-          if [ -z "$message" ]; then
-            message="refactor: apply validated implementation patch"
-          fi
+          message="$(cat /tmp/agent-message)"
           git config user.name "OpenAI"
           git config user.email "noreply@openai.com"
           git commit -m "$message"
