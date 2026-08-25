@@ -40,11 +40,11 @@ export function AddProjectMenu({
 							{recentProjects.map((project) => (
 								<DropdownMenuItem
 									key={project.id}
-									onSelect={() => onOpenRecent(project.path)}
-									title={project.path}
+									onSelect={() => project.roots[0] && onOpenRecent(project.roots[0])}
+									title={project.roots.join("\n")}
 								>
 									<Folder />
-									<span className="truncate">{project.path}</span>
+									<span className="truncate">{project.roots.join(", ")}</span>
 								</DropdownMenuItem>
 							))}
 						</DropdownMenuGroup>

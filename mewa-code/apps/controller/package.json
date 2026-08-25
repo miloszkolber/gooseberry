@@ -13,6 +13,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
+		"@mewa-code/contracts": "workspace:*",
 		"@mewa-code/server": "workspace:*",
 		"@mewa-code/shared": "workspace:*"
 	},

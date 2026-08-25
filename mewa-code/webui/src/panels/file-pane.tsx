@@ -18,11 +18,15 @@ export function FilePane({ tab }: { tab: FileTab }) {
 
 	useLiveTabContent(tab, {
 		read: () =>
-			getTransport().request("fs.readFile", { workspaceId: tab.workspaceId, path: tab.path }),
+			getTransport().request("fs.readFile", {
+				projectId: tab.projectAreaId,
+				root: tab.root,
+				path: tab.path,
+			}),
 		applyFresh: ({ content }, tick) =>
-			useAppStore.getState().updateFileTabContent(tab.workspaceId, tab.id, content, tick),
+			useAppStore.getState().updateFileTabContent(tab.projectAreaId, tab.id, content, tick),
 		keepCurrent: (tick) =>
-			useAppStore.getState().updateFileTabContent(tab.workspaceId, tab.id, tab.content, tick),
+			useAppStore.getState().updateFileTabContent(tab.projectAreaId, tab.id, tab.content, tick),
 	});
 
 	if (!isMarkdownPath(tab.path)) {
@@ -68,7 +72,11 @@ export function FilePane({ tab }: { tab: FileTab }) {
 			<div className="min-h-0 flex-1">
 				{view === "rendered" ? (
 					<Suspense fallback={loading}>
-						<MarkdownPreview content={tab.content} workspaceId={tab.workspaceId} path={tab.path} />
+						<MarkdownPreview
+							content={tab.content}
+							projectAreaId={tab.projectAreaId}
+							path={tab.path}
+						/>
 					</Suspense>
 				) : (
 					<SourcePreview path={tab.path} content={tab.content} />

@@ -12,7 +12,7 @@ body,
 /* Colour + rendering only. The body's family/size/weight/line-height are the `rootStyle` from
    `typography.json`, emitted into `@layer base` by `generated/typography.css` — never restated here. */
 body {
-	background: var(--container-workspace-bg);
+	background: var(--container-project-bg);
 	color: var(--text-default);
 	/* macOS-only effect (both properties are no-ops elsewhere); no `optimizeLegibility` — document,
 	   don't hack other platforms. */

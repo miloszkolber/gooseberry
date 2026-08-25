@@ -78,7 +78,7 @@ function scrollToAnchor(id: string): void {
 		?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-export function documentComponents(ctx: { workspaceId: string; path: string }): Components {
+export function documentComponents(ctx: { projectAreaId: string; path: string }): Components {
 	function DocumentLink({ href, children }: { href?: string; children?: ReactNode }) {
 		const kind = classifyHref(href);
 		if (kind === "anchor" && href) {
@@ -101,7 +101,7 @@ export function documentComponents(ctx: { workspaceId: string; path: string }): 
 					onClick={(e) => {
 						e.preventDefault();
 						const target = resolveRelativePath(ctx.path, splitHash(href).path);
-						if (target) void openFileInTab(ctx.workspaceId, target, "preview");
+						if (target) void openFileInTab(ctx.projectAreaId, target, "preview");
 					}}
 				>
 					{children}
@@ -118,7 +118,7 @@ export function documentComponents(ctx: { workspaceId: string; path: string }): 
 	function DocumentImage({ src, alt, title }: { src?: string; alt?: string; title?: string }) {
 		const resolved =
 			classifyHref(src) === "relative" && src
-				? `${getTransport().httpBase()}/files/${encodeURIComponent(ctx.workspaceId)}/${encodePath(
+				? `${getTransport().httpBase()}/files/${encodeURIComponent(ctx.projectAreaId)}/${encodePath(
 						resolveRelativePath(ctx.path, src),
 					)}`
 				: src;

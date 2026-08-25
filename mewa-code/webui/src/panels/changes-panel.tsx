@@ -1,9 +1,9 @@
-import type { GitDiffScope, GitStatus } from "@mewa-code/contracts";
+import type { GitDiffScope, GitRepository } from "@mewa-code/contracts";
 import { GitBranch, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-	matchesWorktreePath,
-	selectActiveEditorTab,
+	matchesChangePath,
+	selectActiveContentTab,
 	type TabIntent,
 	toast,
 	useAppStore,
@@ -15,12 +15,17 @@ import { ChangesTree } from "./changes-tree";
 import { DiffStatBadge } from "./diff-stat-badge";
 import { openDiffInTab } from "./open-tabs";
 import { ToggleSegment } from "./toggle-segment";
-import { useWorkspaceRead } from "./use-workspace-read";
+import { useProjectRead } from "./use-project-read";
 
 const SCOPE: GitDiffScope = { kind: "uncommitted" };
 
-export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
-	const [status, setStatus] = useState<GitStatus | null>(null);
+export function ChangesPanel({ projectAreaId }: { projectAreaId: string }) {
+	const [repositories, setRepositories] = useState<GitRepository[]>([]);
+	const [selectedRepository, setSelectedRepository] = useState<string | null>(null);
+	const status =
+		repositories.find((repository) => repository.root === selectedRepository) ??
+		repositories[0] ??
+		null;
 	const [error, setError] = useState<string | null>(null);
 	const warnedRef = useRef(false);
 	const [highlighted, setHighlighted] = useState<string | null>(null);
@@ -28,28 +33,34 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 	const changesView = useAppStore((state) => state.changesView);
 	const setChangesView = useAppStore((state) => state.setChangesView);
 	const activeDiffTab = useAppStore((state) => {
-		const tab = selectActiveEditorTab(state, workspaceId);
+		const tab = selectActiveContentTab(state, projectAreaId);
 		return tab?.kind === "diff" ? tab : null;
 	});
 
-	const { reload } = useWorkspaceRead(
-		workspaceId,
-		(id) => getTransport().request("git.status", { workspaceId: id, scope: SCOPE }),
+	const { reload } = useProjectRead(
+		projectAreaId,
+		(id) => getTransport().request("git.listRepositories", { projectId: id }),
 		{
 			onResult: (result) => {
-				setStatus(result);
+				setRepositories(result);
+				setSelectedRepository((current) =>
+					result.some((repository) => repository.root === current)
+						? current
+						: (result[0]?.root ?? null),
+				);
 				setError(null);
 				warnedRef.current = false;
 			},
 			onFailure: (_id, failure) => {
-				if (status && !warnedRef.current) {
+				if (repositories.length > 0 && !warnedRef.current) {
 					warnedRef.current = true;
 					toast.error(`Could not refresh the changes: ${errorText(failure)}`);
 				}
 				setError(errorText(failure));
 			},
 			onSwitch: () => {
-				setStatus(null);
+				setRepositories([]);
+				setSelectedRepository(null);
 				setError(null);
 				setHighlighted(null);
 				warnedRef.current = false;
@@ -60,21 +71,21 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 	const openDiff = useCallback(
 		(path: string, intent: TabIntent) => {
 			setHighlighted(path);
-			void openDiffInTab(workspaceId, SCOPE, path, intent);
+			if (status) void openDiffInTab(projectAreaId, SCOPE, path, intent, undefined, status.root);
 		},
-		[workspaceId],
+		[status, projectAreaId],
 	);
 
 	useEffect(() => {
-		if (!status || changesRequest?.workspaceId !== workspaceId) return;
+		if (!status || changesRequest?.projectAreaId !== projectAreaId) return;
 		if (useAppStore.getState().changesRequest !== changesRequest) return;
 		const match = status.changes.find((change) =>
-			matchesWorktreePath(changesRequest.path, change.path),
+			matchesChangePath(changesRequest.path, change.path),
 		);
 		if (match) openDiff(match.path, "preview");
 		else setHighlighted(changesRequest.path);
 		useAppStore.getState().clearChangesRequest();
-	}, [changesRequest, openDiff, status, workspaceId]);
+	}, [changesRequest, openDiff, status, projectAreaId]);
 
 	useEffect(() => {
 		if (activeDiffTab) setHighlighted(null);
@@ -88,7 +99,28 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 			<div className="flex h-panel-header-row shrink-0 items-center gap-xs border-border-default border-b px-sm">
 				<div className="mr-auto flex min-w-0 items-center gap-xs tr-text-metadata text-text-muted">
 					<GitBranch className="size-3.5 shrink-0" />
-					<span className="truncate">{status?.branch || "Git changes"}</span>
+					{repositories.length > 1 ? (
+						<select
+							aria-label="Git repository"
+							value={status?.root ?? ""}
+							onChange={(event) => setSelectedRepository(event.target.value)}
+							className="min-w-0 bg-transparent text-text-muted"
+						>
+							{repositories.map((repository) => (
+								<option key={repository.id} value={repository.root}>
+									{repository.relativePath || repository.name}
+								</option>
+							))}
+						</select>
+					) : (
+						<span className="truncate">
+							{status
+								? status.head.kind === "branch"
+									? status.head.name
+									: status.head.oid.slice(0, 8)
+								: "Git changes"}
+						</span>
+					)}
 				</div>
 				<button
 					type="button"
@@ -127,7 +159,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 						</button>
 					</div>
 				) : status === null ? (
-					<p className="px-sm py-xs tr-text-metadata text-text-muted">Loading…</p>
+					<p className="px-sm py-xs tr-text-metadata text-text-muted">No Git repositories found.</p>
 				) : status.changes.length === 0 ? (
 					<p data-testid="changes-empty" className="px-sm py-xs tr-text-metadata text-text-muted">
 						Working tree is clean.

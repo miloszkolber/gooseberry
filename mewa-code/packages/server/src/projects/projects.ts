@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, isAbsolute, relative } from "node:path";
 import type { Project } from "@mewa-code/contracts";
-import { canonicalPath, git as runGit } from "../git";
-import { assertMountedProject } from "../path-admission";
-import { loadProjects, loadWorkspaces, saveProjects } from "../persistence";
+import { canonicalPath } from "../git";
+import { assertMountedDirectory, assertMountedProject } from "../path-admission";
+import { loadProjects, saveProjects } from "../persistence";
 
 type ProjectPublisher = (project: Project) => void;
 
@@ -15,15 +15,6 @@ export function setProjectPublisher(fn: ProjectPublisher | null): void {
 
 function emit(project: Project): void {
 	publishProject?.(project);
-}
-
-function git(cwd: string, args: string[]) {
-	return runGit(cwd, args, { env: process.env });
-}
-
-function gitToplevel(path: string): string | null {
-	const result = git(path, ["rev-parse", "--show-toplevel"]);
-	return result.ok ? result.out || null : null;
 }
 
 function slugify(name: string): string {
@@ -58,20 +49,20 @@ function ensureSlugs(projects: Project[]): boolean {
 export function getProjects(): Project[] {
 	const projects = loadProjects();
 	for (const project of projects) {
-		assertMountedProject(project.path);
+		if (project.roots.length === 0) throw new Error(`Project has no roots: ${project.id}`);
+		project.roots = project.roots.map((root) => assertMountedProject(root));
 	}
 	if (ensureSlugs(projects)) saveProjects(projects);
 	return projects;
 }
 
 export function openProject(path: string): Project {
-	const mountedPath = assertMountedProject(path);
-	const root = gitToplevel(mountedPath);
-	if (!root) throw new Error(`Not a git repository: ${path}`);
-	const mountedRoot = assertMountedProject(root);
+	const mountedRoot = assertMountedProject(path);
 
 	const projects = getProjects();
-	const existing = projects.find((p) => canonicalPath(p.path) === mountedRoot);
+	const existing = projects.find((project) =>
+		project.roots.some((root) => canonicalPath(root) === mountedRoot),
+	);
 	if (existing) {
 		delete existing.closed;
 		existing.lastOpened = Date.now();
@@ -80,15 +71,11 @@ export function openProject(path: string): Project {
 		return existing;
 	}
 
-	const wanted = mountedRoot;
-	if (loadWorkspaces().some((ws) => canonicalPath(ws.worktreePath) === wanted))
-		throw new Error(`This folder is already open in Mewa Code as a workspace: ${mountedRoot}`);
-
 	const taken = new Set(projects.map((p) => p.slug));
 	const project: Project = {
 		id: randomUUID(),
 		name: basename(mountedRoot),
-		path: mountedRoot,
+		roots: [mountedRoot],
 		slug: uniqueSlug(slugify(basename(mountedRoot)), taken),
 		lastOpened: Date.now(),
 	};
@@ -96,6 +83,59 @@ export function openProject(path: string): Project {
 	saveProjects(projects);
 	emit(project);
 	return project;
+}
+
+export function getProject(id: string): Project {
+	const project = getProjects().find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	return project;
+}
+
+export function addProjectRoot(id: string, path: string): Project {
+	const root = assertMountedProject(path);
+	const projects = getProjects();
+	const project = projects.find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const owner = projects.find(
+		(candidate) =>
+			candidate.id !== id && candidate.roots.some((known) => canonicalPath(known) === root),
+	);
+	if (owner) throw new Error(`Directory is already a root of project ${owner.name}`);
+	if (!project.roots.some((known) => canonicalPath(known) === root)) project.roots.push(root);
+	project.lastOpened = Date.now();
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+export function removeProjectRoot(id: string, path: string): Project {
+	const wanted = canonicalPath(assertMountedProject(path));
+	const projects = getProjects();
+	const project = projects.find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	if (project.roots.length === 1) throw new Error("A project must keep at least one root");
+	const next = project.roots.filter((root) => canonicalPath(root) !== wanted);
+	if (next.length === project.roots.length) throw new Error("Project root not found");
+	project.roots = next;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+function isWithin(root: string, candidate: string): boolean {
+	const rel = relative(root, candidate);
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+export function assertProjectCwd(projectId: string, cwd?: string): string {
+	const project = getProject(projectId);
+	const defaultRoot = project.roots[0];
+	if (!defaultRoot) throw new Error(`Project has no roots: ${projectId}`);
+	const candidate = assertMountedDirectory(cwd?.trim() || defaultRoot, "Session directory");
+	if (!project.roots.some((root) => isWithin(root, candidate))) {
+		throw new Error("Session directory is outside the project roots");
+	}
+	return candidate;
 }
 
 function newestFirst(projects: Project[]): Project[] {
@@ -118,41 +158,4 @@ export function closeProject(id: string): Project {
 	saveProjects(projects);
 	emit(project);
 	return project;
-}
-
-export function setProjectTrust(id: string, trusted: boolean): Project {
-	const projects = getProjects();
-	const project = projects.find((p) => p.id === id);
-	if (!project) throw new Error(`Unknown project: ${id}`);
-	project.trusted = trusted;
-	saveProjects(projects);
-	return project;
-}
-
-export function setProjectSkillEnabled(id: string, name: string, enabled: boolean): Project {
-	const projects = getProjects();
-	const project = projects.find((p) => p.id === id);
-	if (!project) throw new Error(`Unknown project: ${id}`);
-	const disabled = new Set(project.disabledSkills ?? []);
-	if (enabled) disabled.delete(name);
-	else disabled.add(name);
-	project.disabledSkills = [...disabled];
-	saveProjects(projects);
-	return project;
-}
-
-export function setProjectGroupEnabled(id: string, group: string, enabled: boolean): Project {
-	const projects = getProjects();
-	const project = projects.find((p) => p.id === id);
-	if (!project) throw new Error(`Unknown project: ${id}`);
-	const groups = new Set(project.disabledGroups ?? []);
-	if (enabled) groups.delete(group);
-	else groups.add(group);
-	project.disabledGroups = [...groups];
-	saveProjects(projects);
-	return project;
-}
-
-export function isProjectTrusted(id: string): boolean {
-	return getProjects().find((p) => p.id === id)?.trusted === true;
 }

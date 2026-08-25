@@ -98,11 +98,11 @@ function canonicalPosixPath(path: string): string {
 	return `${prefix}${segments.join("/")}`;
 }
 
-export function projectRelativePath(path: string, workspaceRoot?: string | undefined): string {
+export function projectRelativePath(path: string, projectAreaRoot?: string | undefined): string {
 	const canonical = canonicalPosixPath(path);
 	if (!canonical || !isAbsolutePath(canonical)) return canonical;
 
-	const root = workspaceRoot ? trimTrailingSlashes(canonicalPosixPath(workspaceRoot)) : "";
+	const root = projectAreaRoot ? trimTrailingSlashes(canonicalPosixPath(projectAreaRoot)) : "";
 	const rootPrefix = root.endsWith("/") ? root : `${root}/`;
 	if (root && (canonical === root || canonical.startsWith(rootPrefix))) {
 		return canonical.slice(root.length).replace(/^\/+/, "") || fileName(canonical);

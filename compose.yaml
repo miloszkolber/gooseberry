@@ -7,15 +7,15 @@ services:
             context: ./mewa-code
             dockerfile: Dockerfile
             target: controller
-        image: core/mewa-code-controller
+        image: ghcr.io/miloszkolber/mewa-code-controller:latest
         container_name: mewa-controller
         restart: unless-stopped
-        working_dir: "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+        working_dir: "${MEWA_PROJECT_PATH:?set an absolute host project path}"
         command:
             - bun
             - /app/mewa-code.js
             - --no-open
-            - "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+            - "${MEWA_PROJECT_PATH:?set an absolute host project path}"
         read_only: true
         environment:
             MEWA_CODE_HOST: "0.0.0.0"
@@ -23,16 +23,13 @@ services:
             MEWA_CODE_DATA_DIR: "/var/lib/mewa"
             PI_CODING_AGENT_DIR: "/home/bun/.pi/agent"
             MEWA_BROWSER_URL: "http://mewa-browser:8787"
-            MEWA_CODE_TOKEN: "${MEWA_CODE_TOKEN:?set a dedicated MEWA_CODE_TOKEN before starting the stack}"
+            MEWA_CODE_TOKEN: "${MEWA_CODE_TOKEN:-}"
             MEWA_CODE_ALLOWED_ORIGINS: "${MEWA_CODE_ALLOWED_ORIGINS:-}"
-            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:?set an independent MEWA_BROWSER_TOKEN before starting the stack}"
-            MEWA_MOUNT_ROOTS: "${MEWA_MOUNT_ROOTS:?set absolute same-path mount roots}"
-            MEWA_SSH_HOST: "${MEWA_SSH_HOST:?set the SSH host name or address}"
-            MEWA_SSH_USER: "${MEWA_SSH_USER:?set the SSH host user}"
+            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:-mewa-internal-browser-token-v1-4d2f7c8a9e1b6d3f}"
+            MEWA_MOUNT_ROOTS: "${MEWA_MOUNT_ROOTS:-${MEWA_PROJECT_PATH:?set an absolute host project path}}"
+            MEWA_SSH_HOST: "${MEWA_SSH_HOST:-host.docker.internal}"
+            MEWA_SSH_USER: "${MEWA_SSH_USER:-core}"
             MEWA_SSH_PORT: "${MEWA_SSH_PORT:-22}"
-            MEWA_SSH_CONNECT_TIMEOUT_SECONDS: "${MEWA_SSH_CONNECT_TIMEOUT_SECONDS:-15}"
-            MEWA_SSH_KEEPALIVE_INTERVAL_SECONDS: "${MEWA_SSH_KEEPALIVE_INTERVAL_SECONDS:-15}"
-            MEWA_SSH_KEEPALIVE_COUNT_MAX: "${MEWA_SSH_KEEPALIVE_COUNT_MAX:-3}"
             MEWA_SSH_PRIVATE_KEY_FILE: "/run/secrets/mewa_ssh_key"
             MEWA_SSH_KNOWN_HOSTS_FILE: "/run/secrets/mewa_ssh_known_hosts"
         ports:
@@ -43,8 +40,8 @@ services:
             - mewa-state:/var/lib/mewa
             - pi-state:/home/bun/.pi
             - type: bind
-              source: "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
-              target: "${MEWA_WORKSPACE_PATH:?set an absolute host workspace path}"
+              source: "${MEWA_PROJECT_PATH:?set an absolute host project path}"
+              target: "${MEWA_PROJECT_PATH:?set an absolute host project path}"
               read_only: false
               bind:
                   create_host_path: false
@@ -83,12 +80,12 @@ services:
         build:
             context: ./mewa-browser
             dockerfile: Dockerfile
-        image: core/mewa-browser
+        image: ghcr.io/miloszkolber/mewa-browser:latest
         container_name: mewa-browser
         restart: unless-stopped
         read_only: true
         environment:
-            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:?set an independent MEWA_BROWSER_TOKEN before starting the stack}"
+            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:-mewa-internal-browser-token-v1-4d2f7c8a9e1b6d3f}"
             PORT: "8787"
             BROWSER_ARTIFACT_ROOT: "/state/artifacts"
             BROWSER_STATE_ROOT: "/state/browser"

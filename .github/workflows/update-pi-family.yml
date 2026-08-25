@@ -1,0 +1,42 @@
+name: Update Pi family
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+        working-directory: mewa-code
+      - name: Update the atomic Pi dependency family
+        run: |
+          bun run update:pi-family
+          bun install
+        working-directory: mewa-code
+      - run: bun run check:deps
+        working-directory: mewa-code
+      - run: bun run typecheck
+        working-directory: mewa-code
+      - run: bun run test
+        working-directory: mewa-code
+      - run: bun run build
+        working-directory: mewa-code
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/update-pi-family
+          delete-branch: true
+          commit-message: "chore: update Pi package family"
+          title: "Update Pi package family"
+          body: "Automated atomic stable update of the Pi package family, lockfile, and compatibility checks."
+          labels: dependencies

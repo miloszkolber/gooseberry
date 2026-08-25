@@ -19,19 +19,20 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 		{
 			read: () =>
 				getTransport().request("git.diffFile", {
-					workspaceId: tab.workspaceId,
+					projectId: tab.projectAreaId,
+					repository: tab.repository,
 					path: tab.path,
 					scope: tab.scope,
 				}),
 			applyFresh: ({ original, modified }, tick) =>
 				useAppStore
 					.getState()
-					.updateDiffTabContent(tab.workspaceId, tab.id, original, modified, tick, targetRef),
+					.updateDiffTabContent(tab.projectAreaId, tab.id, original, modified, tick, targetRef),
 			keepCurrent: (tick) =>
 				useAppStore
 					.getState()
 					.updateDiffTabContent(
-						tab.workspaceId,
+						tab.projectAreaId,
 						tab.id,
 						tab.original,
 						tab.modified,

@@ -27,13 +27,14 @@
 		"dev:server": "bun --filter @mewa-code/server dev",
 		"dev:web": "bun --filter @mewa-code/web dev",
 		"build:web": "bun --filter @mewa-code/web build",
-		"typecheck": "bun --filter @mewa-code/contracts typecheck && bun --filter @mewa-code/shared typecheck && bun --filter @mewa-code/pi-mewa-browser typecheck && bun --filter @mewa-code/server typecheck && bun --filter @mewa-code/controller typecheck && bun --filter @mewa-code/web typecheck",
-		"test": "bun --filter @mewa-code/controller test && bun --filter @mewa-code/server test && bun --filter @mewa-code/pi-mewa-browser test && bun --filter @mewa-code/web test",
+		"typecheck": "bun --filter @mewa-code/contracts typecheck && bun --filter @mewa-code/shared typecheck && bun --filter @mewa-code/mewa-remote typecheck && bun --filter @mewa-code/pi-mewa-browser typecheck && bun --filter @mewa-code/server typecheck && bun --filter @mewa-code/controller typecheck && bun --filter @mewa-code/web typecheck",
+		"test": "bun --filter @mewa-code/controller test && bun --filter @mewa-code/mewa-remote test && bun --filter @mewa-code/server test && bun --filter @mewa-code/pi-mewa-browser test && bun --filter @mewa-code/web test",
 		"check:filenames": "bun scripts/check-filenames.ts",
 		"lint": "bun run check:filenames && biome check .",
 		"format": "biome check --write .",
 		"check:deps": "bun scripts/check-catalog.ts",
-		"check:runtime": "bash scripts/check-controller-runtime.test.sh"
+		"check:runtime": "bash scripts/check-controller-runtime.test.sh",
+		"update:pi-family": "bun scripts/update-pi-family.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.0",

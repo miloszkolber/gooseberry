@@ -30,14 +30,17 @@ const DOCUMENT_PROSE = [
 
 export function MarkdownDocument({
 	content,
-	workspaceId,
+	projectAreaId,
 	path,
 }: {
 	content: string;
-	workspaceId: string;
+	projectAreaId: string;
 	path: string;
 }) {
-	const components = useMemo(() => documentComponents({ workspaceId, path }), [path, workspaceId]);
+	const components = useMemo(
+		() => documentComponents({ projectAreaId, path }),
+		[path, projectAreaId],
+	);
 	return (
 		<Markdown
 			text={stripFrontmatter(content)}
@@ -50,17 +53,20 @@ export function MarkdownDocument({
 
 export default function MarkdownPreview({
 	content,
-	workspaceId,
+	projectAreaId,
 	path,
 }: {
 	content: string;
-	workspaceId: string;
+	projectAreaId: string;
 	path: string;
 }) {
 	return (
-		<div data-testid="markdown-preview" className="h-full overflow-auto bg-container-workspace-bg">
+		<div
+			data-testid="markdown-preview"
+			className="h-full overflow-auto bg-container-projectArea-bg"
+		>
 			<article className="mx-auto max-w-[78ch] px-xl py-lg">
-				<MarkdownDocument content={content} workspaceId={workspaceId} path={path} />
+				<MarkdownDocument content={content} projectAreaId={projectAreaId} path={path} />
 			</article>
 		</div>
 	);

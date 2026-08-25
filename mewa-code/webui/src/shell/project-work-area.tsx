@@ -1,4 +1,4 @@
-import { GitBranch, MessageSquarePlus, X } from "lucide-react";
+import { MessageSquarePlus, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "../components/error-boundary";
 import { ChangesPanel } from "../panels/changes-panel";
@@ -7,12 +7,10 @@ import { FilePane } from "../panels/file-pane";
 import { FileTree } from "../panels/file-tree";
 import { ProjectTree } from "../panels/project-tree";
 import {
-	type EditorTab,
-	isDefaultWorkspace,
-	isExternalWorkspace,
-	selectActiveEditorTab,
+	type ContentTab,
+	selectActiveContentTab,
 	selectContextProject,
-	selectWorkspaceById,
+	selectProjectAreaById,
 	toast,
 	useAppStore,
 } from "../store";
@@ -20,12 +18,12 @@ import { createSessionWithSkillBaseline, errorText } from "../transport";
 import {
 	hydrateChatResource,
 	useChatLocationReconciliation,
-	useWorkspaceChatCatalogReconciliation,
+	useProjectAreaChatCatalogReconciliation,
 } from "./chat-reconciliation";
-import { WorkspaceChatHistory } from "./workspace-chat-history";
+import { ProjectChatHistory } from "./project-chat-history";
 
 const ChatView = lazy(() => import("../chat/chat-view"));
-const EMPTY_TABS: EditorTab[] = [];
+const EMPTY_TABS: ContentTab[] = [];
 type Activity = "files" | "changes";
 
 function MissingResource({ label }: { label: string }) {
@@ -40,69 +38,63 @@ function activityLabel(activity: Activity): string {
 	return activity.slice(0, 1).toUpperCase() + activity.slice(1);
 }
 
-export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
-	const workspace = useAppStore((state) => selectWorkspaceById(state, workspaceId));
+export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
+	const projectArea = useAppStore((state) => selectProjectAreaById(state, projectAreaId));
 	const contextProject = useAppStore(selectContextProject);
-	const editorTabs = useAppStore((state) => state.tabsByWorkspace[workspaceId] ?? EMPTY_TABS);
-	const previewTabId = useAppStore((state) => state.previewTabByWorkspace[workspaceId] ?? null);
-	const activeTab = useAppStore((state) => selectActiveEditorTab(state, workspaceId));
+	const contentTabs = useAppStore((state) => state.tabsByProjectArea[projectAreaId] ?? EMPTY_TABS);
+	const previewTabId = useAppStore((state) => state.previewTabByProjectArea[projectAreaId] ?? null);
+	const activeTab = useAppStore((state) => selectActiveContentTab(state, projectAreaId));
 	const sessions = useAppStore((state) => state.sessions);
 	const requestedActivity = useAppStore(
-		(state) => state.activeActivityByWorkspace[workspaceId] ?? "files",
+		(state) => state.activeActivityByProjectArea[projectAreaId] ?? "files",
 	);
 	const [activity, setActivity] = useState<Activity>(requestedActivity);
 
-	useWorkspaceChatCatalogReconciliation(workspaceId);
-	useChatLocationReconciliation(workspaceId);
+	useProjectAreaChatCatalogReconciliation(projectAreaId);
+	useChatLocationReconciliation(projectAreaId);
 
 	useEffect(() => {
 		setActivity(requestedActivity);
 	}, [requestedActivity]);
 
 	const startChat = useCallback(() => {
-		void createSessionWithSkillBaseline({ workspaceId })
+		void createSessionWithSkillBaseline({
+			projectId: projectAreaId,
+			...(projectArea?.root ? { cwd: projectArea.root } : {}),
+		})
 			.then(({ result: { sessionId, model, thinkingLevel }, syncedTick }) => {
 				useAppStore
 					.getState()
-					.openChatSession(workspaceId, sessionId, model, thinkingLevel, syncedTick);
+					.openChatSession(projectAreaId, sessionId, model, thinkingLevel, syncedTick);
 			})
 			.catch((error) => {
-				if (!useAppStore.getState().removedWorkspaceIds[workspaceId]) {
+				if (!useAppStore.getState().removedProjectAreaIds[projectAreaId]) {
 					toast.error(errorText(error), "Couldn't start the chat");
 				}
 			});
-	}, [workspaceId]);
+	}, [projectArea, projectAreaId]);
 
-	const renderEditor = useCallback(
-		(tab: EditorTab | null) => {
+	const renderContent = useCallback(
+		(tab: ContentTab | null) => {
 			if (!tab) {
-				const isDefault = workspace != null && isDefaultWorkspace(workspace);
-				const isExternal = workspace != null && isExternalWorkspace(workspace);
 				return (
 					<div
-						data-testid="workspace-ready"
+						data-testid="project-ready"
 						className="flex h-full flex-col items-center justify-center gap-xs px-lg text-center"
 					>
-						<span className="tr-text-eyebrow text-text-muted">
-							{isDefault
-								? "Default workspace"
-								: isExternal
-									? "Existing worktree"
-									: "Workspace ready"}
-						</span>
-						{workspace ? (
+						<span className="tr-text-eyebrow text-text-muted">Project ready</span>
+						{projectArea ? (
 							<>
 								<h2 className="max-w-full truncate tr-title-entity text-text-default">
-									{isDefault ? (contextProject?.name ?? workspace.name) : workspace.name}
+									{contextProject?.name ?? projectArea.name}
 								</h2>
-								<p className="flex max-w-full items-center gap-xs tr-text-metadata text-text-muted">
-									<GitBranch className="size-3.5 shrink-0" />
-									<span className="truncate">{workspace.branch}</span>
+								<p className="max-w-full truncate tr-text-metadata text-text-muted">
+									{projectArea.root}
 								</p>
 							</>
 						) : null}
 						<p className="mt-xs tr-text-ui text-text-muted">
-							Files, chats, and changes are scoped to this workspace.
+							Files, chats, and discovered repositories are scoped to this project.
 						</p>
 						<button
 							type="button"
@@ -123,7 +115,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							<button
 								type="button"
 								className="rounded-[var(--radius-sm)] border border-border-default px-sm py-xs tr-text-ui hover:bg-control-bg-hovered"
-								onClick={() => void hydrateChatResource(workspaceId, tab.sessionId)}
+								onClick={() => void hydrateChatResource(projectAreaId, tab.sessionId)}
 							>
 								Retry
 							</button>
@@ -131,33 +123,33 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 					);
 				}
 				return (
-					<ErrorBoundary label="chat" resetKeys={[workspaceId, tab.id]}>
+					<ErrorBoundary label="chat" resetKeys={[projectAreaId, tab.id]}>
 						<Suspense fallback={<MissingResource label="chat" />}>
-							<ChatView sessionId={tab.sessionId} workspaceId={workspaceId} />
+							<ChatView sessionId={tab.sessionId} projectAreaId={projectAreaId} />
 						</Suspense>
 					</ErrorBoundary>
 				);
 			}
 			return (
-				<ErrorBoundary label="preview" resetKeys={[workspaceId, tab.id]}>
+				<ErrorBoundary label="preview" resetKeys={[projectAreaId, tab.id]}>
 					<Suspense fallback={<MissingResource label="preview" />}>
 						{tab.kind === "file" ? <FilePane tab={tab} /> : <DiffPane tab={tab} />}
 					</Suspense>
 				</ErrorBoundary>
 			);
 		},
-		[contextProject, sessions, startChat, workspace, workspaceId],
+		[contextProject, sessions, startChat, projectArea, projectAreaId],
 	);
 
 	const renderActivity = () =>
 		activity === "files" ? (
-			<FileTree key={workspaceId} workspaceId={workspaceId} />
+			<FileTree key={projectAreaId} projectAreaId={projectAreaId} />
 		) : (
-			<ChangesPanel workspaceId={workspaceId} />
+			<ChangesPanel projectAreaId={projectAreaId} />
 		);
 
 	return (
-		<div data-testid="workspace-workbench" className="flex h-full min-h-0 min-w-0">
+		<div data-testid="project-work-area" className="flex h-full min-h-0 min-w-0">
 			<aside
 				data-testid="left-nav"
 				tabIndex={-1}
@@ -172,10 +164,10 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 						role="tablist"
 						aria-label="Open tabs"
 					>
-						{editorTabs.map((tab) => (
+						{contentTabs.map((tab) => (
 							<div
 								key={tab.id}
-								data-testid="editor-tab"
+								data-testid="content-tab"
 								data-kind={tab.kind}
 								data-active={activeTab?.id === tab.id ? "true" : "false"}
 								data-preview={previewTabId === tab.id ? "true" : "false"}
@@ -192,13 +184,15 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 								</button>
 								<button
 									type="button"
-									data-testid="editor-tab-close"
+									data-testid="content-tab-close"
 									aria-label={`Close ${tab.name}`}
 									className="px-xs text-text-muted hover:text-text-default"
 									onClick={() =>
 										tab.kind === "chat"
-											? useAppStore.getState().closeChatToHistory(tab.sessionId, workspaceId, false)
-											: useAppStore.getState().closeTab(tab.id, false, workspaceId)
+											? useAppStore
+													.getState()
+													.closeChatToHistory(tab.sessionId, projectAreaId, false)
+											: useAppStore.getState().closeTab(tab.id, false, projectAreaId)
 									}
 								>
 									<X className="size-3" />
@@ -206,7 +200,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							</div>
 						))}
 					</div>
-					<WorkspaceChatHistory workspaceId={workspaceId} />
+					<ProjectChatHistory projectAreaId={projectAreaId} />
 					<button
 						type="button"
 						data-testid="new-chat"
@@ -222,10 +216,10 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 					<main
 						data-testid="primary-content"
 						role="tabpanel"
-						aria-label={activeTab?.name ?? "Workspace content"}
+						aria-label={activeTab?.name ?? "ProjectArea content"}
 						className="min-h-0 min-w-0 flex-1 bg-container-content-bg"
 					>
-						{renderEditor(activeTab)}
+						{renderContent(activeTab)}
 					</main>
 					<aside className="flex w-[clamp(14rem,26vw,22rem)] min-h-0 shrink-0 flex-col border-border-default border-l bg-container-sidebar-bg">
 						<div
@@ -233,7 +227,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							data-testid="activity-tabs"
 							tabIndex={-1}
 							role="tablist"
-							aria-label="Workspace activities"
+							aria-label="ProjectArea activities"
 							className="flex shrink-0 border-border-default border-b"
 						>
 							{(["files", "changes"] as const).map((item) => (
@@ -246,7 +240,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 									className="flex-1 px-sm py-sm tr-text-ui text-text-muted hover:text-text-default aria-selected:bg-control-bg-selected aria-selected:text-text-default"
 									onClick={() => {
 										setActivity(item);
-										useAppStore.getState().setActiveActivity(workspaceId, item);
+										useAppStore.getState().setActiveActivity(projectAreaId, item);
 									}}
 								>
 									{activityLabel(item)}
@@ -254,7 +248,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							))}
 						</div>
 						<div className="min-h-0 flex-1 overflow-auto">
-							<ErrorBoundary label={`${activity} activity`} resetKeys={[workspaceId, activity]}>
+							<ErrorBoundary label={`${activity} activity`} resetKeys={[projectAreaId, activity]}>
 								{renderActivity()}
 							</ErrorBoundary>
 						</div>

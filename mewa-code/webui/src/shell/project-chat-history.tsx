@@ -12,8 +12,10 @@ import { openChatInTab } from "../panels/open-chat";
 import { type ClosedChat, toast, useAppStore } from "../store";
 import { errorText, getTransport } from "../transport";
 
-export function WorkspaceChatHistory({ workspaceId }: { workspaceId: string }) {
-	const closed = useAppStore((state) => state.closedChatsByWorkspace[workspaceId] ?? EMPTY_CHATS);
+export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string }) {
+	const closed = useAppStore(
+		(state) => state.closedChatsByProjectArea[projectAreaId] ?? EMPTY_CHATS,
+	);
 	if (closed.length === 0) return null;
 	return (
 		<DropdownMenu>
@@ -37,7 +39,7 @@ export function WorkspaceChatHistory({ workspaceId }: { workspaceId: string }) {
 							data-testid="closed-chat-item"
 							data-session-id={chat.sessionId}
 							onSelect={() => {
-								void openChatInTab(workspaceId, chat.sessionId);
+								void openChatInTab(projectAreaId, chat.sessionId);
 							}}
 							className="min-w-0 flex-1"
 						>
@@ -53,13 +55,16 @@ export function WorkspaceChatHistory({ workspaceId }: { workspaceId: string }) {
 							title="Move chat to trash"
 							onSelect={() => {
 								void getTransport()
-									.request("session.delete", { workspaceId, sessionId: chat.sessionId })
-									.then(() => useAppStore.getState().deleteChat(workspaceId, chat.sessionId))
+									.request("session.delete", {
+										projectId: projectAreaId,
+										sessionId: chat.sessionId,
+									})
+									.then(() => useAppStore.getState().deleteChat(projectAreaId, chat.sessionId))
 									.catch((error) => {
 										const state = useAppStore.getState();
 										if (
-											!state.removedWorkspaceIds[workspaceId] &&
-											!state.deletedSessionsByWorkspace[workspaceId]?.[chat.sessionId]
+											!state.removedProjectAreaIds[projectAreaId] &&
+											!state.deletedSessionsByProjectArea[projectAreaId]?.[chat.sessionId]
 										) {
 											toast.error(errorText(error), "Couldn't delete the chat");
 										}

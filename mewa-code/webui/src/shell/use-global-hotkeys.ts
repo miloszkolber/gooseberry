@@ -4,7 +4,7 @@ import { selectHistoryTarget, useAppStore } from "../store";
 
 type GlobalHotkeyActions = {
 	onProjects: () => void;
-	onWorkspace?: () => void;
+	onProjectArea?: () => void;
 };
 
 export function useGlobalHotkeys(actions: GlobalHotkeyActions): void {
@@ -23,7 +23,7 @@ export function useGlobalHotkeys(actions: GlobalHotkeyActions): void {
 				event.stopPropagation();
 				if (!event.repeat) {
 					if (event.code === "KeyB") actionsRef.current.onProjects();
-					else actionsRef.current.onWorkspace?.();
+					else actionsRef.current.onProjectArea?.();
 				}
 				return;
 			}

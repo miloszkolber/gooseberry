@@ -13,20 +13,20 @@ Pi remains the agent runtime. Mewa adds a small product shell and a curated set 
 - Provider and model settings project Pi's complete registries, supported authentication actions, capabilities, limits, availability, and pricing; model hiding remains a Mewa-only preference.
 - Browser and ACP are the supported interfaces. There is no TUI or Web UI terminal.
 
-## Development status
+## Deployment
 
-The active rewrite is on `rewrite/mewa-code-foundation`. The authoritative scope is in [`docs/product-baseline.md`](docs/product-baseline.md), with implementation sequencing in [`docs/implementation-plan.md`](docs/implementation-plan.md).
-
-## Local deployment
-
-Copy `.env.example` to `.env`, configure the admitted project roots and SSH credentials, then start the controller and isolated browser service:
+Prepare one admitted root and strict host SSH credentials with the idempotent setup helper:
 
 ```bash
-cp .env.example .env
-docker compose up -d --build
+./scripts/setup-deployment.sh /absolute/project-root core host.docker.internal
+# Install the printed public key for that host account, then:
+docker compose pull
+docker compose up -d --no-build
 ```
 
-The controller binds to loopback by default. Provider authentication and model visibility are managed from the Web UI through Pi-backed APIs. Signet memory is optional.
+The controller binds to loopback by default. If `MEWA_CODE_TOKEN` is omitted, it generates a persistent login token on first start; retrieve it with `docker compose exec mewa cat /var/lib/mewa/controller-token`. Provider authentication and model visibility are managed from the Web UI through Pi-backed APIs. Signet memory is optional.
+
+For local image development, use `docker compose up -d --build` instead. The authoritative scope is [`docs/product-baseline.md`](docs/product-baseline.md), and the implemented state is summarized in [`docs/current-state.md`](docs/current-state.md).
 
 ## License
 

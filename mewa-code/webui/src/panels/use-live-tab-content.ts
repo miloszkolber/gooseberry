@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useAppStore } from "../store";
 
 export function useLiveTabContent<T>(
-	tab: { workspaceId: string; path: string; loadedTick?: number },
+	tab: { projectAreaId: string; path: string; loadedTick?: number },
 	ops: {
 		read: () => Promise<T>;
 		applyFresh: (fresh: T, tick: number) => void;
@@ -11,7 +11,7 @@ export function useLiveTabContent<T>(
 	reloadKey?: string,
 	loadedKey?: string,
 ) {
-	const change = useAppStore((s) => s.fsChangesByWorkspace[tab.workspaceId]);
+	const change = useAppStore((s) => s.fsChangesByProjectArea[tab.projectAreaId]);
 	const opsRef = useRef(ops);
 	opsRef.current = ops;
 	const sequencerRef = useRef<ReadSequencer | null>(null);

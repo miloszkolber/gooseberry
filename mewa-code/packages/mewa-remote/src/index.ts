@@ -10,7 +10,9 @@ import {
 	type RemoteCommandResult,
 	type SshConfig,
 	type SshRunner,
-} from "../ssh";
+} from "./ssh";
+
+export * from "./ssh";
 
 export interface SshBashExtensionOptions {
 	loadConfig?: () => SshConfig;

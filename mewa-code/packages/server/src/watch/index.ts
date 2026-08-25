@@ -1,9 +1,1 @@
-export {
-	ensureWatch,
-	isIgnoredPath,
-	setRepoMetaPublisher,
-	setSkillPathClassifier,
-	setWatchPublisher,
-	stopAllWatches,
-	stopWatch,
-} from "./watch";
+export { ensureWatch, setWatchPublisher, stopAllWatches, stopWatch } from "./watch";

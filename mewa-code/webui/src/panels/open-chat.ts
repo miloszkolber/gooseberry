@@ -4,7 +4,7 @@ import { errorText, getSessionMessagesWithSkillBaseline } from "../transport";
 
 /** Open a session in the fixed editor strip. The legacy navigation argument is ignored. */
 export async function openChatInTab(
-	workspaceId: string,
+	projectAreaId: string,
 	sessionId: string,
 	_requestedNavigation?: unknown,
 	background = false,
@@ -13,14 +13,14 @@ export async function openChatInTab(
 	const requestConnectionGeneration =
 		initial.status === "connected" ? initial.connectionGeneration : null;
 	if (
-		initial.removedWorkspaceIds[workspaceId] ||
-		initial.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+		initial.removedProjectAreaIds[projectAreaId] ||
+		initial.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 	) {
 		return;
 	}
 	const options = background ? { activate: false } : undefined;
 	const store = useAppStore.getState();
-	const tab = (store.tabsByWorkspace[workspaceId] ?? []).find(
+	const tab = (store.tabsByProjectArea[projectAreaId] ?? []).find(
 		(t) => t.kind === "chat" && t.sessionId === sessionId,
 	);
 	if (tab) {
@@ -31,8 +31,8 @@ export async function openChatInTab(
 		store.openTab(
 			{
 				kind: "chat",
-				id: chatTabId(workspaceId, sessionId),
-				workspaceId,
+				id: chatTabId(projectAreaId, sessionId),
+				projectAreaId,
 				name: "Chat",
 				sessionId,
 			},
@@ -45,15 +45,15 @@ export async function openChatInTab(
 		const {
 			result: { summary, messages },
 			syncedTick,
-		} = await getSessionMessagesWithSkillBaseline({ sessionId, workspaceId });
+		} = await getSessionMessagesWithSkillBaseline({ sessionId, projectId: projectAreaId });
 		const current = useAppStore.getState();
 		if (
 			requestConnectionGeneration !== null &&
 			current.connectionGeneration !== requestConnectionGeneration &&
-			!current.removedWorkspaceIds[workspaceId] &&
-			!current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+			!current.removedProjectAreaIds[projectAreaId] &&
+			!current.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 		) {
-			return openChatInTab(workspaceId, sessionId, undefined, background);
+			return openChatInTab(projectAreaId, sessionId, undefined, background);
 		}
 		current.hydrateSession(
 			summary,
@@ -65,14 +65,14 @@ export async function openChatInTab(
 		const settled = useAppStore.getState();
 		const installed =
 			settled.sessions[sessionId] !== undefined &&
-			(settled.tabsByWorkspace[workspaceId] ?? []).some(
+			(settled.tabsByProjectArea[projectAreaId] ?? []).some(
 				(tab) => tab.kind === "chat" && tab.sessionId === sessionId,
 			);
 		if (
 			!installed &&
 			!background &&
-			!settled.removedWorkspaceIds[workspaceId] &&
-			!settled.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+			!settled.removedProjectAreaIds[projectAreaId] &&
+			!settled.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 		) {
 			toast.error("The chat could not be restored.", "Couldn't open the chat");
 		}
@@ -80,8 +80,8 @@ export async function openChatInTab(
 		const current = useAppStore.getState();
 		if (
 			!background &&
-			!current.removedWorkspaceIds[workspaceId] &&
-			!current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+			!current.removedProjectAreaIds[projectAreaId] &&
+			!current.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 		) {
 			toast.error(errorText(err), "Couldn't open the chat");
 		}

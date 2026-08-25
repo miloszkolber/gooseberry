@@ -2,6 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { SettingsSection, useAppStore } from "@/store";
 import { ModelsSettings } from "./models-settings";
 import { ProvidersSettings } from "./providers-settings";
+import { SignetSettings } from "./signet-settings";
 
 export function SettingsDialog() {
 	const open = useAppStore((state) => state.settingsOpen);
@@ -31,9 +32,21 @@ export function SettingsDialog() {
 					>
 						Models
 					</SettingsTab>
+					<SettingsTab
+						active={section === SettingsSection.Signet}
+						onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Signet)}
+					>
+						Signet
+					</SettingsTab>
 				</nav>
 				<div className="min-h-0 flex-1 overflow-y-auto p-lg">
-					{section === SettingsSection.Models ? <ModelsSettings /> : <ProvidersSettings />}
+					{section === SettingsSection.Models ? (
+						<ModelsSettings />
+					) : section === SettingsSection.Signet ? (
+						<SignetSettings />
+					) : (
+						<ProvidersSettings />
+					)}
 				</div>
 			</DialogContent>
 		</Dialog>

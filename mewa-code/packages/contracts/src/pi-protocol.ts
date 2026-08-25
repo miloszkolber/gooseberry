@@ -142,7 +142,8 @@ export interface RemovedQueuedMessage {
 
 export interface SessionSummary {
 	sessionId: string;
-	workspaceId: string;
+	projectId: string;
+	cwd: string;
 	title: string;
 	model: WireModel | null;
 	thinkingLevel: ThinkingLevel;

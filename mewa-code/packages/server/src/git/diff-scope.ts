@@ -1,10 +1,6 @@
-import type { GitDiffScope, Workspace } from "@mewa-code/contracts";
+import type { GitDiffScope } from "@mewa-code/contracts";
 import { CodedError } from "@mewa-code/shared/codedError";
 import { git } from "./git-exec";
-
-export function diffBaseRef(ws: Pick<Workspace, "baseBranch" | "diffBase">): string {
-	return ws.diffBase ?? ws.baseBranch;
-}
 
 export interface DiffRange {
 	listPrefix: string[];
@@ -16,8 +12,8 @@ export interface DiffRange {
 
 const OID = /^[0-9a-f]{4,64}$/;
 
-export function resolveCommitOid(worktreePath: string, ref: string): string | null {
-	const out = git(worktreePath, [
+export function resolveCommitOid(repositoryPath: string, ref: string): string | null {
+	const out = git(repositoryPath, [
 		"rev-parse",
 		"--verify",
 		"--quiet",
@@ -28,10 +24,10 @@ export function resolveCommitOid(worktreePath: string, ref: string): string | nu
 }
 
 export function resolveDiffRange(
-	ws: Pick<Workspace, "baseBranch" | "diffBase" | "worktreePath">,
+	repository: string,
 	scope: GitDiffScope = { kind: "branch" },
 ): DiffRange {
-	if (scope.kind === "uncommitted") {
+	if (scope.kind === "uncommitted" || scope.kind === "branch") {
 		return {
 			listPrefix: ["diff"],
 			listRevs: ["HEAD"],
@@ -42,7 +38,7 @@ export function resolveDiffRange(
 	}
 	if (scope.kind === "pinned") {
 		if (!OID.test(scope.baseRef)) throw new Error(`Not a commit id: ${scope.baseRef}`);
-		const resolved = git(ws.worktreePath, [
+		const resolved = git(repository, [
 			"rev-parse",
 			"--verify",
 			"--quiet",
@@ -60,16 +56,11 @@ export function resolveDiffRange(
 	}
 	if (scope.kind === "commit") {
 		if (!OID.test(scope.sha)) throw new Error(`Not a commit id: ${scope.sha}`);
-		const resolved = git(ws.worktreePath, [
-			"rev-parse",
-			"--verify",
-			"--quiet",
-			`${scope.sha}^{commit}`,
-		]);
+		const resolved = git(repository, ["rev-parse", "--verify", "--quiet", `${scope.sha}^{commit}`]);
 		if (!resolved.ok || !resolved.out)
 			throw new CodedError("UNKNOWN_COMMIT", `Unknown commit: ${scope.sha}`);
 		const sha = resolved.out;
-		const parent = git(ws.worktreePath, ["rev-parse", "--verify", "--quiet", `${sha}^^{commit}`]);
+		const parent = git(repository, ["rev-parse", "--verify", "--quiet", `${sha}^^{commit}`]);
 		if (!parent.ok || !parent.out) {
 			return {
 				listPrefix: ["show", "--format="],
@@ -87,16 +78,7 @@ export function resolveDiffRange(
 			modifiedRef: sha,
 		};
 	}
-	const base = diffBaseRef(ws);
-	const mergeBase = git(ws.worktreePath, ["merge-base", "--end-of-options", base, "HEAD"]);
-	const forkPoint = mergeBase.ok && mergeBase.out ? mergeBase.out : base;
-	return {
-		listPrefix: ["diff"],
-		listRevs: [forkPoint],
-		untracked: true,
-		originalRef: forkPoint,
-		modifiedRef: null,
-	};
+	throw new Error("Unsupported Git diff scope");
 }
 
 export function changedFileArgs(

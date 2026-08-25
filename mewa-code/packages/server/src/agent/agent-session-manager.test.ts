@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
@@ -107,12 +107,12 @@ test("concurrent sessions keep streamed responses and disposal isolated", async 
 
 	const first = await createSession({
 		cwd: tmpCwd("mewa-code-session-a-"),
-		workspaceId: "workspace-a",
+		projectId: "workspace-a",
 		model: toWireModel(fauxA.getModel()),
 	});
 	const second = await createSession({
 		cwd: tmpCwd("mewa-code-session-b-"),
-		workspaceId: "workspace-b",
+		projectId: "workspace-b",
 		model: toWireModel(fauxB.getModel()),
 	});
 
@@ -148,13 +148,13 @@ test("a disposed session is listed from disk and restored with its transcript", 
 	try {
 		const session = await createSession({
 			cwd,
-			workspaceId: "workspace-disk",
+			projectId: "workspace-disk",
 			model: toWireModel(fauxA.getModel()),
 		});
 		await promptSession(session.sessionId, "persist me");
 		removeSession(session.sessionId);
 
-		const listed = await listSessions("workspace-disk", cwd);
+		const listed = await listSessions("workspace-disk");
 
 		expect(listed).toContainEqual(
 			expect.objectContaining({ sessionId: session.sessionId, live: false }),
@@ -180,7 +180,7 @@ test("runs a persistent child in the parent generation and admitted workspace", 
 	try {
 		const parent = await createSession({
 			cwd,
-			workspaceId: "workspace-child",
+			projectId: "workspace-child",
 			model: toWireModel(fauxA.getModel()),
 			thinkingLevel: "off",
 		});
@@ -191,6 +191,7 @@ test("runs a persistent child in the parent generation and admitted workspace", 
 				parentSessionId: parent.sessionId,
 				toolCallId: "tool-child",
 				task: "Return the child reply.",
+				role: "builder",
 			},
 			undefined,
 			(snapshot) => progress.push(snapshot.status),
@@ -199,19 +200,18 @@ test("runs a persistent child in the parent generation and admitted workspace", 
 		expect(child.status).toBe("completed");
 		expect(child.finalOutput).toBe("CHILD_REPLY");
 		expect(child.model?.provider).toBe("fauxa");
+		// Pi clamps the role default to the selected model's supported levels.
 		expect(child.thinkingLevel).toBe("off");
+		expect(child.role).toBe("builder");
 		expect(child.parentSessionId).toBe(parent.sessionId);
 		expect(progress).toContain("starting");
 		expect(progress).toContain("completed");
 		expect(getSessionRuntimeGenerationId(child.childSessionId)).toBe(generation);
 		expect(
-			(await listSessions("workspace-child", cwd)).find(
-				(s) => s.sessionId === child.childSessionId,
-			),
-		).toMatchObject({ live: true, workspaceId: "workspace-child" });
-		const infos = await SessionManager.list(cwd);
-		const childInfo = infos.find((info) => info.id === child.childSessionId);
-		expect(childInfo?.parentSessionPath).toContain(`${parent.sessionId}.jsonl`);
+			(await listSessions("workspace-child")).find((s) => s.sessionId === child.childSessionId),
+		).toMatchObject({ live: true, projectId: "workspace-child" });
+		const infos = await SessionManager.list(realpathSync(cwd));
+		expect(infos.map((info) => info.id)).toContain(child.childSessionId);
 
 		await removeSession(child.childSessionId);
 		await removeSession(parent.sessionId);
@@ -222,16 +222,16 @@ test("runs a persistent child in the parent generation and admitted workspace", 
 	}
 });
 
-test("allows a child model override from the parent runtime generation", async () => {
+test("routes a child without accepting provider-specific model IDs", async () => {
 	const cwd = tmpCwd("mewa-code-child-model-");
 	const previousMountRoots = process.env.MEWA_MOUNT_ROOTS;
 	process.env.MEWA_MOUNT_ROOTS = cwd;
 	setSessionManagerFactory((path, options) => SessionManager.create(path, undefined, options));
-	fauxB.setResponses([fauxAssistantMessage("MODEL_B_REPLY")]);
+	fauxA.setResponses([fauxAssistantMessage("ROUTED_REPLY")]);
 	try {
 		const parent = await createSession({
 			cwd,
-			workspaceId: "workspace-model",
+			projectId: "workspace-model",
 			model: toWireModel(fauxA.getModel()),
 		});
 		const child = await runChildSession(
@@ -239,13 +239,14 @@ test("allows a child model override from the parent runtime generation", async (
 				parentSessionId: parent.sessionId,
 				toolCallId: "tool-model",
 				task: "Use the requested child model.",
-				model: { provider: "fauxb", id: "fauxb" },
+				role: "scout",
+				modelGroup: "economy",
 			},
 			undefined,
 		);
 		expect(child.status).toBe("completed");
-		expect(child.model?.provider).toBe("fauxb");
-		expect(child.finalOutput).toBe("MODEL_B_REPLY");
+		expect(child.model?.provider).toBe("fauxa");
+		expect(child.finalOutput).toBe("ROUTED_REPLY");
 		await removeSession(child.childSessionId);
 		await removeSession(parent.sessionId);
 	} finally {
@@ -262,7 +263,7 @@ test("rejects a child when the inherited workspace is no longer mounted", async 
 	try {
 		const parent = await createSession({
 			cwd,
-			workspaceId: "workspace-unmounted",
+			projectId: "workspace-unmounted",
 			model: toWireModel(fauxA.getModel()),
 		});
 		await expect(
@@ -271,6 +272,7 @@ test("rejects a child when the inherited workspace is no longer mounted", async 
 					parentSessionId: parent.sessionId,
 					toolCallId: "tool-unmounted",
 					task: "This must not launch.",
+					role: "auditor",
 				},
 				undefined,
 			),
@@ -292,7 +294,7 @@ test("bounds child output by UTF-8 bytes", async () => {
 	try {
 		const parent = await createSession({
 			cwd,
-			workspaceId: "workspace-output",
+			projectId: "workspace-output",
 			model: toWireModel(fauxA.getModel()),
 		});
 		const child = await runChildSession(
@@ -300,6 +302,7 @@ test("bounds child output by UTF-8 bytes", async () => {
 				parentSessionId: parent.sessionId,
 				toolCallId: "tool-output",
 				task: "Return the large response.",
+				role: "builder",
 			},
 			undefined,
 		);

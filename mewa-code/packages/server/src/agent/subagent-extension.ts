@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@mewa-code/contracts";
 import { type Static, Type } from "typebox";
+import type { ModelGroup, SubagentRole } from "./subagent-roles";
 import type {
 	ChildRunSnapshot,
 	RunChildSessionInput,
@@ -20,20 +21,16 @@ const PROGRESS_INTERVAL_MS = 100;
 
 export const SubagentParameters = Type.Object(
 	{
+		role: Type.String({
+			enum: ["scout", "builder", "strategist", "auditor"],
+			description: "The typed child role and its enforced permissions.",
+		}),
 		task: Type.String({
 			minLength: 1,
 			maxLength: MAX_TASK_LENGTH,
 			description: "The focused task for one child Pi session.",
 		}),
-		model: Type.Optional(
-			Type.Object(
-				{
-					provider: Type.String({ minLength: 1 }),
-					id: Type.String({ minLength: 1 }),
-				},
-				{ additionalProperties: false },
-			),
-		),
+		modelGroup: Type.Optional(Type.String({ enum: ["economy", "balanced", "strong", "deep"] })),
 		thinkingLevel: Type.Optional(
 			Type.String({
 				enum: ["off", "minimal", "low", "medium", "high", "xhigh"],
@@ -44,6 +41,8 @@ export const SubagentParameters = Type.Object(
 );
 
 export type SubagentParameters = Static<typeof SubagentParameters> & {
+	role: SubagentRole;
+	modelGroup?: ModelGroup;
 	thinkingLevel?: ThinkingLevel;
 };
 
@@ -58,11 +57,14 @@ export interface SubagentHost {
 function childDetails(snapshot: ChildRunSnapshot): SubagentToolChild {
 	return {
 		runId: snapshot.childSessionId,
-		agent: "child",
+		agent: snapshot.role,
 		task: snapshot.task,
 		status: snapshot.status,
 		model: snapshot.model,
 		thinkingLevel: snapshot.thinkingLevel,
+		modelGroup: snapshot.modelGroup,
+		durationMs: snapshot.durationMs,
+		...(snapshot.usage ? { usage: snapshot.usage } : {}),
 		...(snapshot.currentTool ? { currentTool: snapshot.currentTool } : {}),
 		...(snapshot.finalOutput !== undefined ? { finalOutput: snapshot.finalOutput } : {}),
 		...(snapshot.outputState ? { outputState: snapshot.outputState } : {}),
@@ -113,7 +115,7 @@ function registerSubagentTool(pi: ExtensionAPI, host: SubagentHost): void {
 		name: "subagent",
 		label: "Subagent",
 		description:
-			"Run one focused task in a separate in-process Pi session. The call waits for completion. The child inherits this session's model, thinking level, workspace, tools, guards, and resources unless model or thinkingLevel is explicitly overridden.",
+			"Run one focused task in a typed in-process Pi child session. Choose scout for exploration, builder for implementation, strategist for architecture, or auditor for independent review. Model selection is provider-agnostic and cost-aware. Children cannot delegate recursively.",
 		parameters: SubagentParameters,
 		executionMode: "sequential",
 		execute: async (
@@ -127,7 +129,8 @@ function registerSubagentTool(pi: ExtensionAPI, host: SubagentHost): void {
 				parentSessionId: ctx.sessionManager.getSessionId(),
 				toolCallId,
 				task: params.task,
-				...(params.model ? { model: params.model } : {}),
+				role: params.role as SubagentRole,
+				...(params.modelGroup ? { modelGroup: params.modelGroup as ModelGroup } : {}),
 				...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel as ThinkingLevel } : {}),
 			};
 			let lastUpdateAt = 0;

@@ -4,11 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { buildResourceLoader, listSkillCommands } from "./extensions";
-import type { SkillAdmissionContext } from "./skill-admission";
-
-function context(trusted: boolean): SkillAdmissionContext {
-	return { trusted, disabled: [], disabledGroups: [], overrides: {} };
-}
 
 function writeSkill(root: string, name: string): void {
 	const directory = join(root, name);
@@ -48,7 +43,7 @@ test("loads the curated Pi extensions and inline goal/subagent extensions", asyn
 		const settings = SettingsManager.create(project, process.env.PI_CODING_AGENT_DIR as string, {
 			projectTrusted: true,
 		});
-		const loader = await buildResourceLoader(project, settings, () => context(true));
+		const loader = await buildResourceLoader(project, settings);
 		const extensions = loader.getExtensions().extensions;
 		const tools = new Set(extensions.flatMap((extension) => [...extension.tools.keys()]));
 
@@ -63,7 +58,7 @@ test("loads the curated Pi extensions and inline goal/subagent extensions", asyn
 	}
 });
 
-test("gates project skills on explicit project trust while keeping personal skills available", async () => {
+test("leaves project trust to Pi while keeping personal skills available", async () => {
 	const root = mkdtempSync(join(tmpdir(), "mewa-code-skills-"));
 	const project = join(root, "project");
 	mkdirSync(project, { recursive: true });
@@ -73,13 +68,8 @@ test("gates project skills on explicit project trust while keeping personal skil
 		writeSkill(join(project, ".pi", "skills"), "repo-native");
 		writeSkill(join(process.env.PI_CODING_AGENT_DIR as string, "skills"), "personal-native");
 
-		const untrusted = await listSkillCommands(project, context(false));
-		const trusted = await listSkillCommands(project, context(true));
-		expect(untrusted.map((command) => command.name)).toEqual(["skill:personal-native"]);
-		expect(trusted.map((command) => command.name).sort()).toEqual([
-			"skill:personal-native",
-			"skill:repo-native",
-		]);
+		const commands = await listSkillCommands(project);
+		expect(commands.map((command) => command.name)).toEqual(["skill:personal-native"]);
 	} finally {
 		restore();
 		rmSync(root, { recursive: true, force: true });

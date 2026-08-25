@@ -5,7 +5,7 @@ import {
 	type ChatTab,
 	chatTabId,
 	isConnectedGeneration,
-	selectWorkspaceSessionIds,
+	selectProjectAreaSessionIds,
 	toast,
 	useAppStore,
 } from "../../store";
@@ -16,35 +16,35 @@ const AUTO_OPEN_CHAT_LIMIT = 4;
 
 function chatTab(
 	state: ReturnType<typeof useAppStore.getState>,
-	workspaceId: string,
+	projectAreaId: string,
 	sessionId: string,
 ) {
-	return (state.tabsByWorkspace[workspaceId] ?? []).find(
+	return (state.tabsByProjectArea[projectAreaId] ?? []).find(
 		(tab): tab is ChatTab => tab.kind === "chat" && tab.sessionId === sessionId,
 	);
 }
 
-export function hydrateChatResource(workspaceId: string, sessionId: string): Promise<boolean> {
+export function hydrateChatResource(projectAreaId: string, sessionId: string): Promise<boolean> {
 	const state = useAppStore.getState();
 	if (
-		state.removedWorkspaceIds[workspaceId] ||
-		state.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+		state.removedProjectAreaIds[projectAreaId] ||
+		state.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 	) {
 		return Promise.resolve(false);
 	}
-	if (state.sessions[sessionId] && chatTab(state, workspaceId, sessionId))
+	if (state.sessions[sessionId] && chatTab(state, projectAreaId, sessionId))
 		return Promise.resolve(true);
 	const generation = state.connectionGeneration;
-	const key = tupleKey("chat-hydration", workspaceId, sessionId, String(generation));
+	const key = tupleKey("chat-hydration", projectAreaId, sessionId, String(generation));
 	const existing = sessionHydration.get(key);
 	if (existing) return existing;
-	const request = getSessionMessagesWithSkillBaseline({ workspaceId, sessionId })
+	const request = getSessionMessagesWithSkillBaseline({ projectId: projectAreaId, sessionId })
 		.then(({ result: { summary, messages }, syncedTick }) => {
 			const current = useAppStore.getState();
 			if (!isConnectedGeneration(current, generation)) return false;
 			if (
-				current.removedWorkspaceIds[workspaceId] ||
-				current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
+				current.removedProjectAreaIds[projectAreaId] ||
+				current.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 			) {
 				return false;
 			}
@@ -58,7 +58,7 @@ export function hydrateChatResource(workspaceId: string, sessionId: string): Pro
 			const installed = useAppStore.getState();
 			return (
 				installed.sessions[sessionId] !== undefined &&
-				chatTab(installed, workspaceId, sessionId) !== undefined
+				chatTab(installed, projectAreaId, sessionId) !== undefined
 			);
 		})
 		.finally(() => sessionHydration.delete(key));
@@ -66,25 +66,26 @@ export function hydrateChatResource(workspaceId: string, sessionId: string): Pro
 	return request;
 }
 
-export function currentChatDestination(workspaceId: string, tab: ChatTab, _navigation?: unknown) {
+export function currentChatDestination(projectAreaId: string, tab: ChatTab, _navigation?: unknown) {
 	const state = useAppStore.getState();
 	return {
 		state,
 		current:
-			state.activeWorkspaceId === workspaceId && state.activeTabByWorkspace[workspaceId] === tab.id,
+			state.activeProjectAreaId === projectAreaId &&
+			state.activeTabByProjectArea[projectAreaId] === tab.id,
 	};
 }
 
-/** Kept as a hook boundary for callers while deleted sessions are pruned from editor tabs directly. */
-export function useDeletedChatPlacementReconciliation(_workspaceId: string): void {}
+/** Kept as a hook boundary for callers while deleted sessions are pruned from open content directly. */
+export function useDeletedChatPlacementReconciliation(_projectAreaId: string): void {}
 
-export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void {
+export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): void {
 	const status = useAppStore((state) => state.status);
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
 	const routeTargetGeneration = useAppStore((state) => state.routeChatTargetGeneration);
 	const routeTarget = useAppStore((state) => {
 		const target = state.routeChatTarget;
-		return target?.workspaceId === workspaceId ? target : null;
+		return target?.projectAreaId === projectAreaId ? target : null;
 	});
 	const flight = useRef(0);
 
@@ -92,20 +93,20 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 		void routeTargetGeneration;
 		if (status !== "connected" || connectionGeneration === 0) return;
 		const run = ++flight.current;
-		const baseline = selectWorkspaceSessionIds(useAppStore.getState(), workspaceId);
+		const baseline = selectProjectAreaSessionIds(useAppStore.getState(), projectAreaId);
 		let current = true;
 		const live = () =>
 			current &&
 			flight.current === run &&
 			isConnectedGeneration(useAppStore.getState(), connectionGeneration) &&
-			!useAppStore.getState().removedWorkspaceIds[workspaceId];
+			!useAppStore.getState().removedProjectAreaIds[projectAreaId];
 
 		void getTransport()
-			.request("session.list", { workspaceId })
+			.request("session.list", { projectId: projectAreaId })
 			.then(async (summaries) => {
 				if (!live()) return;
-				useAppStore.getState().reconcileWorkspaceSessions(
-					workspaceId,
+				useAppStore.getState().reconcileProjectAreaSessions(
+					projectAreaId,
 					baseline,
 					summaries.map((summary) => summary.sessionId),
 				);
@@ -114,12 +115,12 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 					: undefined;
 				if (routeTarget && targetSummary) {
 					useAppStore.getState().validateRouteChatTarget(routeTarget.sessionId);
-					const targetTab = chatTab(useAppStore.getState(), workspaceId, routeTarget.sessionId);
+					const targetTab = chatTab(useAppStore.getState(), projectAreaId, routeTarget.sessionId);
 					if (targetTab) {
 						useAppStore.getState().setActiveTab(targetTab.id, "keep");
 					} else {
 						const loaded = await getSessionMessagesWithSkillBaseline({
-							workspaceId,
+							projectId: projectAreaId,
 							sessionId: routeTarget.sessionId,
 						});
 						if (!live()) return;
@@ -131,13 +132,17 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 							loaded.result.summary.live ? undefined : loaded.syncedTick,
 							{ activate: false },
 						);
-						const hydratedTab = chatTab(useAppStore.getState(), workspaceId, routeTarget.sessionId);
+						const hydratedTab = chatTab(
+							useAppStore.getState(),
+							projectAreaId,
+							routeTarget.sessionId,
+						);
 						if (hydratedTab) useAppStore.getState().setActiveTab(hydratedTab.id, "keep");
 					}
 					useAppStore.getState().clearRouteChatTarget();
 				}
 
-				const openTabs = useAppStore.getState().tabsByWorkspace[workspaceId] ?? [];
+				const openTabs = useAppStore.getState().tabsByProjectArea[projectAreaId] ?? [];
 				const openSessions = new Set(
 					openTabs.filter((tab) => tab.kind === "chat").map((tab) => tab.sessionId),
 				);
@@ -156,7 +161,7 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 				let activated = Boolean(routeTarget);
 				for (const summary of toOpen) {
 					const loaded = await getSessionMessagesWithSkillBaseline({
-						workspaceId,
+						projectId: projectAreaId,
 						sessionId: summary.sessionId,
 					});
 					if (!live()) return;
@@ -168,7 +173,7 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 						loaded.result.summary.live ? undefined : loaded.syncedTick,
 						{ activate: false },
 					);
-					const tab = chatTab(useAppStore.getState(), workspaceId, summary.sessionId);
+					const tab = chatTab(useAppStore.getState(), projectAreaId, summary.sessionId);
 					if (tab && !activated) {
 						useAppStore.getState().setActiveTab(tab.id, "keep");
 						activated = true;
@@ -176,7 +181,7 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 				}
 				if (history.length > 0 && live()) {
 					useAppStore.getState().noteClosedChats(
-						workspaceId,
+						projectAreaId,
 						history.map((summary) => ({
 							sessionId: summary.sessionId,
 							title: summary.title,
@@ -186,23 +191,23 @@ export function useWorkspaceChatCatalogReconciliation(workspaceId: string): void
 				}
 			})
 			.catch((error: unknown) => {
-				if (live()) toast.error(errorText(error), "Couldn't load this workspace's chats");
+				if (live()) toast.error(errorText(error), "Couldn't load this projectArea's chats");
 			});
 		return () => {
 			current = false;
 		};
-	}, [connectionGeneration, routeTarget, routeTargetGeneration, status, workspaceId]);
+	}, [connectionGeneration, routeTarget, routeTargetGeneration, status, projectAreaId]);
 }
 
-export function useChatLocationReconciliation(workspaceId: string): void {
+export function useChatLocationReconciliation(projectAreaId: string): void {
 	const status = useAppStore((state) => state.status);
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
 	const request = useAppStore((state) => state.chatLocationRequest);
 
 	useEffect(() => {
-		if (!request || request.workspaceId !== workspaceId) return;
+		if (!request || request.projectAreaId !== projectAreaId) return;
 		const state = useAppStore.getState();
-		const existing = chatTab(state, workspaceId, request.sessionId);
+		const existing = chatTab(state, projectAreaId, request.sessionId);
 		if (existing) {
 			state.setActiveTab(existing.id, "keep");
 			state.clearChatLocation();
@@ -210,14 +215,14 @@ export function useChatLocationReconciliation(workspaceId: string): void {
 		}
 		if (state.sessions[request.sessionId]) {
 			const title =
-				state.closedChatsByWorkspace[workspaceId]?.find(
+				state.closedChatsByProjectArea[projectAreaId]?.find(
 					(chat) => chat.sessionId === request.sessionId,
 				)?.title ?? "Chat";
 			state.openTab(
 				{
 					kind: "chat",
-					id: chatTabId(workspaceId, request.sessionId),
-					workspaceId,
+					id: chatTabId(projectAreaId, request.sessionId),
+					projectAreaId,
 					name: title,
 					sessionId: request.sessionId,
 				},
@@ -228,16 +233,16 @@ export function useChatLocationReconciliation(workspaceId: string): void {
 		}
 		if (status !== "connected" || !isConnectedGeneration(state, connectionGeneration)) return;
 		let current = true;
-		void hydrateChatResource(workspaceId, request.sessionId)
+		void hydrateChatResource(projectAreaId, request.sessionId)
 			.then((installed) => {
 				if (!current) return;
 				const latest = useAppStore.getState();
 				if (installed) {
-					const tab = chatTab(latest, workspaceId, request.sessionId);
+					const tab = chatTab(latest, projectAreaId, request.sessionId);
 					if (tab) latest.setActiveTab(tab.id, "keep");
 				} else if (
-					!latest.removedWorkspaceIds[workspaceId] &&
-					!latest.deletedSessionsByWorkspace[workspaceId]?.[request.sessionId]
+					!latest.removedProjectAreaIds[projectAreaId] &&
+					!latest.deletedSessionsByProjectArea[projectAreaId]?.[request.sessionId]
 				) {
 					toast.error("The chat could not be restored.", "Couldn't open the chat");
 				}
@@ -251,5 +256,5 @@ export function useChatLocationReconciliation(workspaceId: string): void {
 		return () => {
 			current = false;
 		};
-	}, [connectionGeneration, request, status, workspaceId]);
+	}, [connectionGeneration, request, status, projectAreaId]);
 }

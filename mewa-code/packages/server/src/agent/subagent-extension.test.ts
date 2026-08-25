@@ -13,10 +13,13 @@ test("registers one blocking built-in tool with a narrow schema", async () => {
 	const completed: ChildRunSnapshot = {
 		parentSessionId: "parent",
 		childSessionId: "child",
+		role: "auditor",
 		task: "Inspect the patch",
 		status: "completed",
 		model: null,
 		thinkingLevel: "medium",
+		modelGroup: "strong",
+		durationMs: 100,
 		finalOutput: "done",
 		outputState: "present",
 	};
@@ -36,7 +39,12 @@ test("registers one blocking built-in tool with a narrow schema", async () => {
 	const tool = tools[0] as ToolDefinition<typeof SubagentParameters, SubagentToolDetails>;
 	expect(tool.name).toBe("subagent");
 	expect(tool.executionMode).toBe("sequential");
-	expect(Object.keys(tool.parameters.properties)).toEqual(["task", "model", "thinkingLevel"]);
+	expect(Object.keys(tool.parameters.properties)).toEqual([
+		"role",
+		"task",
+		"modelGroup",
+		"thinkingLevel",
+	]);
 	expect(
 		(tool.parameters as unknown as { additionalProperties?: boolean }).additionalProperties,
 	).toBe(false);
@@ -44,7 +52,7 @@ test("registers one blocking built-in tool with a narrow schema", async () => {
 	const updates: SubagentToolDetails[] = [];
 	const result = await tool.execute(
 		"call-1",
-		{ task: "Inspect the patch" },
+		{ role: "auditor", task: "Inspect the patch" },
 		undefined,
 		(partial) => updates.push(partial.details),
 		{ sessionManager: { getSessionId: () => "parent" } } as never,

@@ -7,7 +7,7 @@ export interface ToolRenderProps {
 	args: Record<string, unknown>;
 	result: unknown;
 	status: ToolStatus;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 	streaming: boolean;
 }
 

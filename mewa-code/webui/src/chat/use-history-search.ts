@@ -5,7 +5,7 @@ import type {
 	PromptHit,
 } from "@mewa-code/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type ChatLocationRequest, useAppStore } from "@/store";
+import { type ChatLocationRequest, projectArea, useAppStore } from "@/store";
 import { getTransport } from "@/transport";
 
 export type { ChatLocationRequest };
@@ -26,22 +26,20 @@ export type HistorySelection =
 	| { kind: "prompt"; hit: PromptHit }
 	| { kind: "message"; hit: MessageHit };
 
-export const SCOPE_ORDER = ["chat", "workspace", "project", "all"] as const;
+export const SCOPE_ORDER = ["chat", "project", "all"] as const;
 export type ScopeKind = (typeof SCOPE_ORDER)[number];
 
 function buildScope(
 	kind: ScopeKind,
 	sessionId: string,
-	workspaceId: string,
+	projectAreaId: string,
 	projectId: string | undefined,
 ): HistoryScope {
 	switch (kind) {
 		case "chat":
 			return { kind: "chat", sessionId };
-		case "workspace":
-			return { kind: "workspace", workspaceId };
 		case "project":
-			return { kind: "project", projectId: projectId ?? "" };
+			return { kind: "project", projectId: projectId ?? projectAreaId };
 		case "all":
 			return { kind: "all" };
 	}
@@ -70,11 +68,11 @@ export function resolveHistorySelection(
 }
 
 export function jumpTarget(hit: PromptHit | MessageHit): ChatLocationRequest | null {
-	if (!hit.workspaceId || !hit.projectId || hit.messageIndex == null || hit.anchorText == null) {
+	if (!hit.projectId || hit.messageIndex == null || hit.anchorText == null) {
 		return null;
 	}
 	return {
-		workspaceId: hit.workspaceId,
+		projectAreaId: hit.projectId,
 		projectId: hit.projectId,
 		sessionId: hit.sessionId,
 		messageIndex: hit.messageIndex,
@@ -84,7 +82,7 @@ export function jumpTarget(hit: PromptHit | MessageHit): ChatLocationRequest | n
 
 export function useHistorySearch(
 	sessionId: string,
-	workspaceId: string,
+	projectAreaId: string,
 	projectId: string | undefined,
 ): {
 	state: HistorySearchState;
@@ -100,14 +98,14 @@ export function useHistorySearch(
 	const [open, setOpen] = useState(false);
 	const [stage, setStage] = useState<HistoryStage>("compact");
 	const [query, setQueryState] = useState("");
-	const [scopeKind, setScopeKind] = useState<ScopeKind>("workspace");
+	const [scopeKind, setScopeKind] = useState<ScopeKind>("project");
 	const [result, setResult] = useState<HistorySearchResult | null>(null);
 	const [selected, setSelected] = useState(0);
 	const [error, setError] = useState(false);
 
 	const scope = useMemo(
-		() => buildScope(scopeKind, sessionId, workspaceId, projectId),
-		[scopeKind, sessionId, workspaceId, projectId],
+		() => buildScope(scopeKind, sessionId, projectAreaId, projectId),
+		[scopeKind, sessionId, projectAreaId, projectId],
 	);
 
 	const tokenRef = useRef(0);
@@ -160,7 +158,7 @@ export function useHistorySearch(
 	const openOverlay = useCallback((seedQuery: string) => {
 		setOpen(true);
 		setStage("compact");
-		setScopeKind("workspace");
+		setScopeKind("project");
 		setQueryState(seedQuery);
 		setSelected(0);
 		setResult(null);
@@ -213,12 +211,13 @@ export function useHistorySearch(
 
 	const openMessage = useCallback(
 		async (target: ChatLocationRequest) => {
-			if (!useAppStore.getState().workspaces[target.projectId]?.length) {
+			if (!useAppStore.getState().projectAreas[target.projectId]?.length) {
 				try {
-					const list = await getTransport().request("workspace.list", {
-						projectId: target.projectId,
-					});
-					useAppStore.getState().setWorkspaces(target.projectId, list);
+					const project = useAppStore
+						.getState()
+						.projects.find((candidate) => candidate.id === target.projectId);
+					if (project)
+						useAppStore.getState().setProjectAreas(target.projectId, [projectArea(project)]);
 				} catch {}
 			}
 			useAppStore.getState().requestChatLocation(target);

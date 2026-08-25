@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertMountedPath, configuredMountRoots } from "./path-admission";
@@ -19,7 +19,7 @@ test("requires an absolute existing mount and rejects root or controller state",
 	try {
 		const baseEnv = { HOME: value.outside, MEWA_CODE_DATA_DIR: value.state };
 		expect(configuredMountRoots({ ...baseEnv, MEWA_MOUNT_ROOTS: value.root })).toEqual([
-			value.root,
+			realpathSync(value.root),
 		]);
 		expect(() => configuredMountRoots({ ...baseEnv, MEWA_MOUNT_ROOTS: "/" })).toThrow(
 			"must not contain /",
@@ -49,7 +49,7 @@ test("canonicalizes approved paths and rejects symlink escapes", () => {
 			MEWA_MOUNT_ROOTS: value.root,
 		};
 		expect(assertMountedPath(join(value.project, "README.md"), { env })).toBe(
-			join(value.project, "README.md"),
+			realpathSync(join(value.project, "README.md")),
 		);
 		expect(() => assertMountedPath(join(link, "secret.txt"), { env })).toThrow(
 			"outside the approved",

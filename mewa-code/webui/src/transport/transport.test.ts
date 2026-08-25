@@ -178,32 +178,24 @@ describe("WsTransport reconnect delivery", () => {
 });
 
 describe("WsTransport response receipts", () => {
-	test("keeps the curated Pi profile behind the typed settings boundary", async () => {
+	test("keeps optional Signet configuration behind the typed settings boundary", async () => {
 		const transport = new WsTransport({ url: "ws://localhost:24242/ws" });
 		transport.connect();
 		const socket = TestWebSocket.instances[0];
 		socket?.open();
 
-		const result = transport.request("settings.profile", {});
+		const result = transport.request("settings.update", {
+			config: { signet: { enabled: false, address: "127.0.0.1", port: 3850 } },
+		});
 		const request = requestsIn(socket?.sent ?? []).at(-1);
-		if (!request?.id) throw new Error("settings.profile request was not sent");
-		expect(request.method).toBe("settings.profile");
-		const profile = {
-			id: "mewa",
-			label: "Mewa",
-			capabilities: [
-				{
-					id: "protectedStateGuard",
-					label: "Protected-state guard",
-					description: "required",
-					enabled: true,
-					available: true,
-					required: true,
-				},
-			],
+		if (!request?.id) throw new Error("settings.update request was not sent");
+		expect(request.method).toBe("settings.update");
+		const config = {
+			signet: { enabled: false, address: "127.0.0.1", port: 3850 },
+			hiddenModels: [],
 		};
-		socket?.message(JSON.stringify({ id: request.id, ok: true, result: profile }));
-		expect(await result).toEqual(profile);
+		socket?.message(JSON.stringify({ id: request.id, ok: true, result: config }));
+		expect(await result).toEqual(config);
 	});
 
 	test("acknowledges each response, batching a burst into one frame", async () => {
@@ -213,7 +205,7 @@ describe("WsTransport response receipts", () => {
 		socket?.open();
 
 		const first = transport.request("project.list", {});
-		const second = transport.request("workspace.list", { projectId: "p1" });
+		const second = transport.request("model.list", {});
 		const ids = requestsIn(socket?.sent ?? []).map((frame) => frame.id ?? "");
 		expect(ids).toHaveLength(2);
 		const before = socket?.sent.length ?? 0;
@@ -256,13 +248,13 @@ describe("WsTransport response receipts", () => {
 		first?.open();
 
 		const resolved = transport.request("project.list", {});
-		const stillOpen = transport.request("workspace.list", { projectId: "p1" });
+		const stillOpen = transport.request("model.list", {});
 		const [resolvedId, stillOpenId] = requestsIn(first?.sent ?? []).map((frame) => frame.id ?? "");
 		first?.message(JSON.stringify({ id: resolvedId, ok: true, result: [] }));
 		expect(await resolved).toEqual([]);
 		first?.close();
 
-		const queued = transport.request("git.status", { workspaceId: "w1" });
+		const queued = transport.request("git.status", { projectAreaId: "w1" });
 		await tick(520);
 		const replacement = TestWebSocket.instances[1];
 		replacement?.open();

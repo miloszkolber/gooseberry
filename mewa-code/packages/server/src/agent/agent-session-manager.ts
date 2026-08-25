@@ -34,7 +34,14 @@ import type {
 } from "@mewa-code/contracts";
 import { isTranscriptMessageRole, modelReferenceKey } from "@mewa-code/contracts";
 import { assertMountedDirectory } from "../path-admission";
-import { clearStoredSessionGoal, clearStoredSessionGoalsForWorkspace } from "../persistence";
+import {
+	clearStoredSessionGoal,
+	clearStoredSessionGoalsForProject,
+	forgetProjectSession,
+	forgetProjectSessions,
+	loadProjectSessionRecords,
+	recordProjectSession,
+} from "../persistence";
 import { getConfig, updateConfig } from "../settings";
 import {
 	ANSWERABILITY_ERRORS,
@@ -42,6 +49,7 @@ import {
 	buildAnswersMessage,
 } from "./ask-user-question";
 import { buildResourceLoader, toSkillCommands } from "./extensions";
+import { routeSubagentModel } from "./model-routing";
 import {
 	getPiRuntime,
 	getPiRuntimeGeneration,
@@ -51,8 +59,13 @@ import {
 } from "./pi-runtime";
 import { projectSessionEvent } from "./session-event-projection";
 import { repairDanglingToolCalls } from "./session-repair";
-import type { SkillAdmissionContext } from "./skill-admission";
 import type { SubagentHost } from "./subagent-extension";
+import {
+	excludedToolsForRole,
+	type ModelGroup,
+	rolePrompt,
+	type SubagentRole,
+} from "./subagent-roles";
 import type { ChildRunSnapshot, ChildRunStatus, RunChildSessionInput } from "./subagent-types";
 import { trashFile } from "./trash";
 import { cancelExtUiForSession, createWebUiContext, notifyExtUi } from "./web-ui-context";
@@ -61,6 +74,8 @@ interface ChildRelation {
 	parentSessionId: string;
 	toolCallId: string;
 	task: string;
+	role: SubagentRole;
+	modelGroup: ModelGroup;
 	status: ChildRunStatus;
 	startedAt: number;
 	completedAt?: number | undefined;
@@ -76,7 +91,7 @@ interface Entry {
 	settingsManager: SettingsManager;
 	generation: PiRuntimeGeneration;
 	unsubscribe: () => void;
-	workspaceId: string;
+	projectId: string;
 	lastSettlement: AgentSettlement | null | undefined;
 	child?: ChildRelation;
 }
@@ -96,10 +111,10 @@ export async function usePiRuntime<T>(
 
 const deletedSessions = new Map<string, string>();
 
-const deletingSessions = new Map<string, { workspaceId: string; done: Promise<void> }>();
+const deletingSessions = new Map<string, { projectId: string; done: Promise<void> }>();
 
-function isSessionDeleted(sessionId: string, workspaceId: string): boolean {
-	return deletedSessions.get(sessionId) === workspaceId;
+function isSessionDeleted(sessionId: string, projectId: string): boolean {
+	return deletedSessions.get(sessionId) === projectId;
 }
 
 export type { SessionEventPayload };
@@ -124,18 +139,6 @@ export function setSessionManagerFactory(
 	sessionManagerFactory = factory;
 }
 
-let skillAdmissionResolver: (workspaceId: string) => SkillAdmissionContext = () => ({
-	trusted: false,
-	disabled: [],
-	disabledGroups: [],
-	overrides: {},
-});
-export function setSkillAdmissionResolver(
-	resolver: (workspaceId: string) => SkillAdmissionContext,
-): void {
-	skillAdmissionResolver = resolver;
-}
-
 function hasDeletionTombstone(sessionId: string): boolean {
 	return deletedSessions.has(sessionId);
 }
@@ -155,8 +158,8 @@ export function hasSession(sessionId: string): boolean {
 	return sessions.has(sessionId) && !hasDeletionTombstone(sessionId);
 }
 
-export function getSessionWorkspaceId(sessionId: string): string | undefined {
-	return sessions.get(sessionId)?.workspaceId;
+export function getSessionProjectId(sessionId: string): string | undefined {
+	return sessions.get(sessionId)?.projectId;
 }
 
 /** Return the immutable Pi runtime generation used to create a live session. */
@@ -182,19 +185,19 @@ export async function reloadSessionResources(sessionId: string): Promise<void> {
 			"Can't reload skills while the session is streaming — try again after the turn.",
 		);
 	}
-	entry.settingsManager.setProjectTrusted(skillAdmissionResolver(entry.workspaceId).trusted);
 	await session.reload();
 }
 
-export function buildSessionSettings(cwd: string, projectTrusted = true): SettingsManager {
-	const settings = SettingsManager.create(cwd, undefined, { projectTrusted });
+export function buildSessionSettings(cwd: string): SettingsManager {
+	const settings = SettingsManager.create(cwd, undefined, { projectTrusted: false });
+	settings.setProjectTrusted(settings.getDefaultProjectTrust() === "always");
 	settings.applyOverrides({ images: { autoResize: false } });
 	return settings;
 }
 
 export interface CreateSessionInput {
 	cwd: string;
-	workspaceId: string;
+	projectId: string;
 	model?: WireModel;
 	thinkingLevel?: ThinkingLevel;
 }
@@ -251,7 +254,7 @@ interface PreparedSessionEntry {
 
 async function prepareSessionEntry(
 	session: AgentSession,
-	workspaceId: string,
+	projectId: string,
 	generation: PiRuntimeGeneration,
 	settingsManager: SettingsManager,
 	lastSettlement: AgentSettlement | null | undefined = undefined,
@@ -264,7 +267,7 @@ async function prepareSessionEntry(
 		settingsManager,
 		generation,
 		unsubscribe: () => {},
-		workspaceId,
+		projectId,
 		lastSettlement,
 		...(child ? { child } : {}),
 	};
@@ -297,7 +300,7 @@ async function prepareSessionEntry(
 			uiContext: createWebUiContext(sessionId),
 			onError: () => notifyExtUi(sessionId, "An extension failed.", "error"),
 		});
-		if (isSessionDeleted(sessionId, workspaceId)) throw new Error(`Unknown session: ${sessionId}`);
+		if (isSessionDeleted(sessionId, projectId)) throw new Error(`Unknown session: ${sessionId}`);
 	} catch (error) {
 		cancelExtUiForSession(sessionId);
 		entry.unsubscribe();
@@ -317,20 +320,25 @@ async function prepareSessionEntry(
 
 async function registerSession(
 	session: AgentSession,
-	workspaceId: string,
+	projectId: string,
 	generation: PiRuntimeGeneration,
 	settingsManager: SettingsManager,
 	child?: ChildRelation,
 ): Promise<CreateSessionResult> {
 	const prepared = await prepareSessionEntry(
 		session,
-		workspaceId,
+		projectId,
 		generation,
 		settingsManager,
 		undefined,
 		child,
 	);
 	sessions.set(session.sessionId, prepared.entry);
+	recordProjectSession({
+		projectId,
+		sessionId: session.sessionId,
+		cwd: session.sessionManager.getCwd(),
+	});
 	if (child) {
 		const children = childrenByParent.get(child.parentSessionId) ?? new Set<string>();
 		children.add(session.sessionId);
@@ -341,8 +349,7 @@ async function registerSession(
 
 export async function createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
 	const generation = await getPiRuntimeGeneration();
-	const admission = skillAdmissionResolver(input.workspaceId);
-	const settingsManager = buildSessionSettings(input.cwd, admission.trusted);
+	const settingsManager = buildSessionSettings(input.cwd);
 	const { session } = await createAgentSession({
 		cwd: input.cwd,
 		modelRuntime: generation.runtime,
@@ -351,15 +358,14 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
 		resourceLoader: await buildResourceLoader(
 			input.cwd,
 			settingsManager,
-			() => skillAdmissionResolver(input.workspaceId),
 			[],
-			input.workspaceId,
+			input.projectId,
 			subagentHost,
 		),
 		...(input.model ? { model: resolveWireModel(generation.runtime, input.model) } : {}),
 		...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
 	});
-	return registerSession(session, input.workspaceId, generation, settingsManager);
+	return registerSession(session, input.projectId, generation, settingsManager);
 }
 
 const CHILD_OUTPUT_MAX_BYTES = 32 * 1024;
@@ -416,10 +422,14 @@ function childSnapshot(parentSessionId: string, entry: Entry): ChildRunSnapshot 
 	return {
 		parentSessionId,
 		childSessionId: entry.session.sessionId,
+		role: entry.child.role,
 		task: entry.child.task,
 		status: entry.child.status,
 		model,
 		thinkingLevel: entry.session.thinkingLevel,
+		modelGroup: entry.child.modelGroup,
+		durationMs: (entry.child.completedAt ?? Date.now()) - entry.child.startedAt,
+		...(entry.child.completedAt ? { usage: getSessionStats(entry.session.sessionId) } : {}),
 		...(entry.child.currentTool ? { currentTool: entry.child.currentTool } : {}),
 		...(entry.child.finalOutput !== undefined ? { finalOutput: entry.child.finalOutput } : {}),
 		...(entry.child.outputState ? { outputState: entry.child.outputState } : {}),
@@ -463,27 +473,43 @@ export async function runChildSession(
 
 	const parentCwd = parent.session.sessionManager.getCwd();
 	const cwd = assertMountedDirectory(parentCwd, "Subagent workspace");
-	const parentModel = parent.session.model as Model<string> | undefined;
-	const selectedModel = input.model
-		? resolveWireModel(parent.generation.runtime, input.model)
-		: parentModel;
-	const thinkingLevel = selectedModel
-		? clampThinkingLevel(selectedModel, input.thinkingLevel ?? parent.session.thinkingLevel)
-		: (input.thinkingLevel ?? parent.session.thinkingLevel);
-	const admission = skillAdmissionResolver(parent.workspaceId);
-	const settingsManager = buildSessionSettings(cwd, admission.trusted);
+	const routed = routeSubagentModel(
+		settledAvailableModels(parent.generation.runtime).map((model) => toWireModel(model)),
+		input.role,
+		input.modelGroup,
+		input.thinkingLevel,
+	);
+	const selectedModel = resolveWireModel(parent.generation.runtime, routed.model);
+	const thinkingLevel = clampThinkingLevel(selectedModel, routed.thinkingLevel);
+	const settingsManager = buildSessionSettings(cwd);
+	const relation: ChildRelation = {
+		parentSessionId: input.parentSessionId,
+		toolCallId: input.toolCallId,
+		task: input.task,
+		role: input.role,
+		modelGroup: routed.requestedGroup,
+		status: "starting",
+		startedAt: Date.now(),
+	};
 	const parentSession = parent.session.sessionFile;
 	const childSessionManager = sessionManagerFactory(
 		cwd,
 		parentSession ? { parentSession } : undefined,
 	);
+	childSessionManager.appendCustomEntry("mewa-subagent-relation", {
+		version: 1,
+		parentSessionId: relation.parentSessionId,
+		toolCallId: relation.toolCallId,
+		role: relation.role,
+		modelGroup: relation.modelGroup,
+		task: relation.task,
+	});
 
 	const resourceLoader = await buildResourceLoader(
 		cwd,
 		settingsManager,
-		() => skillAdmissionResolver(parent.workspaceId),
 		[],
-		parent.workspaceId,
+		parent.projectId,
 		subagentHost,
 	);
 	const revalidatedCwd = assertMountedDirectory(parentCwd, "Subagent workspace");
@@ -499,6 +525,7 @@ export async function runChildSession(
 		resourceLoader,
 		...(selectedModel ? { model: selectedModel } : {}),
 		thinkingLevel,
+		excludeTools: excludedToolsForRole(input.role),
 	});
 
 	if (
@@ -509,16 +536,9 @@ export async function runChildSession(
 		throw new Error(`Parent session is no longer available: ${input.parentSessionId}`);
 	}
 
-	const relation: ChildRelation = {
-		parentSessionId: input.parentSessionId,
-		toolCallId: input.toolCallId,
-		task: input.task,
-		status: "starting",
-		startedAt: Date.now(),
-	};
 	const created = await registerSession(
 		session,
-		parent.workspaceId,
+		parent.projectId,
 		parent.generation,
 		settingsManager,
 		relation,
@@ -561,6 +581,14 @@ export async function runChildSession(
 			child.child.error = safeChildError(
 				error ?? child.session.state.errorMessage ?? "unknown error",
 			);
+		child.session.sessionManager.appendCustomEntry("mewa-subagent-settlement", {
+			version: 1,
+			status,
+			completedAt: child.child.completedAt,
+			outputState: child.child.outputState,
+			truncated: child.child.truncated === true,
+			error: child.child.error,
+		});
 		removeActiveChildIndex(child);
 		onProgress?.(childSnapshot(input.parentSessionId, child));
 	};
@@ -611,7 +639,10 @@ export async function runChildSession(
 			onAbort();
 			if (abortPromise) await abortPromise;
 		} else {
-			await child.session.prompt(input.task, { expandPromptTemplates: false, source: "extension" });
+			await child.session.prompt(rolePrompt(input.role, input.task), {
+				expandPromptTemplates: false,
+				source: "extension",
+			});
 			await child.session.waitForIdle();
 		}
 		if (signal?.aborted || child.child?.status === "cancelled") {
@@ -634,7 +665,8 @@ function summaryOf(sessionId: string, entry: Entry): SessionSummary {
 	const { session } = entry;
 	return {
 		sessionId,
-		workspaceId: entry.workspaceId,
+		projectId: entry.projectId,
+		cwd: session.sessionManager.getCwd(),
 		title: session.sessionName ?? "Chat",
 		model: session.model ? toWireModel(session.model as unknown as Model<string>) : null,
 		thinkingLevel: session.thinkingLevel,
@@ -727,10 +759,6 @@ async function scanSessionFiles(
 	return scanned;
 }
 
-async function listSessionInfosForCatalog(cwd: string): Promise<SessionInfo[]> {
-	return SessionManager.list(cwd);
-}
-
 function sessionFileMayContainId(path: string, sessionId: string): boolean {
 	const name = basename(path);
 	return name === `${sessionId}.jsonl` || name.endsWith(`_${sessionId}.jsonl`);
@@ -768,54 +796,54 @@ async function findSessionInfoStrict(
 	return listed;
 }
 
-async function listSessionsInternal(workspaceId: string, cwd: string): Promise<SessionSummary[]> {
+async function listSessionsInternal(projectId: string): Promise<SessionSummary[]> {
 	const live: SessionSummary[] = [];
 	const liveIds = new Set<string>();
-	const liveFiles = new Set<string>();
 	for (const [sessionId, entry] of sessions) {
-		if (entry.workspaceId !== workspaceId || isSessionDeleted(sessionId, workspaceId)) continue;
+		if (entry.projectId !== projectId || isSessionDeleted(sessionId, projectId)) continue;
 		live.push(summaryOf(sessionId, entry));
 		liveIds.add(sessionId);
-		const sessionFile = entry.session.sessionManager.getSessionFile();
-		if (sessionFile) liveFiles.add(resolve(sessionFile));
 	}
-	const infos = (await listSessionInfosForCatalog(cwd)).filter(
-		(info) => !liveFiles.has(resolve(info.path)),
+	const records = loadProjectSessionRecords().filter(
+		(record) => record.projectId === projectId && !liveIds.has(record.sessionId),
 	);
-	const disk: SessionSummary[] = infos
-		.filter(
-			(info) =>
-				info.cwd === cwd && !liveIds.has(info.id) && !isSessionDeleted(info.id, workspaceId),
+	const disk = (
+		await Promise.all(
+			records.map(async (record): Promise<SessionSummary | null> => {
+				if (isSessionDeleted(record.sessionId, projectId)) return null;
+				const info = await findSessionInfoStrict(record.cwd, record.sessionId);
+				if (!info) return null;
+				return {
+					sessionId: info.id,
+					projectId,
+					cwd: info.cwd,
+					title: info.name ?? "Chat",
+					model: null,
+					thinkingLevel: "medium" as ThinkingLevel,
+					isStreaming: false,
+					messageCount: info.messageCount,
+					updatedAt: info.modified.getTime(),
+					live: false,
+				};
+			}),
 		)
-		.map((info) => ({
-			sessionId: info.id,
-			workspaceId,
-			title: info.name ?? "Chat",
-			model: null,
-			thinkingLevel: "medium" as ThinkingLevel,
-			isStreaming: false,
-			messageCount: info.messageCount,
-			updatedAt: info.modified.getTime(),
-			live: false,
-		}));
+	).filter((summary): summary is SessionSummary => summary !== null);
 	return [...live, ...disk];
 }
 
-export function listSessions(workspaceId: string, cwd: string): Promise<SessionSummary[]> {
-	return listSessionsInternal(workspaceId, cwd);
+export function listSessions(projectId: string): Promise<SessionSummary[]> {
+	return listSessionsInternal(projectId);
 }
 
 const attaching = new Map<string, Promise<void>>();
 
-function attachDiskSession(sessionId: string, workspaceId: string, cwd: string): Promise<void> {
-	if (isSessionDeleted(sessionId, workspaceId))
+function attachDiskSession(sessionId: string, projectId: string, cwd: string): Promise<void> {
+	if (isSessionDeleted(sessionId, projectId))
 		return Promise.reject(new Error(`Unknown session: ${sessionId}`));
 	if (sessions.has(sessionId)) return Promise.resolve();
 	let pending = attaching.get(sessionId);
 	if (!pending) {
-		pending = openDiskSession(sessionId, workspaceId, cwd).finally(() =>
-			attaching.delete(sessionId),
-		);
+		pending = openDiskSession(sessionId, projectId, cwd).finally(() => attaching.delete(sessionId));
 		attaching.set(sessionId, pending);
 	}
 	return pending;
@@ -832,13 +860,13 @@ function persistedSessionModelRef(model: unknown): { provider: string; id: strin
 	return { provider, id };
 }
 
-async function openDiskSession(sessionId: string, workspaceId: string, cwd: string): Promise<void> {
-	if (isSessionDeleted(sessionId, workspaceId)) throw new Error(`Unknown session: ${sessionId}`);
+async function openDiskSession(sessionId: string, projectId: string, cwd: string): Promise<void> {
+	if (isSessionDeleted(sessionId, projectId)) throw new Error(`Unknown session: ${sessionId}`);
 	const info = await findSessionInfoStrict(cwd, sessionId);
 	if (!info) throw new Error(`Unknown session: ${sessionId}`);
 	if (sessions.has(sessionId)) return;
 	const generation = await getPiRuntimeGeneration();
-	const settingsManager = buildSessionSettings(cwd, skillAdmissionResolver(workspaceId).trusted);
+	const settingsManager = buildSessionSettings(cwd);
 	const sessionManager = SessionManager.open(info.path);
 	const persistedModel = persistedSessionModelRef(sessionManager.buildSessionContext().model);
 	let exactModel: Model<string> | undefined;
@@ -855,39 +883,32 @@ async function openDiskSession(sessionId: string, workspaceId: string, cwd: stri
 		modelRuntime: generation.runtime,
 		sessionManager,
 		settingsManager,
-		resourceLoader: await buildResourceLoader(
-			cwd,
-			settingsManager,
-			() => skillAdmissionResolver(workspaceId),
-			[],
-			workspaceId,
-			subagentHost,
-		),
+		resourceLoader: await buildResourceLoader(cwd, settingsManager, [], projectId, subagentHost),
 		...(exactModel ? { model: exactModel } : {}),
 	});
 	if (sessions.has(sessionId)) {
 		session.dispose();
 		return;
 	}
-	await registerSession(session, workspaceId, generation, settingsManager);
+	await registerSession(session, projectId, generation, settingsManager);
 }
 
 async function ensureSessionAttachedInternal(
 	sessionId: string,
-	workspaceId: string,
+	projectId: string,
 	cwd: string,
 ): Promise<boolean> {
-	if (isSessionDeleted(sessionId, workspaceId)) return false;
+	if (isSessionDeleted(sessionId, projectId)) return false;
 	const live = sessions.get(sessionId);
 	if (live) {
-		if (live.workspaceId !== workspaceId) throw new Error(`Unknown session: ${sessionId}`);
+		if (live.projectId !== projectId) throw new Error(`Unknown session: ${sessionId}`);
 		if (live.session.sessionManager.getCwd() !== cwd)
 			throw new Error(`Unknown session: ${sessionId}`);
 		return true;
 	}
 	const known = await findSessionInfoStrict(cwd, sessionId);
 	if (!known) return false;
-	await attachDiskSession(sessionId, workspaceId, cwd);
+	await attachDiskSession(sessionId, projectId, cwd);
 	if (!sessions.has(sessionId))
 		throw new Error(`Session ${sessionId} was re-opened but did not register.`);
 	return true;
@@ -895,25 +916,25 @@ async function ensureSessionAttachedInternal(
 
 export function ensureSessionAttached(
 	sessionId: string,
-	workspaceId: string,
+	projectId: string,
 	cwd: string,
 ): Promise<boolean> {
-	return ensureSessionAttachedInternal(sessionId, workspaceId, cwd);
+	return ensureSessionAttachedInternal(sessionId, projectId, cwd);
 }
 
 async function getSessionMessagesInternal(
 	sessionId: string,
-	workspaceId: string,
+	projectId: string,
 	cwd: string,
 ): Promise<{ summary: SessionSummary; messages: TranscriptMessage[] }> {
-	if (isSessionDeleted(sessionId, workspaceId)) throw new Error(`Unknown session: ${sessionId}`);
+	if (isSessionDeleted(sessionId, projectId)) throw new Error(`Unknown session: ${sessionId}`);
 	let entry = sessions.get(sessionId);
-	if (entry && entry.workspaceId !== workspaceId) throw new Error(`Unknown session: ${sessionId}`);
+	if (entry && entry.projectId !== projectId) throw new Error(`Unknown session: ${sessionId}`);
 	if (entry && entry.session.sessionManager.getCwd() !== cwd)
 		throw new Error(`Unknown session: ${sessionId}`);
 	if (!entry) {
-		await attachDiskSession(sessionId, workspaceId, cwd);
-		if (isSessionDeleted(sessionId, workspaceId)) throw new Error(`Unknown session: ${sessionId}`);
+		await attachDiskSession(sessionId, projectId, cwd);
+		if (isSessionDeleted(sessionId, projectId)) throw new Error(`Unknown session: ${sessionId}`);
 		entry = sessions.get(sessionId);
 		if (!entry) throw new Error(`Unknown session: ${sessionId}`);
 	}
@@ -925,10 +946,10 @@ async function getSessionMessagesInternal(
 
 export function getSessionMessages(
 	sessionId: string,
-	workspaceId: string,
+	projectId: string,
 	cwd: string,
 ): Promise<{ summary: SessionSummary; messages: TranscriptMessage[] }> {
-	return getSessionMessagesInternal(sessionId, workspaceId, cwd);
+	return getSessionMessagesInternal(sessionId, projectId, cwd);
 }
 
 export async function answerQuestion(
@@ -1236,9 +1257,9 @@ export async function settleSessionsForShutdown(timeoutMs = 2000): Promise<void>
 	]);
 }
 
-async function removeWorkspaceSessionsInternal(workspaceId: string, cwd?: string): Promise<void> {
+async function removeProjectSessionsInternal(projectId: string, cwd?: string): Promise<void> {
 	const ids = [...sessions]
-		.filter(([, entry]) => entry.workspaceId === workspaceId)
+		.filter(([, entry]) => entry.projectId === projectId)
 		.map(([sessionId]) => sessionId);
 	const visited = new Set<string>();
 	for (const sessionId of ids) await cancelChildTree(sessionId, visited);
@@ -1249,11 +1270,12 @@ async function removeWorkspaceSessionsInternal(workspaceId: string, cwd?: string
 		disposeSession(sessionId);
 	}
 	if (cwd) await purgeDiskSessions(cwd);
-	clearStoredSessionGoalsForWorkspace(workspaceId);
+	clearStoredSessionGoalsForProject(projectId);
+	forgetProjectSessions(projectId);
 }
 
-export function removeWorkspaceSessions(workspaceId: string, cwd?: string): Promise<void> {
-	return removeWorkspaceSessionsInternal(workspaceId, cwd);
+export function removeProjectSessions(projectId: string, cwd?: string): Promise<void> {
+	return removeProjectSessionsInternal(projectId, cwd);
 }
 
 async function purgeDiskSessions(cwd: string): Promise<void> {
@@ -1268,15 +1290,15 @@ async function purgeDiskSessions(cwd: string): Promise<void> {
 	}
 }
 
-export function deleteSession(sessionId: string, workspaceId: string, cwd: string): Promise<void> {
+export function deleteSession(sessionId: string, projectId: string, cwd: string): Promise<void> {
 	const inFlight = deletingSessions.get(sessionId);
 	if (inFlight) {
-		if (inFlight.workspaceId !== workspaceId)
+		if (inFlight.projectId !== projectId)
 			return Promise.reject(new Error(`Unknown session: ${sessionId}`));
 		return inFlight.done;
 	}
 
-	const transaction = runDeleteTransaction(sessionId, workspaceId, cwd);
+	const transaction = runDeleteTransaction(sessionId, projectId, cwd);
 	const done = transaction.then(
 		() => {
 			deletingSessions.delete(sessionId);
@@ -1286,22 +1308,22 @@ export function deleteSession(sessionId: string, workspaceId: string, cwd: strin
 			throw error;
 		},
 	);
-	deletingSessions.set(sessionId, { workspaceId, done });
+	deletingSessions.set(sessionId, { projectId, done });
 	return done;
 }
 
 async function runDeleteTransaction(
 	sessionId: string,
-	workspaceId: string,
+	projectId: string,
 	cwd: string,
 ): Promise<void> {
 	const installedTombstone = !deletedSessions.has(sessionId);
-	deletedSessions.set(sessionId, workspaceId);
+	deletedSessions.set(sessionId, projectId);
 	let liveEntry: Entry | undefined;
 	try {
 		await attaching.get(sessionId)?.catch(() => {});
 		const entry = sessions.get(sessionId);
-		if (entry && entry.workspaceId !== workspaceId) {
+		if (entry && entry.projectId !== projectId) {
 			throw new Error(`Unknown session: ${sessionId}`);
 		}
 		let path: string | undefined;
@@ -1327,7 +1349,8 @@ async function runDeleteTransaction(
 		if (installedTombstone) deletedSessions.delete(sessionId);
 		throw error;
 	}
-	clearStoredSessionGoal(workspaceId, sessionId);
+	clearStoredSessionGoal(projectId, sessionId);
+	forgetProjectSession(projectId, sessionId);
 	if (liveEntry && sessions.get(sessionId) === liveEntry) disposeSession(sessionId);
-	publishDeleted({ workspaceId, sessionId });
+	publishDeleted({ projectId, sessionId });
 }

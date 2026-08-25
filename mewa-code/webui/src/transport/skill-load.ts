@@ -1,16 +1,16 @@
 import type {
-	WorkspaceFsChangedPayload,
-	WorkspaceWatchReadyResult,
+	ProjectFsChangedPayload,
+	ProjectWatchReadyResult,
 	WsParams,
 	WsResult,
 } from "@mewa-code/contracts";
-import { selectWorkspaceTick, useAppStore } from "../store";
+import { selectProjectAreaTick, useAppStore } from "../store";
 import { getTransport } from "./wire-transport";
 
 export interface SkillLoadDependencies {
-	watchReady: (workspaceId: string, prewarm: boolean) => Promise<WorkspaceWatchReadyResult>;
-	noteFsChanged: (payload: WorkspaceFsChangedPayload) => void;
-	workspaceTick: (workspaceId: string) => number;
+	watchReady: (projectId: string, prewarm: boolean) => Promise<ProjectWatchReadyResult>;
+	noteFsChanged: (payload: ProjectFsChangedPayload) => void;
+	projectAreaTick: (projectAreaId: string) => number;
 	createSession: (params: WsParams<"session.create">) => Promise<WsResult<"session.create">>;
 	getSessionMessages: (
 		params: WsParams<"session.getMessages">,
@@ -23,50 +23,52 @@ export interface SkillLoadDependencies {
 export function createSkillLoadRequests(deps: SkillLoadDependencies) {
 	const pending = new Map<string, { preparation: Promise<number>; prewarm: boolean }>();
 
-	const prepare = (workspaceId: string, prewarm: boolean): Promise<number> => {
-		const existing = pending.get(workspaceId);
+	const prepare = (projectAreaId: string, prewarm: boolean): Promise<number> => {
+		const existing = pending.get(projectAreaId);
 		if (existing && (prewarm || !existing.prewarm)) return existing.preparation;
 
-		const started = deps.watchReady(workspaceId, prewarm).then(({ startupNudge }) => {
+		const started = deps.watchReady(projectAreaId, prewarm).then(({ startupNudge }) => {
 			if (startupNudge) {
 				deps.noteFsChanged({
-					workspaceId,
+					projectId: projectAreaId,
 					paths: [],
 					truncated: true,
-					skillChange: "unknown",
 				});
 			}
-			return deps.workspaceTick(workspaceId);
+			return deps.projectAreaTick(projectAreaId);
 		});
 		const preparation = started.finally(() => {
-			if (pending.get(workspaceId)?.preparation === preparation) pending.delete(workspaceId);
+			if (pending.get(projectAreaId)?.preparation === preparation) pending.delete(projectAreaId);
 		});
-		pending.set(workspaceId, { preparation, prewarm });
+		pending.set(projectAreaId, { preparation, prewarm });
 		return preparation;
 	};
 
 	return {
-		async prewarmWorkspaceSkillLoad(workspaceId: string): Promise<void> {
-			await prepare(workspaceId, true);
+		async prewarmProjectAreaSkillLoad(projectAreaId: string): Promise<void> {
+			await prepare(projectAreaId, true);
 		},
 		async createSession(params: WsParams<"session.create">) {
-			const syncedTick = await prepare(params.workspaceId, false);
+			const syncedTick = await prepare(params.projectId, false);
 			const result = await deps.createSession(params);
 			return { result, syncedTick };
 		},
 		async getSessionMessages(params: WsParams<"session.getMessages">) {
-			const syncedTick = await prepare(params.workspaceId, false);
+			const syncedTick = await prepare(params.projectId, false);
 			const result = await deps.getSessionMessages(params);
 			if (
-				result.summary.workspaceId !== params.workspaceId ||
+				result.summary.projectId !== params.projectId ||
 				result.summary.sessionId !== params.sessionId
 			) {
-				throw new Error("Session response did not match the requested workspace and session");
+				throw new Error("Session response did not match the requested projectArea and session");
 			}
 			return { result, syncedTick };
 		},
-		async reloadSessionResources(workspaceId: string, params: WsParams<"session.reloadResources">) {
-			const syncedTick = await prepare(workspaceId, false);
+		async reloadSessionResources(
+			projectAreaId: string,
+			params: WsParams<"session.reloadResources">,
+		) {
+			const syncedTick = await prepare(projectAreaId, false);
 			const result = await deps.reloadSessionResources(params);
 			return { result, syncedTick };
 		},
@@ -74,19 +76,19 @@ export function createSkillLoadRequests(deps: SkillLoadDependencies) {
 }
 
 const skillLoadRequests = createSkillLoadRequests({
-	watchReady: (workspaceId, prewarm) =>
+	watchReady: (projectId, prewarm) =>
 		getTransport().request(
-			"workspace.watchReady",
-			prewarm ? { workspaceId, prewarm: true } : { workspaceId },
+			"project.watchReady",
+			prewarm ? { projectId, prewarm: true } : { projectId },
 		),
 	noteFsChanged: (payload) => useAppStore.getState().noteFsChanged(payload),
-	workspaceTick: (workspaceId) => selectWorkspaceTick(useAppStore.getState(), workspaceId),
+	projectAreaTick: (projectAreaId) => selectProjectAreaTick(useAppStore.getState(), projectAreaId),
 	createSession: (params) => getTransport().request("session.create", params),
 	getSessionMessages: (params) => getTransport().request("session.getMessages", params),
 	reloadSessionResources: (params) => getTransport().request("session.reloadResources", params),
 });
 
-export const prewarmWorkspaceSkillLoad = skillLoadRequests.prewarmWorkspaceSkillLoad;
+export const prewarmProjectAreaSkillLoad = skillLoadRequests.prewarmProjectAreaSkillLoad;
 export const createSessionWithSkillBaseline = skillLoadRequests.createSession;
 export const getSessionMessagesWithSkillBaseline = skillLoadRequests.getSessionMessages;
 export const reloadSessionResourcesWithSkillBaseline = skillLoadRequests.reloadSessionResources;

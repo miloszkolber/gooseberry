@@ -1,44 +1,29 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join, normalize } from "node:path";
 import type {
+	ProjectFsChangedPayload,
 	ServerWelcome,
 	SessionDeletedPayload,
-	WorkspaceFsChangedPayload,
 } from "@mewa-code/contracts";
 import { isCodeToken, PROTOCOL_VERSION, WS_CHANNELS } from "@mewa-code/contracts";
 import { errorCodeOf } from "@mewa-code/shared/codedError";
 import {
 	disposeAllSessions,
-	getSessionWorkspaceId,
 	setExtUiPublisher,
 	setSessionDeletedPublisher,
 	setSessionPublisher,
-	setSkillAdmissionResolver,
 } from "../agent";
 import { cancelAllLogins, setLoginPublisher } from "../auth";
-import { resolveWorktreeFile } from "../fs";
+import { resolveProjectFile } from "../fs";
 import {
-	getProjects,
+	getProject,
 	listProjects,
 	listRecentProjects,
 	openProject,
 	setProjectPublisher,
 } from "../projects";
 import { getConfig, setSettingsPublisher } from "../settings";
-import {
-	setRepoMetaPublisher,
-	setSkillPathClassifier,
-	setWatchPublisher,
-	stopAllWatches,
-} from "../watch";
-import { getWorkspace, refreshUserOwnedWorkspace, setWorkspacePublisher } from "../workspaces";
-import {
-	isPromptCommitted,
-	isSettledTurn,
-	maybeAutoRenameWorkspace,
-	maybeNaiveNameWorkspace,
-} from "./auto-rename";
-import { setFsNudgePublisher } from "./fs-nudge";
+import { setWatchPublisher, stopAllWatches } from "../watch";
 import { handleRequest } from "./handlers";
 import { RequestReplayCache } from "./request-replay-cache";
 import {
@@ -74,12 +59,6 @@ const BROWSER_ARTIFACT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.(?:png|jpe?g|w
 const BROWSER_ARTIFACT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const MAX_WS_MESSAGE_BYTES = 1024 * 1024;
 const CLIENT_KEY = /^[A-Za-z0-9_-]{1,128}$/;
-
-const PROJECT_SKILL_PATH = /^\.pi\/skills(?:\/|$)/;
-
-function isProjectSkillPath(relativePath: string): boolean {
-	return PROJECT_SKILL_PATH.test(relativePath.replaceAll("\\", "/"));
-}
 
 interface BrowserArtifactTarget {
 	session: string;
@@ -233,7 +212,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 						headers: { allow: "GET" },
 					});
 				}
-				return serveWorktreeFile(url.pathname);
+				return serveProjectFile(url.pathname);
 			}
 			if (staticDir) {
 				return serveStatic(url.pathname, staticDir);
@@ -255,10 +234,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				ws.subscribe(WS_CHANNELS.sessionDeleted);
 				ws.subscribe(WS_CHANNELS.providerLogin);
 				ws.subscribe(WS_CHANNELS.projectUpdated);
-				ws.subscribe(WS_CHANNELS.workspaceCreated);
-				ws.subscribe(WS_CHANNELS.workspaceUpdated);
-				ws.subscribe(WS_CHANNELS.workspaceRemoved);
-				ws.subscribe(WS_CHANNELS.workspaceFsChanged);
+				ws.subscribe(WS_CHANNELS.projectFsChanged);
 				ws.subscribe(WS_CHANNELS.settingsChanged);
 				const welcome: ServerWelcome = {
 					protocolVersion: PROTOCOL_VERSION,
@@ -348,21 +324,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		},
 	});
 
-	setSkillAdmissionResolver((workspaceId) => {
-		try {
-			const { projectId, skillOverrides } = getWorkspace(workspaceId);
-			const project = getProjects().find((p) => p.id === projectId);
-			return {
-				trusted: project?.trusted === true,
-				disabled: project?.disabledSkills ?? [],
-				disabledGroups: project?.disabledGroups ?? [],
-				overrides: skillOverrides ?? {},
-			};
-		} catch {
-			return { trusted: false, disabled: [], disabledGroups: [], overrides: {} };
-		}
-	});
-
 	setProjectPublisher((project) => {
 		server.publish(
 			WS_CHANNELS.projectUpdated,
@@ -370,32 +331,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		);
 	});
 
-	setWorkspacePublisher((event) => {
-		const channel =
-			event.kind === "created"
-				? WS_CHANNELS.workspaceCreated
-				: event.kind === "updated"
-					? WS_CHANNELS.workspaceUpdated
-					: WS_CHANNELS.workspaceRemoved;
-		const data =
-			event.kind === "removed" ? { projectId: event.projectId, id: event.id } : event.workspace;
-		server.publish(channel, JSON.stringify({ channel, data }));
-	});
-
-	const publishFsChanged = (payload: WorkspaceFsChangedPayload) => {
+	const publishFsChanged = (payload: ProjectFsChangedPayload) => {
 		server.publish(
-			WS_CHANNELS.workspaceFsChanged,
-			JSON.stringify({ channel: WS_CHANNELS.workspaceFsChanged, data: payload }),
+			WS_CHANNELS.projectFsChanged,
+			JSON.stringify({ channel: WS_CHANNELS.projectFsChanged, data: payload }),
 		);
 	};
 	setWatchPublisher(publishFsChanged);
-	setSkillPathClassifier(isProjectSkillPath);
-	setFsNudgePublisher(publishFsChanged);
-
-	setRepoMetaPublisher((workspaceId) => {
-		refreshUserOwnedWorkspace(workspaceId);
-		publishFsChanged({ workspaceId, paths: [], truncated: false, skillChange: "none" });
-	});
 
 	setSettingsPublisher((config) => {
 		server.publish(
@@ -416,13 +358,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			WS_CHANNELS.piEvent,
 			JSON.stringify({ channel: WS_CHANNELS.piEvent, data: payload }),
 		);
-		if (isPromptCommitted(payload.event)) {
-			const workspaceId = getSessionWorkspaceId(payload.sessionId);
-			if (workspaceId) void maybeNaiveNameWorkspace(payload.sessionId, workspaceId);
-		} else if (isSettledTurn(payload.event)) {
-			const workspaceId = getSessionWorkspaceId(payload.sessionId);
-			if (workspaceId) void maybeAutoRenameWorkspace(payload.sessionId, workspaceId);
-		}
 	});
 
 	setExtUiPublisher((request) => {
@@ -468,21 +403,25 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	};
 }
 
-async function serveWorktreeFile(pathname: string): Promise<Response> {
+async function serveProjectFile(pathname: string): Promise<Response> {
 	if (pathname.length > 4096) return new Response("not found", { status: 404 });
 	const rest = pathname.slice("/files/".length);
-	const slash = rest.indexOf("/");
-	if (slash <= 0) return new Response("not found", { status: 404 });
-	let workspaceId: string;
+	const parts = rest.split("/");
+	if (parts.length < 3) return new Response("not found", { status: 404 });
+	let projectId: string;
+	let rootIndex: number;
 	let relPath: string;
 	try {
-		workspaceId = decodeURIComponent(rest.slice(0, slash));
-		relPath = decodeURIComponent(rest.slice(slash + 1));
+		projectId = decodeURIComponent(parts[0] as string);
+		rootIndex = Number(parts[1]);
+		relPath = decodeURIComponent(parts.slice(2).join("/"));
 	} catch {
 		return new Response("not found", { status: 404 });
 	}
 	try {
-		const file = Bun.file(resolveWorktreeFile(workspaceId, relPath));
+		const root = getProject(projectId).roots[rootIndex];
+		if (!root) return new Response("not found", { status: 404 });
+		const file = Bun.file(resolveProjectFile(projectId, root, relPath));
 		if (!(await file.exists())) return new Response("not found", { status: 404 });
 		return new Response(file);
 	} catch {

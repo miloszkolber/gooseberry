@@ -1,12 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as acp from "@agentclientprotocol/sdk";
-import type {
-	PiEvent,
-	Project,
-	ToolResultMessage,
-	TranscriptMessage,
-	Workspace,
-} from "@mewa-code/contracts";
+import type { PiEvent, Project, ToolResultMessage, TranscriptMessage } from "@mewa-code/contracts";
 import {
 	type AcpConnectorDependencies,
 	type AcpPromptInput,
@@ -20,15 +14,13 @@ const CWD = "/workspace/project";
 const OTHER_CWD = "/workspace/other";
 const PROJECT_ID = "project-1";
 const OTHER_PROJECT_ID = "project-2";
-const WORKSPACE_ID = "workspace-1";
-const OTHER_WORKSPACE_ID = "workspace-2";
 const SESSION_ID = "session-1";
 
 type SessionPublisher = Parameters<AcpConnectorDependencies["setSessionPublisher"]>[0];
 
 interface FakeAcpState {
 	dependencies: Partial<AcpConnectorDependencies>;
-	created?: { cwd: string; workspaceId: string };
+	created?: { cwd: string; projectId: string };
 	promptInput?: AcpPromptInput;
 	settlement: unknown;
 	publish: SessionPublisher;
@@ -40,35 +32,18 @@ function fakeAcpState(messages: TranscriptMessage[] = []): FakeAcpState {
 	const project: Project = {
 		id: PROJECT_ID,
 		name: "project",
-		path: CWD,
+		roots: [CWD],
 		slug: "project",
 		lastOpened: 1,
 	};
 	const otherProject: Project = {
 		id: OTHER_PROJECT_ID,
 		name: "other",
-		path: OTHER_CWD,
+		roots: [OTHER_CWD],
 		slug: "other",
 		lastOpened: 1,
 	};
-	const workspace: Workspace = {
-		id: WORKSPACE_ID,
-		projectId: PROJECT_ID,
-		name: "project",
-		branch: "main",
-		worktreePath: CWD,
-		baseBranch: "main",
-	};
-	const otherWorkspace: Workspace = {
-		id: OTHER_WORKSPACE_ID,
-		projectId: OTHER_PROJECT_ID,
-		name: "other",
-		branch: "main",
-		worktreePath: OTHER_CWD,
-		baseBranch: "main",
-	};
 	const projects = [project, otherProject];
-	const workspaces = [workspace, otherWorkspace];
 	const state: FakeAcpState = {
 		dependencies: {},
 		settlement: undefined,
@@ -79,19 +54,21 @@ function fakeAcpState(messages: TranscriptMessage[] = []): FakeAcpState {
 			if (path !== CWD && path !== OTHER_CWD) throw new Error("outside mount");
 			return path;
 		},
-		createSession: async ({ cwd, workspaceId }) => {
-			state.created = { cwd, workspaceId };
+		createSession: async ({ cwd, projectId }) => {
+			state.created = { cwd, projectId };
 			return { sessionId: SESSION_ID, model: null, thinkingLevel: "medium" };
 		},
-		ensureWorkspaceScratchDir: () => {},
+		assertProjectCwd: (_projectId, cwd) => cwd ?? CWD,
+		addProjectRoot: (_projectId, path) => {
+			if (path === OTHER_CWD) throw new Error("owned by another project");
+			return project;
+		},
 		getProjects: () => projects,
 		getSessionCwd: () => CWD,
 		getSessionMessages: async () => ({ summary: {} as never, messages }),
 		getSessionSettlement: () => state.settlement as never,
-		getSessionWorkspaceId: () => WORKSPACE_ID,
-		getWorkspace: (id) => workspaces.find((candidate) => candidate.id === id) as Workspace,
+		getSessionProjectId: () => PROJECT_ID,
 		isSessionStreaming: () => false,
-		listWorkspaces: (id) => workspaces.filter((candidate) => candidate.projectId === id),
 		openProject: (path) => (path === OTHER_CWD ? otherProject : project),
 		promptSession: async (_sessionId, text, images) => {
 			state.promptInput = { text, ...(images ? { images } : {}) };
@@ -101,7 +78,6 @@ function fakeAcpState(messages: TranscriptMessage[] = []): FakeAcpState {
 		setSessionPublisher: (publisher) => {
 			state.publish = publisher;
 		},
-		setSkillAdmissionResolver: () => {},
 		settleSessionsForShutdown: async () => {},
 		disposeAllSessions: () => {},
 		cancelExtUiForSession: () => {},
@@ -308,28 +284,34 @@ test("createAcpAgent exposes only the supported initialization capabilities", as
 	}
 });
 
-test("admits session/new only for a mounted workspace and records its owner", async () => {
+test("admits session/new only for a mounted project root and records its owner", async () => {
 	const state = fakeAcpState();
 	const result = await withAcpConnection(state, async (context) =>
 		context.request(acp.methods.agent.session.new, { cwd: CWD, mcpServers: [] }),
 	);
 
 	expect(result).toEqual({ sessionId: SESSION_ID });
-	expect(state.created).toEqual({ cwd: CWD, workspaceId: WORKSPACE_ID });
+	expect(state.created).toEqual({ cwd: CWD, projectId: PROJECT_ID });
 });
 
-test("rejects unsupported MCP and additional-directory setup", async () => {
-	for (const params of [
-		{
-			cwd: CWD,
-			mcpServers: [{ name: "unsupported", command: "/bin/false", args: [], env: [] }],
-		},
-		{ cwd: CWD, mcpServers: [], additionalDirectories: ["/workspace/other"] },
-	]) {
+test("rejects unsupported MCP and additional roots owned by another project", async () => {
+	for (const [params, message] of [
+		[
+			{
+				cwd: CWD,
+				mcpServers: [{ name: "unsupported", command: "/bin/false", args: [], env: [] }],
+			},
+			/unsupported/,
+		],
+		[
+			{ cwd: CWD, mcpServers: [], additionalDirectories: [OTHER_CWD] },
+			/not owned by another project/,
+		],
+	] as const) {
 		const state = fakeAcpState();
 		await withAcpConnection(state, async (context) => {
 			await expect(context.request(acp.methods.agent.session.new, params as never)).rejects.toThrow(
-				/unsupported/,
+				message,
 			);
 			return undefined;
 		});

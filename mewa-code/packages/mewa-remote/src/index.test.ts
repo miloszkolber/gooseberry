@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { SshConfig, SshRunner } from "../ssh";
-import { sshBashExtension } from "./ssh-bash-extension";
+import { sshBashExtension } from "./index";
+import type { SshConfig, SshRunner } from "./ssh";
 
 type RegisteredTool = {
 	execute: (...args: readonly unknown[]) => Promise<unknown>;

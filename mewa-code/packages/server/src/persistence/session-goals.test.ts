@@ -1,75 +1,67 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_GOAL_MAX_LENGTH } from "@mewa-code/contracts";
 import {
 	clearStoredSessionGoal,
-	readStoredSessionGoal,
 	sessionGoalState,
 	writeStoredSessionGoal,
+	writeStoredSessionTasks,
 } from "./session-goals";
 
 let root: string;
 const previousDataDir = process.env.MEWA_CODE_DATA_DIR;
-
 beforeEach(() => {
-	root = mkdtempSync(join(tmpdir(), "mewa-code-session-goals-"));
+	root = mkdtempSync(join(tmpdir(), "mewa-code-objectives-"));
 	process.env.MEWA_CODE_DATA_DIR = root;
 });
-
 afterEach(() => {
 	rmSync(root, { recursive: true, force: true });
 	if (previousDataDir === undefined) delete process.env.MEWA_CODE_DATA_DIR;
 	else process.env.MEWA_CODE_DATA_DIR = previousDataDir;
 });
 
-describe("session goal persistence", () => {
-	test("stores one goal per workspace/session key and keeps identities isolated", () => {
-		writeStoredSessionGoal("workspace-a", "session-1", "first goal");
-		writeStoredSessionGoal("workspace-a", "session-2", "second session");
-		writeStoredSessionGoal("workspace-b", "session-1", "other workspace");
-
-		expect(readStoredSessionGoal("workspace-a", "session-1")?.goal).toBe("first goal");
-		expect(readStoredSessionGoal("workspace-a", "session-2")?.goal).toBe("second session");
-		expect(readStoredSessionGoal("workspace-b", "session-1")?.goal).toBe("other workspace");
-		expect(sessionGoalState("workspace-a", "session-1")).toMatchObject({
-			workspaceId: "workspace-a",
-			sessionId: "session-1",
-			goal: "first goal",
-			active: true,
+describe("session objective persistence", () => {
+	test("isolates goal and ordered tasks by project and session", () => {
+		writeStoredSessionGoal("project-a", "session-1", "ship it");
+		writeStoredSessionTasks("project-a", "session-1", [
+			{ id: "one", text: "Implement", status: "active" },
+			{ id: "two", text: "Verify", status: "pending" },
+		]);
+		expect(sessionGoalState("project-a", "session-1")).toMatchObject({
+			projectId: "project-a",
+			goal: "ship it",
+			tasks: [
+				{ id: "one", status: "active" },
+				{ id: "two", status: "pending" },
+			],
 		});
-		expect(readdirSync(join(root, "extensions", "session-goals"))).toHaveLength(3);
-		expect(existsSync(join(root, "goals.json"))).toBe(false);
+		expect(sessionGoalState("project-b", "session-1").goal).toBeNull();
 	});
 
-	test("invalid and oversized updates preserve the last valid goal", () => {
-		writeStoredSessionGoal("workspace-a", "session-1", "keep this");
-		expect(() => writeStoredSessionGoal("workspace-a", "session-1", " \n ")).toThrow(
-			"cannot be empty",
-		);
+	test("invalid updates preserve valid objective state", () => {
+		writeStoredSessionGoal("project-a", "session-1", "keep");
 		expect(() =>
-			writeStoredSessionGoal("workspace-a", "session-1", "x".repeat(SESSION_GOAL_MAX_LENGTH + 1)),
-		).toThrow("characters or fewer");
-		expect(readStoredSessionGoal("workspace-a", "session-1")?.goal).toBe("keep this");
-		expect(() => writeStoredSessionGoal("../outside", "session-1", "blocked")).toThrow(
-			"Workspace id is invalid",
-		);
+			writeStoredSessionGoal("project-a", "session-1", "x".repeat(SESSION_GOAL_MAX_LENGTH + 1)),
+		).toThrow();
+		expect(() =>
+			writeStoredSessionTasks("project-a", "session-1", [
+				{ id: "one", text: "", status: "pending" },
+			]),
+		).toThrow();
+		expect(sessionGoalState("project-a", "session-1").goal).toBe("keep");
 	});
 
-	test("clear removes only the active goal and is idempotent", () => {
-		writeStoredSessionGoal("workspace-a", "session-1", "remove me");
-		writeStoredSessionGoal("workspace-a", "session-2", "keep me");
-
-		clearStoredSessionGoal("workspace-a", "session-1");
-		clearStoredSessionGoal("workspace-a", "session-1");
-
-		expect(sessionGoalState("workspace-a", "session-1")).toMatchObject({
+	test("clearing a goal preserves tasks", () => {
+		writeStoredSessionGoal("project-a", "session-1", "remove");
+		writeStoredSessionTasks("project-a", "session-1", [
+			{ id: "one", text: "Keep", status: "done" },
+		]);
+		clearStoredSessionGoal("project-a", "session-1");
+		expect(sessionGoalState("project-a", "session-1")).toMatchObject({
 			goal: null,
-			active: false,
-			updatedAt: null,
+			tasks: [{ text: "Keep" }],
 		});
-		expect(readStoredSessionGoal("workspace-a", "session-2")?.goal).toBe("keep me");
-		expect(readdirSync(join(root, "extensions", "session-goals"))).toHaveLength(1);
 	});
 });

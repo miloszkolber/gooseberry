@@ -5,9 +5,9 @@ import { CodeBlock } from "./code-block";
 import { Collapsible, countLines } from "./collapsible";
 import { languageFromPath, resultText, strArg } from "./tool-helpers";
 
-export function WriteCard({ args, result, status, workspaceRoot }: ToolRenderProps) {
+export function WriteCard({ args, result, status, projectAreaRoot }: ToolRenderProps) {
 	const path = strArg(args, "path");
-	const displayPath = projectRelativePath(path, workspaceRoot);
+	const displayPath = projectRelativePath(path, projectAreaRoot);
 	const content = strArg(args, "content");
 	const lang = languageFromPath(path);
 	const message = resultText(result);

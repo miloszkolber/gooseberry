@@ -18,21 +18,19 @@ import {
 	disposeAllSessions,
 	getSessionCwd,
 	getSessionMessages,
+	getSessionProjectId,
 	getSessionSettlement,
-	getSessionWorkspaceId,
 	isSessionStreaming,
 	promptSession,
 	setSessionDeletedPublisher,
 	setSessionPublisher,
-	setSkillAdmissionResolver,
 	settleSessionsForShutdown,
 } from "../agent";
 import { getPiRuntime } from "../agent/pi-runtime";
 import { setExtUiPublisher } from "../agent/web-ui-context";
 import { installCrashLog } from "../host/crash-log";
 import { assertMountedDirectory } from "../path-admission";
-import { getProjects, openProject } from "../projects";
-import { ensureWorkspaceScratchDir, getWorkspace, listWorkspaces } from "../workspaces";
+import { addProjectRoot, assertProjectCwd, getProjects, openProject } from "../projects";
 
 /** Maximum number of ACP content blocks accepted in one prompt. */
 export const ACP_MAX_PROMPT_BLOCKS = 128;
@@ -60,13 +58,11 @@ export interface AcpPromptInput {
 }
 
 interface SessionOwner {
-	workspaceId: string;
+	projectId: string;
 	cwd: string;
 }
 
-interface WorkspaceAdmission extends SessionOwner {
-	projectId: string;
-}
+type ProjectAdmission = SessionOwner;
 
 /** Narrow seam for ACP lifecycle tests. Defaults are the live process-global implementations. */
 export interface AcpConnectorDependencies {
@@ -74,22 +70,20 @@ export interface AcpConnectorDependencies {
 	cancelExtUiForSession: typeof cancelExtUiForSession;
 	createSession: typeof createSession;
 	disposeAllSessions: typeof disposeAllSessions;
-	ensureWorkspaceScratchDir: typeof ensureWorkspaceScratchDir;
+	addProjectRoot: typeof addProjectRoot;
+	assertProjectCwd: typeof assertProjectCwd;
 	getProjects: typeof getProjects;
 	getSessionCwd: typeof getSessionCwd;
 	getSessionMessages: typeof getSessionMessages;
 	getSessionSettlement: typeof getSessionSettlement;
-	getSessionWorkspaceId: typeof getSessionWorkspaceId;
-	getWorkspace: typeof getWorkspace;
+	getSessionProjectId: typeof getSessionProjectId;
 	isSessionStreaming: typeof isSessionStreaming;
-	listWorkspaces: typeof listWorkspaces;
 	openProject: typeof openProject;
 	promptSession: typeof promptSession;
 	assertMountedDirectory: typeof assertMountedDirectory;
 	setExtUiPublisher: typeof setExtUiPublisher;
 	setSessionDeletedPublisher: typeof setSessionDeletedPublisher;
 	setSessionPublisher: typeof setSessionPublisher;
-	setSkillAdmissionResolver: typeof setSkillAdmissionResolver;
 	settleSessionsForShutdown: typeof settleSessionsForShutdown;
 }
 
@@ -98,22 +92,20 @@ const DEFAULT_ACP_CONNECTOR_DEPENDENCIES: AcpConnectorDependencies = {
 	cancelExtUiForSession,
 	createSession,
 	disposeAllSessions,
-	ensureWorkspaceScratchDir,
+	addProjectRoot,
+	assertProjectCwd,
 	getProjects,
 	getSessionCwd,
 	getSessionMessages,
 	getSessionSettlement,
-	getSessionWorkspaceId,
-	getWorkspace,
+	getSessionProjectId,
 	isSessionStreaming,
-	listWorkspaces,
 	openProject,
 	promptSession,
 	assertMountedDirectory,
 	setExtUiPublisher,
 	setSessionDeletedPublisher,
 	setSessionPublisher,
-	setSkillAdmissionResolver,
 	settleSessionsForShutdown,
 };
 
@@ -464,36 +456,27 @@ function isWithin(root: string, candidate: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function findWorkspaceForCwd(
+function findProjectForCwd(
 	cwd: string,
 	dependencies: AcpConnectorDependencies,
-): WorkspaceAdmission | undefined {
+): ProjectAdmission | undefined {
 	for (const project of dependencies.getProjects()) {
-		let workspaces: ReturnType<typeof listWorkspaces>;
-		try {
-			workspaces = dependencies.listWorkspaces(project.id, { includeDiffStats: false });
-		} catch {
-			continue;
-		}
-		for (const workspace of workspaces) {
-			let worktreePath: string;
+		for (const root of project.roots) {
+			let admittedRoot: string;
 			try {
-				worktreePath = dependencies.assertMountedDirectory(workspace.worktreePath, "ACP workspace");
+				admittedRoot = dependencies.assertMountedDirectory(root, "ACP project root");
 			} catch {
 				continue;
 			}
-			if (isWithin(worktreePath, cwd)) {
-				return { cwd, workspaceId: workspace.id, projectId: project.id };
+			if (isWithin(admittedRoot, cwd)) {
+				return { cwd, projectId: project.id };
 			}
 		}
 	}
 	return undefined;
 }
 
-function admitWorkspace(
-	rawCwd: unknown,
-	dependencies: AcpConnectorDependencies,
-): WorkspaceAdmission {
+function admitProject(rawCwd: unknown, dependencies: AcpConnectorDependencies): ProjectAdmission {
 	const requestedCwd = boundedPath(rawCwd, "cwd");
 	let cwd: string;
 	try {
@@ -503,30 +486,18 @@ function admitWorkspace(
 	}
 
 	try {
-		const existing = findWorkspaceForCwd(cwd, dependencies);
+		const existing = findProjectForCwd(cwd, dependencies);
 		if (existing) return existing;
 
 		const project = dependencies.openProject(cwd);
-		const workspaces = dependencies.listWorkspaces(project.id, { includeDiffStats: false });
-		const workspace = workspaces.find((candidate) => {
-			try {
-				return isWithin(
-					dependencies.assertMountedDirectory(candidate.worktreePath, "ACP workspace"),
-					cwd,
-				);
-			} catch {
-				return false;
-			}
-		});
-		if (!workspace) throw new Error("workspace not admitted");
-		return { cwd, workspaceId: workspace.id, projectId: project.id };
+		return { cwd: dependencies.assertProjectCwd(project.id, cwd), projectId: project.id };
 	} catch {
-		throw invalidParams("cwd must belong to an admitted Git project workspace");
+		throw invalidParams("cwd must belong to an admitted project root");
 	}
 }
 
 function sameOwner(left: SessionOwner, right: SessionOwner): boolean {
-	return left.workspaceId === right.workspaceId && left.cwd === right.cwd;
+	return left.projectId === right.projectId && left.cwd === right.cwd;
 }
 
 class AcpNotifier {
@@ -599,23 +570,6 @@ class AcpConnector {
 			.onRequest(acp.methods.agent.session.prompt, (context) => this.prompt(context))
 			.onNotification(acp.methods.agent.session.cancel, ({ params }) => this.cancel(params));
 
-		this.dependencies.setSkillAdmissionResolver((workspaceId) => {
-			try {
-				const workspace = this.dependencies.getWorkspace(workspaceId);
-				const project = this.dependencies
-					.getProjects()
-					.find((candidate) => candidate.id === workspace.projectId);
-				return {
-					trusted: project?.trusted === true,
-					disabled: project?.disabledSkills ?? [],
-					disabledGroups: project?.disabledGroups ?? [],
-					overrides: workspace.skillOverrides ?? {},
-				};
-			} catch {
-				return { trusted: false, disabled: [], disabledGroups: [], overrides: {} };
-			}
-		});
-
 		this.dependencies.setSessionPublisher(({ sessionId, event }) => {
 			if (!this.owners.has(sessionId)) return;
 			const update = projectPiEvent(event);
@@ -648,21 +602,30 @@ class AcpConnector {
 		mcpServers: unknown[];
 	}): void {
 		if (params.mcpServers.length > 0) throw invalidParams("ACP MCP servers are unsupported");
-		if (params.additionalDirectories?.length) {
-			throw invalidParams("ACP additionalDirectories are unsupported");
+	}
+
+	private addDirectories(projectId: string, directories: string[] | undefined): void {
+		for (const raw of directories ?? []) {
+			const directory = boundedPath(raw, "additionalDirectories");
+			try {
+				this.dependencies.addProjectRoot(projectId, directory);
+			} catch {
+				throw invalidParams(
+					"additionalDirectories must be admitted directories not owned by another project",
+				);
+			}
 		}
 	}
 
 	private async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
 		this.validateSessionSetup(params);
-		const admission = admitWorkspace(params.cwd, this.dependencies);
-		const workspace = this.dependencies.getWorkspace(admission.workspaceId);
-		this.dependencies.ensureWorkspaceScratchDir(workspace);
+		const admission = admitProject(params.cwd, this.dependencies);
+		this.addDirectories(admission.projectId, params.additionalDirectories);
 		let created: Awaited<ReturnType<typeof createSession>>;
 		try {
 			created = await this.dependencies.createSession({
 				cwd: admission.cwd,
-				workspaceId: admission.workspaceId,
+				projectId: admission.projectId,
 			});
 		} catch {
 			throw internalError("Pi could not create the requested session");
@@ -674,10 +637,8 @@ class AcpConnector {
 	private async loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse> {
 		this.validateSessionSetup(params);
 		const sessionId = validateSessionId(params.sessionId);
-		const admission = admitWorkspace(params.cwd, this.dependencies);
-		this.dependencies.ensureWorkspaceScratchDir(
-			this.dependencies.getWorkspace(admission.workspaceId),
-		);
+		const admission = admitProject(params.cwd, this.dependencies);
+		this.addDirectories(admission.projectId, params.additionalDirectories);
 		const existingOwner = this.owners.get(sessionId);
 		if (existingOwner && !sameOwner(existingOwner, admission)) {
 			throw invalidParams("sessionId is not owned by the requested cwd");
@@ -687,18 +648,18 @@ class AcpConnector {
 		try {
 			loaded = await this.dependencies.getSessionMessages(
 				sessionId,
-				admission.workspaceId,
+				admission.projectId,
 				admission.cwd,
 			);
 		} catch {
 			throw invalidParams("sessionId is unknown or does not belong to the requested cwd");
 		}
-		const owner = { workspaceId: admission.workspaceId, cwd: admission.cwd };
+		const owner = { projectId: admission.projectId, cwd: admission.cwd };
 		if (
-			this.dependencies.getSessionWorkspaceId(sessionId) !== owner.workspaceId ||
+			this.dependencies.getSessionProjectId(sessionId) !== owner.projectId ||
 			this.dependencies.getSessionCwd(sessionId) !== owner.cwd
 		) {
-			throw invalidParams("sessionId is not owned by the requested workspace and cwd");
+			throw invalidParams("sessionId is not owned by the requested project and cwd");
 		}
 		this.owners.set(sessionId, owner);
 

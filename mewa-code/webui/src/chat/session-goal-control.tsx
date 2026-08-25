@@ -1,5 +1,5 @@
 import { normalizeSessionGoal, SESSION_GOAL_MAX_LENGTH } from "@mewa-code/contracts";
-import { Pencil, Target, Trash2 } from "lucide-react";
+import { Check, Circle, Pencil, Plus, Target, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -8,17 +8,18 @@ import { useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 
 export function SessionGoalControl({
-	workspaceId,
+	projectAreaId,
 	sessionId,
 }: {
-	workspaceId: string;
+	projectAreaId: string;
 	sessionId: string;
 }) {
 	const runtime = useAppStore((state) => state.sessions[sessionId]);
 	const goalState = runtime?.goal ?? {
-		workspaceId: null,
+		projectAreaId: null,
 		status: "idle" as const,
 		goal: null,
+		tasks: [],
 		updatedAt: null,
 		error: null,
 	};
@@ -28,9 +29,9 @@ export function SessionGoalControl({
 
 	const load = useCallback(() => {
 		const generation = ++requestGeneration.current;
-		useAppStore.getState().setSessionGoalLoading(sessionId, workspaceId);
+		useAppStore.getState().setSessionGoalLoading(sessionId, projectAreaId);
 		void getTransport()
-			.request("session.goalGet", { workspaceId, sessionId })
+			.request("session.goalGet", { projectId: projectAreaId, sessionId })
 			.then((value) => {
 				if (generation !== requestGeneration.current) return;
 				useAppStore.getState().setSessionGoal(sessionId, value);
@@ -38,9 +39,9 @@ export function SessionGoalControl({
 			})
 			.catch((error: unknown) => {
 				if (generation !== requestGeneration.current) return;
-				useAppStore.getState().setSessionGoalError(sessionId, workspaceId, errorText(error));
+				useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
 			});
-	}, [sessionId, workspaceId]);
+	}, [sessionId, projectAreaId]);
 
 	useEffect(() => {
 		setOpen(false);
@@ -56,14 +57,14 @@ export function SessionGoalControl({
 		try {
 			goal = normalizeSessionGoal(draft);
 		} catch (error) {
-			useAppStore.getState().setSessionGoalError(sessionId, workspaceId, errorText(error));
+			useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
 			return;
 		}
 		const generation = ++requestGeneration.current;
-		useAppStore.getState().setSessionGoalSaving(sessionId, workspaceId);
+		useAppStore.getState().setSessionGoalSaving(sessionId, projectAreaId);
 		try {
 			const value = await getTransport().request("session.goalSet", {
-				workspaceId,
+				projectId: projectAreaId,
 				sessionId,
 				goal,
 			});
@@ -73,23 +74,47 @@ export function SessionGoalControl({
 			setOpen(false);
 		} catch (error) {
 			if (generation !== requestGeneration.current) return;
-			useAppStore.getState().setSessionGoalError(sessionId, workspaceId, errorText(error));
+			useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
 		}
 	};
 
 	const clear = async (): Promise<void> => {
 		const generation = ++requestGeneration.current;
-		useAppStore.getState().setSessionGoalSaving(sessionId, workspaceId);
+		useAppStore.getState().setSessionGoalSaving(sessionId, projectAreaId);
 		try {
-			const value = await getTransport().request("session.goalClear", { workspaceId, sessionId });
+			const value = await getTransport().request("session.goalClear", {
+				projectId: projectAreaId,
+				sessionId,
+			});
 			if (generation !== requestGeneration.current) return;
 			useAppStore.getState().setSessionGoal(sessionId, value);
 			setDraft("");
 			setOpen(false);
 		} catch (error) {
 			if (generation !== requestGeneration.current) return;
-			useAppStore.getState().setSessionGoalError(sessionId, workspaceId, errorText(error));
+			useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
 		}
+	};
+	const saveTasks = async (tasks: typeof goalState.tasks): Promise<void> => {
+		useAppStore.getState().setSessionGoalSaving(sessionId, projectAreaId);
+		try {
+			const value = await getTransport().request("session.tasksSet", {
+				projectId: projectAreaId,
+				sessionId,
+				tasks,
+			});
+			useAppStore.getState().setSessionGoal(sessionId, value);
+		} catch (error) {
+			useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
+		}
+	};
+	const addTask = (text: string) => {
+		const trimmed = text.trim();
+		if (!trimmed) return;
+		void saveTasks([
+			...goalState.tasks,
+			{ id: crypto.randomUUID(), text: trimmed, status: "pending" },
+		]);
 	};
 
 	const beginEdit = () => {
@@ -185,6 +210,78 @@ export function SessionGoalControl({
 						</Button>
 					</div>
 				</form>
+				<div className="mt-md flex flex-col gap-xs border-border-default border-t pt-md">
+					<div className="tr-text-ui text-text-default">Tasks</div>
+					{goalState.tasks.map((task) => (
+						<div key={task.id} className="flex items-center gap-xs">
+							<button
+								type="button"
+								aria-label={`Advance ${task.text}`}
+								onClick={() =>
+									void saveTasks(
+										goalState.tasks.map((candidate) =>
+											candidate.id === task.id
+												? {
+														...candidate,
+														status:
+															candidate.status === "pending"
+																? "active"
+																: candidate.status === "active"
+																	? "done"
+																	: "pending",
+													}
+												: candidate,
+										),
+									)
+								}
+								className="text-text-muted"
+							>
+								{task.status === "done" ? (
+									<Check className="size-3.5" />
+								) : (
+									<Circle
+										className={`size-3.5 ${task.status === "active" ? "text-primary" : ""}`}
+									/>
+								)}
+							</button>
+							<span
+								className={`min-w-0 flex-1 tr-text-metadata ${task.status === "done" ? "text-text-muted line-through" : "text-text-default"}`}
+							>
+								{task.text}
+							</span>
+							<button
+								type="button"
+								aria-label={`Delete ${task.text}`}
+								onClick={() =>
+									void saveTasks(goalState.tasks.filter((candidate) => candidate.id !== task.id))
+								}
+								className="text-text-muted"
+							>
+								<Trash2 className="size-3.5" />
+							</button>
+						</div>
+					))}
+					<form
+						onSubmit={(event) => {
+							event.preventDefault();
+							const input = new FormData(event.currentTarget).get("task");
+							if (typeof input === "string") addTask(input);
+							event.currentTarget.reset();
+						}}
+						className="flex gap-xs"
+					>
+						<input
+							name="task"
+							aria-label="New task"
+							placeholder="Add task"
+							className="min-w-0 flex-1 rounded-[var(--radius-sm)] border border-border-default bg-control-bg px-sm py-xs tr-text-ui"
+						/>
+						<Button type="submit" size="sm" variant="ghost">
+							<Plus className="size-3.5" />
+							Add
+						</Button>
+					</form>
+				</div>
 			</PopoverContent>
 		</Popover>
 	);

@@ -1,8 +1,8 @@
-import type { Workspace } from "@mewa-code/contracts";
 import {
+	type ProjectArea,
 	selectCurrentRouteChatTarget,
-	selectWorkspaceById,
-	selectWorkspaceNavTick,
+	selectProjectAreaById,
+	selectProjectAreaNavTick,
 	useAppStore,
 } from "../store";
 import type { NavigationDriver } from "./driver";
@@ -10,31 +10,33 @@ import { type NavigationLocation, parseFragment, serializeLocation } from "./loc
 
 export interface NavigationDeps {
 	driver: NavigationDriver;
-	listWorkspaces: (projectId: string) => Promise<Workspace[]>;
+	listProjectAreas: (projectId: string) => Promise<ProjectArea[]>;
 }
 
 export function deriveLocation(state: {
-	activeWorkspaceId: string | null;
+	activeProjectAreaId: string | null;
 	selectedProjectId: string | null;
-	workspaces: Record<string, Workspace[]>;
-	tabsByWorkspace: Record<string, { id: string; kind: string; sessionId?: string }[]>;
-	activeTabByWorkspace: Record<string, string | null>;
+	projectAreas: Record<string, ProjectArea[]>;
+	tabsByProjectArea: Record<string, { id: string; kind: string; sessionId?: string }[]>;
+	activeTabByProjectArea: Record<string, string | null>;
 }): NavigationLocation | null {
-	const workspaceId = state.activeWorkspaceId;
-	if (workspaceId) {
-		const workspace = selectWorkspaceById(state, workspaceId);
-		if (!workspace) return null;
-		const activeId = state.activeTabByWorkspace[workspaceId];
-		const active = (state.tabsByWorkspace[workspaceId] ?? []).find((tab) => tab.id === activeId);
+	const projectAreaId = state.activeProjectAreaId;
+	if (projectAreaId) {
+		const projectArea = selectProjectAreaById(state, projectAreaId);
+		if (!projectArea) return null;
+		const activeId = state.activeTabByProjectArea[projectAreaId];
+		const active = (state.tabsByProjectArea[projectAreaId] ?? []).find(
+			(tab) => tab.id === activeId,
+		);
 		if (active?.kind === "chat" && active.sessionId) {
 			return {
 				kind: "chat",
-				projectId: workspace.projectId,
-				workspaceId,
+				projectId: projectArea.projectId,
+				projectAreaId,
 				sessionId: active.sessionId,
 			};
 		}
-		return { kind: "workspace", projectId: workspace.projectId, workspaceId };
+		return { kind: "projectArea", projectId: projectArea.projectId, projectAreaId };
 	}
 	if (state.selectedProjectId) return { kind: "project", projectId: state.selectedProjectId };
 	return { kind: "main" };
@@ -42,8 +44,8 @@ export function deriveLocation(state: {
 
 interface NavigationIntentState {
 	selectedProjectId: string | null;
-	activeWorkspaceId: string | null;
-	navTickByWorkspace: Record<string, number>;
+	activeProjectAreaId: string | null;
+	navTickByProjectArea: Record<string, number>;
 }
 
 function isUserNavigationEdge(
@@ -51,13 +53,16 @@ function isUserNavigationEdge(
 	previous: NavigationIntentState,
 ): boolean {
 	if (state.selectedProjectId !== previous.selectedProjectId) return true;
-	if (state.activeWorkspaceId !== previous.activeWorkspaceId) return true;
-	const workspaceId = state.activeWorkspaceId;
-	if (!workspaceId) return false;
-	return selectWorkspaceNavTick(state, workspaceId) > selectWorkspaceNavTick(previous, workspaceId);
+	if (state.activeProjectAreaId !== previous.activeProjectAreaId) return true;
+	const projectAreaId = state.activeProjectAreaId;
+	if (!projectAreaId) return false;
+	return (
+		selectProjectAreaNavTick(state, projectAreaId) >
+		selectProjectAreaNavTick(previous, projectAreaId)
+	);
 }
 
-export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () => void {
+export function startNavigation({ driver, listProjectAreas }: NavigationDeps): () => void {
 	let generation = 0;
 	let pending: { generation: number; location: NavigationLocation } | null = null;
 	const attempting = new Set<number>();
@@ -114,9 +119,9 @@ export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () 
 			return;
 		}
 		attempting.add(gen);
-		let rows: Workspace[];
+		let rows: ProjectArea[];
 		try {
-			rows = await listWorkspaces(location.projectId);
+			rows = await listProjectAreas(location.projectId);
 		} catch {
 			attempting.delete(gen);
 			return;
@@ -129,9 +134,9 @@ export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () 
 			resolvePending(gen);
 			return;
 		}
-		applyRoute(() => now.setWorkspaces(location.projectId, rows));
-		const workspace = rows.find((w) => w.id === location.workspaceId);
-		if (!workspace) {
+		applyRoute(() => now.setProjectAreas(location.projectId, rows));
+		const projectArea = rows.find((w) => w.id === location.projectAreaId);
+		if (!projectArea) {
 			applyRoute(() => useAppStore.getState().selectProject(location.projectId));
 			resolvePending(gen);
 			return;
@@ -139,8 +144,8 @@ export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () 
 		applyRoute(() =>
 			useAppStore
 				.getState()
-				.activateWorkspaceFromRoute(
-					workspace,
+				.activateProjectAreaFromRoute(
+					projectArea,
 					location.kind === "chat" ? location.sessionId : undefined,
 				),
 		);
@@ -154,7 +159,7 @@ export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () 
 		armedPush = false;
 		applyRoute(() => {
 			const state = useAppStore.getState();
-			if (state.activeWorkspaceId) state.noteNavigation(state.activeWorkspaceId);
+			if (state.activeProjectAreaId) state.noteNavigation(state.activeProjectAreaId);
 			useAppStore.getState().clearRouteChatTarget();
 		});
 		const canonical = serializeLocation(location);
@@ -172,8 +177,8 @@ export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () 
 			!applyingRoute &&
 			pending &&
 			(state.selectedProjectId !== previous.selectedProjectId ||
-				state.activeWorkspaceId !== previous.activeWorkspaceId ||
-				state.navTickByWorkspace !== previous.navTickByWorkspace)
+				state.activeProjectAreaId !== previous.activeProjectAreaId ||
+				state.navTickByProjectArea !== previous.navTickByProjectArea)
 		) {
 			pending = null;
 		}

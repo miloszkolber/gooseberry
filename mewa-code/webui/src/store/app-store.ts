@@ -6,20 +6,17 @@ import type {
 	LoginFrame,
 	LoginPush,
 	PiEvent,
-	PiProfileDescriptor,
 	Project,
+	ProjectFsChangedPayload,
 	RefreshedModels,
 	SessionGoal,
 	SessionQueueState,
 	SessionStats,
 	SessionSummary,
 	SlashCommandInfo,
-	ThemeId,
 	ThinkingLevel,
 	UserMessage,
 	WireModel,
-	Workspace,
-	WorkspaceFsChangedPayload,
 } from "@mewa-code/contracts";
 import { DEFAULT_CONFIG, isAskUserAnswersMessage } from "@mewa-code/contracts";
 import { create } from "zustand";
@@ -43,16 +40,37 @@ import {
 import type { ConnectionStatus } from "../transport";
 import {
 	type HistoryTarget,
-	selectActiveWorkspaceProjectId,
-	selectWorkspaceNavTick,
-	selectWorkspaceSessionIds,
-	selectWorkspaceTick,
+	selectActiveProjectAreaProjectId,
+	selectProjectAreaNavTick,
+	selectProjectAreaSessionIds,
+	selectProjectAreaTick,
 } from "./selectors";
+
+/** Transitional view identity: one UI work area per directory-based project. */
+export interface ProjectArea {
+	id: string;
+	projectId: string;
+	name: string;
+	root: string;
+	kind: "project";
+}
+
+export function projectArea(project: Project, selectedRoot = project.roots[0] ?? ""): ProjectArea {
+	const root = project.roots.includes(selectedRoot) ? selectedRoot : (project.roots[0] ?? "");
+	return {
+		id: project.id,
+		projectId: project.id,
+		name: project.name,
+		root,
+		kind: "project",
+	};
+}
 
 export interface FileTab {
 	kind: "file";
 	id: string;
-	workspaceId: string;
+	projectAreaId: string;
+	root: string;
 	name: string;
 	path: string;
 	content: string;
@@ -62,14 +80,15 @@ export interface FileTab {
 export interface ChatTab {
 	kind: "chat";
 	id: string;
-	workspaceId: string;
+	projectAreaId: string;
 	name: string;
 	sessionId: string;
 }
 export interface DiffTab {
 	kind: "diff";
 	id: string;
-	workspaceId: string;
+	projectAreaId: string;
+	repository: string;
 	name: string;
 	path: string;
 	scope: GitDiffScope;
@@ -79,15 +98,15 @@ export interface DiffTab {
 	ignoreWhitespace?: boolean;
 	loadedTick?: number;
 }
-export type EditorTab = FileTab | ChatTab | DiffTab;
-export type WorkspaceActivity = "files" | "changes";
+export type ContentTab = FileTab | ChatTab | DiffTab;
+export type ProjectAreaActivity = "files" | "changes";
 
-export function chatTabId(workspaceId: string, sessionId: string): string {
-	return tupleKey("chat", workspaceId, sessionId);
+export function chatTabId(projectAreaId: string, sessionId: string): string {
+	return tupleKey("chat", projectAreaId, sessionId);
 }
 
-function editorResourceIdentity(tab: EditorTab): string {
-	if (tab.kind === "file") return tupleKey("editor-resource", "file", tab.path);
+function contentResourceIdentity(tab: ContentTab): string {
+	if (tab.kind === "file") return tupleKey("content-resource", "file", tab.path);
 	if (tab.kind === "diff") {
 		const reference =
 			tab.scope.kind === "commit"
@@ -95,35 +114,35 @@ function editorResourceIdentity(tab: EditorTab): string {
 				: tab.scope.kind === "pinned"
 					? tab.scope.baseRef
 					: "";
-		return tupleKey("editor-resource", "diff", tab.path, tab.scope.kind, reference);
+		return tupleKey("content-resource", "diff", tab.path, tab.scope.kind, reference);
 	}
-	return tupleKey("editor-resource", "chat", tab.sessionId);
+	return tupleKey("content-resource", "chat", tab.sessionId);
 }
 
-function editorSessionId(tab: EditorTab): string | null {
+function contentSessionId(tab: ContentTab): string | null {
 	return tab.kind === "chat" ? tab.sessionId : null;
 }
 
-function availableEditorTabId(tabs: readonly EditorTab[], tab: EditorTab): string {
-	const identity = editorResourceIdentity(tab);
-	const existing = tabs.find((candidate) => editorResourceIdentity(candidate) === identity);
+function availableContentTabId(tabs: readonly ContentTab[], tab: ContentTab): string {
+	const identity = contentResourceIdentity(tab);
+	const existing = tabs.find((candidate) => contentResourceIdentity(candidate) === identity);
 	if (existing) return existing.id;
 	if (!tabs.some((candidate) => candidate.id === tab.id)) return tab.id;
-	let fallback = randomId("editor-cache");
-	while (tabs.some((candidate) => candidate.id === fallback)) fallback = randomId("editor-cache");
+	let fallback = randomId("content-cache");
+	while (tabs.some((candidate) => candidate.id === fallback)) fallback = randomId("content-cache");
 	return fallback;
 }
 
 export type TabIntent = "preview" | "keep";
 
 export interface RouteChatTarget {
-	workspaceId: string;
+	projectAreaId: string;
 	sessionId: string;
 	navTick: number;
 	validated: boolean;
 }
 
-export interface EditorOpenOptions {
+export interface ContentOpenOptions {
 	activate?: boolean;
 	claimPreview?: boolean;
 }
@@ -131,6 +150,7 @@ export interface EditorOpenOptions {
 export const SettingsSection = {
 	Providers: "providers",
 	Models: "models",
+	Signet: "signet",
 } as const;
 export type SettingsSection = (typeof SettingsSection)[keyof typeof SettingsSection];
 
@@ -150,7 +170,7 @@ export interface ClosedChat {
 }
 
 export interface ChatLocationRequest {
-	workspaceId: string;
+	projectAreaId: string;
 	projectId: string;
 	sessionId: string;
 	messageIndex: number;
@@ -179,9 +199,10 @@ export interface SessionRuntime {
 }
 
 export interface SessionGoalRuntime {
-	workspaceId: string | null;
+	projectAreaId: string | null;
 	status: "idle" | "loading" | "saving" | "ready" | "error";
 	goal: string | null;
+	tasks: SessionGoal["tasks"];
 	updatedAt: number | null;
 	error: string | null;
 }
@@ -206,7 +227,14 @@ function newRuntime(model: WireModel | null, thinkingLevel: ThinkingLevel): Sess
 		extUiQueue: [],
 		extUiStatus: {},
 		extUiWidget: {},
-		goal: { workspaceId: null, status: "idle", goal: null, updatedAt: null, error: null },
+		goal: {
+			projectAreaId: null,
+			status: "idle",
+			goal: null,
+			tasks: [],
+			updatedAt: null,
+			error: null,
+		},
 	};
 }
 
@@ -497,40 +525,39 @@ interface AppState {
 	protocolVersion: number | null;
 	projects: Project[];
 	recentProjects: Project[];
-	workspaces: Record<string, Workspace[]>;
-	removedWorkspaceIds: Record<string, true>;
+	projectAreas: Record<string, ProjectArea[]>;
+	removedProjectAreaIds: Record<string, true>;
 	expandedProjectIds: Record<string, true>;
 	selectedProjectId: string | null;
-	activeWorkspaceId: string | null;
+	activeProjectAreaId: string | null;
 	routeChatTarget: RouteChatTarget | null;
 	routeChatTargetGeneration: number;
-	tabsByWorkspace: Record<string, EditorTab[]>;
-	activeTabByWorkspace: Record<string, string | null>;
-	previewTabByWorkspace: Record<string, string>;
-	navTickByWorkspace: Record<string, number>;
-	closedChatsByWorkspace: Record<string, ClosedChat[]>;
-	deletedSessionsByWorkspace: Record<string, Record<string, true>>;
-	activeActivityByWorkspace: Record<string, WorkspaceActivity>;
+	tabsByProjectArea: Record<string, ContentTab[]>;
+	activeTabByProjectArea: Record<string, string | null>;
+	previewTabByProjectArea: Record<string, string>;
+	navTickByProjectArea: Record<string, number>;
+	closedChatsByProjectArea: Record<string, ClosedChat[]>;
+	deletedSessionsByProjectArea: Record<string, Record<string, true>>;
+	activeActivityByProjectArea: Record<string, ProjectAreaActivity>;
 	sessions: Record<string, SessionRuntime>;
 	models: WireModel[];
 	providerVersion: number;
 	modelsRefreshing: boolean;
 	modelsFresh: boolean;
 	changesRequest: {
-		workspaceId: string;
+		projectAreaId: string;
 		path: string;
 		navTick: number;
 	} | null;
 	chatLocationRequest: ChatLocationRequest | null;
 	historyOpenRequest: { id: string; sessionId: string } | null;
-	fsChangesByWorkspace: Record<string, { tick: number; paths: string[]; truncated: boolean }>;
-	skillChangeTickByWorkspace: Record<string, number>;
+	fsChangesByProjectArea: Record<string, { tick: number; paths: string[]; truncated: boolean }>;
+	skillChangeTickByProjectArea: Record<string, number>;
 	skillsSyncedTickBySession: Record<string, number>;
 	activeLogin: LoginState | null;
 	settingsOpen: boolean;
 	settingsSection: SettingsSection;
-	piProfile: PiProfileDescriptor | null;
-	theme: ThemeId;
+	config: AppConfig;
 	toasts: Toast[];
 	setStatus: (status: ConnectionStatus) => void;
 	installWelcomeSnapshot: (
@@ -541,70 +568,74 @@ interface AppState {
 	) => void;
 	installProjectSnapshot: (projects: Project[], recentProjects: Project[]) => void;
 	applyProjectUpdated: (project: Project) => void;
-	setWorkspaces: (projectId: string, workspaces: Workspace[]) => void;
-	addWorkspace: (workspace: Workspace) => void;
-	updateWorkspace: (workspace: Workspace) => void;
-	removeWorkspace: (projectId: string, workspaceId: string) => void;
-	applyWorkspaceRemoved: (projectId: string, workspaceId: string) => void;
+	setProjectAreas: (projectId: string, projectAreas: ProjectArea[]) => void;
+	addProjectArea: (projectArea: ProjectArea) => void;
+	updateProjectArea: (projectArea: ProjectArea) => void;
+	removeProjectArea: (projectId: string, projectAreaId: string) => void;
+	applyProjectAreaRemoved: (projectId: string, projectAreaId: string) => void;
 	selectProject: (projectId: string, opts?: { reveal?: boolean }) => void;
 	toggleProjectExpanded: (projectId: string) => void;
 	expandProject: (projectId: string) => void;
 	hydrateExpandedProjects: (projectIds: readonly string[]) => void;
 	selectMain: () => void;
-	activateWorkspace: (workspace: Pick<Workspace, "id" | "projectId">) => void;
-	activateWorkspaceFromRoute: (
-		workspace: Pick<Workspace, "id" | "projectId">,
+	activateProjectArea: (projectArea: Pick<ProjectArea, "id" | "projectId">) => void;
+	activateProjectAreaFromRoute: (
+		projectArea: Pick<ProjectArea, "id" | "projectId">,
 		sessionId?: string,
 	) => void;
 	validateRouteChatTarget: (sessionId: string) => void;
 	clearRouteChatTarget: () => void;
-	openTab: (tab: EditorTab, intent: TabIntent, options?: EditorOpenOptions) => void;
-	closeTab: (id: string, countNavigation?: boolean, workspaceId?: string) => void;
+	openTab: (tab: ContentTab, intent: TabIntent, options?: ContentOpenOptions) => void;
+	closeTab: (id: string, countNavigation?: boolean, projectAreaId?: string) => void;
 	setActiveTab: (id: string, intent?: TabIntent) => void;
-	noteNavigation: (workspaceId: string) => void;
+	noteNavigation: (projectAreaId: string) => void;
 	setFileTabView: (id: string, view: "rendered" | "source") => void;
 	setDiffTabIgnoreWhitespace: (id: string, ignoreWhitespace: boolean) => void;
 	changesView: "list" | "tree";
 	setChangesView: (view: "list" | "tree") => void;
-	diffScopeByWorkspace: Record<string, GitDiffScope>;
-	setDiffScope: (workspaceId: string, scope: GitDiffScope) => void;
-	noteFsChanged: (payload: WorkspaceFsChangedPayload) => void;
+	diffScopeByProjectArea: Record<string, GitDiffScope>;
+	setDiffScope: (projectAreaId: string, scope: GitDiffScope) => void;
+	noteFsChanged: (payload: ProjectFsChangedPayload) => void;
 	markSkillsSynced: (sessionId: string, syncedTick: number) => void;
-	updateFileTabContent: (workspaceId: string, id: string, content: string, tick: number) => void;
+	updateFileTabContent: (projectAreaId: string, id: string, content: string, tick: number) => void;
 	updateDiffTabContent: (
-		workspaceId: string,
+		projectAreaId: string,
 		id: string,
 		original: string,
 		modified: string,
 		tick: number,
 		loadedTarget: string,
 	) => void;
-	clearWorkspaceTabs: (workspaceId: string) => void;
-	setActiveActivity: (workspaceId: string, activity: WorkspaceActivity) => void;
+	clearProjectAreaTabs: (projectAreaId: string) => void;
+	setActiveActivity: (projectAreaId: string, activity: ProjectAreaActivity) => void;
 	openChatSession: (
-		workspaceId: string,
+		projectAreaId: string,
 		sessionId: string,
 		model: WireModel | null,
 		thinkingLevel: ThinkingLevel,
 		syncedTick?: number,
-		options?: EditorOpenOptions,
+		options?: ContentOpenOptions,
 	) => void;
 	closeChatRuntime: (sessionId: string) => void;
-	closeChatToHistory: (sessionId: string, workspaceId?: string, countNavigation?: boolean) => void;
-	deleteChat: (workspaceId: string, sessionId: string, countNavigation?: boolean) => void;
-	reconcileWorkspaceSessions: (
-		workspaceId: string,
+	closeChatToHistory: (
+		sessionId: string,
+		projectAreaId?: string,
+		countNavigation?: boolean,
+	) => void;
+	deleteChat: (projectAreaId: string, sessionId: string, countNavigation?: boolean) => void;
+	reconcileProjectAreaSessions: (
+		projectAreaId: string,
 		baselineSessionIds: readonly string[],
 		authoritativeSessionIds: readonly string[],
 	) => void;
-	reopenChat: (workspaceId: string, sessionId: string, options?: EditorOpenOptions) => void;
-	noteClosedChats: (workspaceId: string, entries: ClosedChat[]) => void;
+	reopenChat: (projectAreaId: string, sessionId: string, options?: ContentOpenOptions) => void;
+	noteClosedChats: (projectAreaId: string, entries: ClosedChat[]) => void;
 	hydrateSession: (
 		summary: SessionSummary,
 		hydrated: HydratedRuntime,
 		activate?: boolean,
 		syncedTick?: number,
-		options?: EditorOpenOptions,
+		options?: ContentOpenOptions,
 	) => void;
 	appendUserMessage: (sessionId: string, text: string, attachments?: ChatAttachment[]) => void;
 	appendErrorTurn: (sessionId: string, text: string) => void;
@@ -619,10 +650,10 @@ interface AppState {
 	setStats: (sessionId: string, stats: SessionStats) => void;
 	setCommands: (sessionId: string, commands: SlashCommandInfo[]) => void;
 	setChatDraft: (sessionId: string, text: string) => void;
-	setSessionGoalLoading: (sessionId: string, workspaceId: string) => void;
-	setSessionGoalSaving: (sessionId: string, workspaceId: string) => void;
+	setSessionGoalLoading: (sessionId: string, projectAreaId: string) => void;
+	setSessionGoalSaving: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoal: (sessionId: string, value: SessionGoal) => void;
-	setSessionGoalError: (sessionId: string, workspaceId: string, error: string) => void;
+	setSessionGoalError: (sessionId: string, projectAreaId: string, error: string) => void;
 	clearPendingExtUi: (sessionId: string, id: string) => void;
 	applyExtUi: (request: ExtUiRequest) => void;
 	beginLogin: (loginId: string, providerId: string) => void;
@@ -633,9 +664,8 @@ interface AppState {
 	closeSettings: () => void;
 	setSettingsSection: (section: SettingsSection) => void;
 	applyConfig: (config: AppConfig) => void;
-	applyPiProfile: (profile: PiProfileDescriptor) => void;
-	requestToolView: (workspaceId: string, tool: "files" | "changes") => void;
-	requestChangesView: (workspaceId: string, path: string) => void;
+	requestToolView: (projectAreaId: string, tool: "files" | "changes") => void;
+	requestChangesView: (projectAreaId: string, path: string) => void;
 	clearChangesRequest: () => void;
 	requestChatLocation: (req: ChatLocationRequest) => void;
 	clearChatLocation: () => void;
@@ -650,9 +680,7 @@ function sortProjects(projects: Project[]): Project[] {
 }
 
 function configPatch(config: AppConfig) {
-	return {
-		theme: config.theme,
-	};
+	return { config };
 }
 
 function upsertProject(projects: Project[], project: Project): Project[] {
@@ -681,12 +709,12 @@ function pruneExpandedProjects(
 }
 
 function reconcileProjectNavigation(
-	state: Pick<AppState, "selectedProjectId" | "activeWorkspaceId" | "workspaces">,
+	state: Pick<AppState, "selectedProjectId" | "activeProjectAreaId" | "projectAreas">,
 	projects: Project[],
-): Pick<AppState, "selectedProjectId" | "activeWorkspaceId"> | Record<string, never> {
-	const currentProjectId = selectActiveWorkspaceProjectId(state) ?? state.selectedProjectId;
+): Pick<AppState, "selectedProjectId" | "activeProjectAreaId"> | Record<string, never> {
+	const currentProjectId = selectActiveProjectAreaProjectId(state) ?? state.selectedProjectId;
 	if (!currentProjectId || projects.some((project) => project.id === currentProjectId)) return {};
-	return { selectedProjectId: projects[0]?.id ?? null, activeWorkspaceId: null };
+	return { selectedProjectId: projects[0]?.id ?? null, activeProjectAreaId: null };
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -695,53 +723,56 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
 }
 
 function isSessionDeleted(
-	state: Pick<AppState, "deletedSessionsByWorkspace">,
-	workspaceId: string,
+	state: Pick<AppState, "deletedSessionsByProjectArea">,
+	projectAreaId: string,
 	sessionId: string,
 ): boolean {
-	return state.deletedSessionsByWorkspace[workspaceId]?.[sessionId] === true;
+	return state.deletedSessionsByProjectArea[projectAreaId]?.[sessionId] === true;
 }
 
 function patchDiffTab(
-	state: Pick<AppState, "activeWorkspaceId" | "tabsByWorkspace">,
+	state: Pick<AppState, "activeProjectAreaId" | "tabsByProjectArea">,
 	id: string,
 	patch: Partial<Omit<DiffTab, "kind" | "id">>,
 ): Partial<AppState> {
-	const wsId = state.activeWorkspaceId;
+	const wsId = state.activeProjectAreaId;
 	if (!wsId) return {};
-	const tabs = state.tabsByWorkspace[wsId] ?? [];
+	const tabs = state.tabsByProjectArea[wsId] ?? [];
 	if (!tabs.some((t) => t.id === id && t.kind === "diff")) return {};
 	return {
-		tabsByWorkspace: {
-			...state.tabsByWorkspace,
+		tabsByProjectArea: {
+			...state.tabsByProjectArea,
 			[wsId]: tabs.map((t) => (t.id === id && t.kind === "diff" ? { ...t, ...patch } : t)),
 		},
 	};
 }
 
-function bumpNav(s: AppState, workspaceId: string): Record<string, number> {
-	return { ...s.navTickByWorkspace, [workspaceId]: selectWorkspaceNavTick(s, workspaceId) + 1 };
+function bumpNav(s: AppState, projectAreaId: string): Record<string, number> {
+	return {
+		...s.navTickByProjectArea,
+		[projectAreaId]: selectProjectAreaNavTick(s, projectAreaId) + 1,
+	};
 }
 
 function withoutChat(
 	s: AppState,
-	workspaceId: string,
+	projectAreaId: string,
 	sessionId: string,
 	countNavigation: boolean,
 ): AppState {
-	if (s.removedWorkspaceIds[workspaceId]) return s;
-	const alreadyDeleted = isSessionDeleted(s, workspaceId, sessionId);
-	const tabs = s.tabsByWorkspace[workspaceId] ?? [];
-	const sessionTabs = tabs.filter((candidate) => editorSessionId(candidate) === sessionId);
-	const closed = s.closedChatsByWorkspace[workspaceId] ?? [];
+	if (s.removedProjectAreaIds[projectAreaId]) return s;
+	const alreadyDeleted = isSessionDeleted(s, projectAreaId, sessionId);
+	const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
+	const sessionTabs = tabs.filter((candidate) => contentSessionId(candidate) === sessionId);
+	const closed = s.closedChatsByProjectArea[projectAreaId] ?? [];
 	const inHistory = closed.some((chat) => chat.sessionId === sessionId);
 	const hasRuntime = s.sessions[sessionId] !== undefined;
 	const hasSkillBaseline = Object.hasOwn(s.skillsSyncedTickBySession, sessionId);
 	const targetsLocation =
-		s.chatLocationRequest?.workspaceId === workspaceId &&
+		s.chatLocationRequest?.projectAreaId === projectAreaId &&
 		s.chatLocationRequest.sessionId === sessionId;
 	const targetsRoute =
-		s.routeChatTarget?.workspaceId === workspaceId && s.routeChatTarget.sessionId === sessionId;
+		s.routeChatTarget?.projectAreaId === projectAreaId && s.routeChatTarget.sessionId === sessionId;
 	const targetsHistory = s.historyOpenRequest?.sessionId === sessionId;
 	if (
 		alreadyDeleted &&
@@ -760,19 +791,19 @@ function withoutChat(
 	const remaining =
 		sessionTabs.length > 0 ? tabs.filter((candidate) => !removedTabIds.has(candidate.id)) : tabs;
 	const wasActive =
-		s.activeTabByWorkspace[workspaceId] !== null &&
-		removedTabIds.has(s.activeTabByWorkspace[workspaceId] ?? "");
+		s.activeTabByProjectArea[projectAreaId] !== null &&
+		removedTabIds.has(s.activeTabByProjectArea[projectAreaId] ?? "");
 	return {
 		...s,
 		...(!alreadyDeleted
 			? {
-					deletedSessionsByWorkspace: Object.assign(
+					deletedSessionsByProjectArea: Object.assign(
 						Object.create(null),
-						s.deletedSessionsByWorkspace,
+						s.deletedSessionsByProjectArea,
 						{
-							[workspaceId]: Object.assign(
+							[projectAreaId]: Object.assign(
 								Object.create(null),
-								s.deletedSessionsByWorkspace[workspaceId],
+								s.deletedSessionsByProjectArea[projectAreaId],
 								{ [sessionId]: true as const },
 							) as Record<string, true>,
 						},
@@ -780,22 +811,24 @@ function withoutChat(
 				}
 			: {}),
 		...(sessionTabs.length > 0
-			? { tabsByWorkspace: { ...s.tabsByWorkspace, [workspaceId]: remaining } }
+			? { tabsByProjectArea: { ...s.tabsByProjectArea, [projectAreaId]: remaining } }
 			: {}),
 		...(wasActive
 			? {
-					activeTabByWorkspace: {
-						...s.activeTabByWorkspace,
-						[workspaceId]: remaining.at(-1)?.id ?? null,
+					activeTabByProjectArea: {
+						...s.activeTabByProjectArea,
+						[projectAreaId]: remaining.at(-1)?.id ?? null,
 					},
-					navTickByWorkspace: countNavigation ? bumpNav(s, workspaceId) : s.navTickByWorkspace,
+					navTickByProjectArea: countNavigation
+						? bumpNav(s, projectAreaId)
+						: s.navTickByProjectArea,
 				}
 			: {}),
 		...(inHistory
 			? {
-					closedChatsByWorkspace: {
-						...s.closedChatsByWorkspace,
-						[workspaceId]: closed.filter((chat) => chat.sessionId !== sessionId),
+					closedChatsByProjectArea: {
+						...s.closedChatsByProjectArea,
+						[projectAreaId]: closed.filter((chat) => chat.sessionId !== sessionId),
 					},
 				}
 			: {}),
@@ -878,20 +911,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 	protocolVersion: null,
 	projects: [],
 	recentProjects: [],
-	workspaces: {},
-	removedWorkspaceIds: Object.create(null) as Record<string, true>,
+	projectAreas: {},
+	removedProjectAreaIds: Object.create(null) as Record<string, true>,
 	expandedProjectIds: Object.create(null) as Record<string, true>,
 	selectedProjectId: null,
-	activeWorkspaceId: null,
+	activeProjectAreaId: null,
 	routeChatTarget: null,
 	routeChatTargetGeneration: 0,
-	tabsByWorkspace: {},
-	activeTabByWorkspace: {},
-	previewTabByWorkspace: {},
-	navTickByWorkspace: {},
-	closedChatsByWorkspace: {},
-	deletedSessionsByWorkspace: Object.create(null) as Record<string, Record<string, true>>,
-	activeActivityByWorkspace: {},
+	tabsByProjectArea: {},
+	activeTabByProjectArea: {},
+	previewTabByProjectArea: {},
+	navTickByProjectArea: {},
+	closedChatsByProjectArea: {},
+	deletedSessionsByProjectArea: Object.create(null) as Record<string, Record<string, true>>,
+	activeActivityByProjectArea: {},
 	sessions: {},
 	models: [],
 	providerVersion: 0,
@@ -899,17 +932,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 	modelsFresh: false,
 	changesRequest: null,
 	changesView: "list",
-	diffScopeByWorkspace: {},
+	diffScopeByProjectArea: {},
 	chatLocationRequest: null,
 	historyOpenRequest: null,
-	fsChangesByWorkspace: {},
-	skillChangeTickByWorkspace: {},
+	fsChangesByProjectArea: {},
+	skillChangeTickByProjectArea: {},
 	skillsSyncedTickBySession: {},
 	activeLogin: null,
 	settingsOpen: false,
 	settingsSection: SettingsSection.Providers,
-	piProfile: null,
-	theme: DEFAULT_CONFIG.theme,
+	config: DEFAULT_CONFIG,
 	toasts: [],
 	setStatus: (status) =>
 		set((state) => ({
@@ -953,86 +985,87 @@ export const useAppStore = create<AppState>((set, get) => ({
 				...pruneExpandedProjects(state, projects),
 			};
 		}),
-	setWorkspaces: (projectId, workspaces) =>
+	setProjectAreas: (projectId, projectAreas) =>
 		set((s) => ({
-			workspaces: {
-				...s.workspaces,
-				[projectId]: workspaces.filter((workspace) => !s.removedWorkspaceIds[workspace.id]),
+			projectAreas: {
+				...s.projectAreas,
+				[projectId]: projectAreas.filter((projectArea) => !s.removedProjectAreaIds[projectArea.id]),
 			},
 		})),
-	addWorkspace: (workspace) =>
+	addProjectArea: (projectArea) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[workspace.id]) return {};
-			const list = s.workspaces[workspace.projectId];
+			if (s.removedProjectAreaIds[projectArea.id]) return {};
+			const list = s.projectAreas[projectArea.projectId];
 			if (!list) return {};
 			return {
-				workspaces: {
-					...s.workspaces,
-					[workspace.projectId]: list.some((w) => w.id === workspace.id)
-						? list.map((w) => (w.id === workspace.id ? { ...w, ...workspace } : w))
-						: [...list, workspace],
+				projectAreas: {
+					...s.projectAreas,
+					[projectArea.projectId]: list.some((w) => w.id === projectArea.id)
+						? list.map((w) => (w.id === projectArea.id ? { ...w, ...projectArea } : w))
+						: [...list, projectArea],
 				},
 			};
 		}),
-	updateWorkspace: (workspace) =>
+	updateProjectArea: (projectArea) =>
 		set((s) => {
-			const list = s.workspaces[workspace.projectId];
-			if (!list?.some((w) => w.id === workspace.id)) return {};
+			const list = s.projectAreas[projectArea.projectId];
+			if (!list?.some((w) => w.id === projectArea.id)) return {};
 			return {
-				workspaces: {
-					...s.workspaces,
-					[workspace.projectId]: list.map((w) =>
-						w.id === workspace.id
-							? { ...workspace, ...(w.diffStats ? { diffStats: w.diffStats } : {}) }
-							: w,
-					),
+				projectAreas: {
+					...s.projectAreas,
+					[projectArea.projectId]: list.map((w) => (w.id === projectArea.id ? projectArea : w)),
 				},
 			};
 		}),
-	removeWorkspace: (projectId, workspaceId) =>
+	removeProjectArea: (projectId, projectAreaId) =>
 		set((s) => {
-			const list = s.workspaces[projectId];
+			const list = s.projectAreas[projectId];
 			if (!list) return {};
 			return {
-				workspaces: { ...s.workspaces, [projectId]: list.filter((w) => w.id !== workspaceId) },
+				projectAreas: {
+					...s.projectAreas,
+					[projectId]: list.filter((w) => w.id !== projectAreaId),
+				},
 			};
 		}),
-	applyWorkspaceRemoved: (projectId, workspaceId) => {
+	applyProjectAreaRemoved: (projectId, projectAreaId) => {
 		const s = get();
-		const wasActive = s.activeWorkspaceId === workspaceId;
-		const name = s.workspaces[projectId]?.find((w) => w.id === workspaceId)?.name;
+		const wasActive = s.activeProjectAreaId === projectAreaId;
+		const name = s.projectAreas[projectId]?.find((w) => w.id === projectAreaId)?.name;
 		set((state) => {
-			const removedSessions = new Set(selectWorkspaceSessionIds(state, workspaceId));
+			const removedSessions = new Set(selectProjectAreaSessionIds(state, projectAreaId));
 			return {
-				removedWorkspaceIds: Object.assign(Object.create(null), state.removedWorkspaceIds, {
-					[workspaceId]: true,
+				removedProjectAreaIds: Object.assign(Object.create(null), state.removedProjectAreaIds, {
+					[projectAreaId]: true,
 				}) as Record<string, true>,
-				fsChangesByWorkspace: omitKey(state.fsChangesByWorkspace, workspaceId),
-				skillChangeTickByWorkspace: omitKey(state.skillChangeTickByWorkspace, workspaceId),
-				diffScopeByWorkspace: omitKey(state.diffScopeByWorkspace, workspaceId),
+				fsChangesByProjectArea: omitKey(state.fsChangesByProjectArea, projectAreaId),
+				skillChangeTickByProjectArea: omitKey(state.skillChangeTickByProjectArea, projectAreaId),
+				diffScopeByProjectArea: omitKey(state.diffScopeByProjectArea, projectAreaId),
 				changesRequest:
-					state.changesRequest?.workspaceId === workspaceId ? null : state.changesRequest,
+					state.changesRequest?.projectAreaId === projectAreaId ? null : state.changesRequest,
 				chatLocationRequest:
-					state.chatLocationRequest?.workspaceId === workspaceId ? null : state.chatLocationRequest,
+					state.chatLocationRequest?.projectAreaId === projectAreaId
+						? null
+						: state.chatLocationRequest,
 				routeChatTarget:
-					state.routeChatTarget?.workspaceId === workspaceId ? null : state.routeChatTarget,
+					state.routeChatTarget?.projectAreaId === projectAreaId ? null : state.routeChatTarget,
 				historyOpenRequest:
 					state.historyOpenRequest && removedSessions.has(state.historyOpenRequest.sessionId)
 						? null
 						: state.historyOpenRequest,
 			};
 		});
-		s.removeWorkspace(projectId, workspaceId);
-		s.clearWorkspaceTabs(workspaceId);
+		s.removeProjectArea(projectId, projectAreaId);
+		s.clearProjectAreaTabs(projectAreaId);
 		if (wasActive) {
 			s.selectProject(projectId);
-			toast.info(`Workspace "${name ?? "?"}" was removed`);
+			toast.info(`ProjectArea "${name ?? "?"}" was removed`);
 		}
 	},
 	selectProject: (selectedProjectId, opts) =>
 		set((state) => ({
 			selectedProjectId,
-			activeWorkspaceId: null,
+			activeProjectAreaId: null,
 			...(opts?.reveal
 				? { expandedProjectIds: withExpandedProject(state.expandedProjectIds, selectedProjectId) }
 				: {}),
@@ -1053,30 +1086,30 @@ export const useAppStore = create<AppState>((set, get) => ({
 			expandedProjectIds: Object.fromEntries(projectIds.map((id) => [id, true as const])),
 		})),
 	selectMain: () =>
-		set({ selectedProjectId: null, activeWorkspaceId: null, routeChatTarget: null }),
-	activateWorkspace: (workspace) =>
+		set({ selectedProjectId: null, activeProjectAreaId: null, routeChatTarget: null }),
+	activateProjectArea: (projectArea) =>
 		set((state) =>
-			state.removedWorkspaceIds[workspace.id]
+			state.removedProjectAreaIds[projectArea.id]
 				? {}
-				: { selectedProjectId: workspace.projectId, activeWorkspaceId: workspace.id },
+				: { selectedProjectId: projectArea.projectId, activeProjectAreaId: projectArea.id },
 		),
-	activateWorkspaceFromRoute: (workspace, sessionId) =>
+	activateProjectAreaFromRoute: (projectArea, sessionId) =>
 		set((state) => {
-			if (state.removedWorkspaceIds[workspace.id]) return {};
+			if (state.removedProjectAreaIds[projectArea.id]) return {};
 			return {
-				selectedProjectId: workspace.projectId,
-				activeWorkspaceId: workspace.id,
-				navTickByWorkspace: sessionId
+				selectedProjectId: projectArea.projectId,
+				activeProjectAreaId: projectArea.id,
+				navTickByProjectArea: sessionId
 					? {
-							...state.navTickByWorkspace,
-							[workspace.id]: selectWorkspaceNavTick(state, workspace.id) + 1,
+							...state.navTickByProjectArea,
+							[projectArea.id]: selectProjectAreaNavTick(state, projectArea.id) + 1,
 						}
-					: state.navTickByWorkspace,
+					: state.navTickByProjectArea,
 				routeChatTarget: sessionId
 					? {
-							workspaceId: workspace.id,
+							projectAreaId: projectArea.id,
 							sessionId,
-							navTick: selectWorkspaceNavTick(state, workspace.id) + 1,
+							navTick: selectProjectAreaNavTick(state, projectArea.id) + 1,
 							validated: false,
 						}
 					: null,
@@ -1095,39 +1128,39 @@ export const useAppStore = create<AppState>((set, get) => ({
 		set((state) => (state.routeChatTarget ? { routeChatTarget: null } : state)),
 	openTab: (tab, intent, options = {}) =>
 		set((s) => {
-			const wsId = tab.workspaceId;
-			const sessionId = editorSessionId(tab);
+			const wsId = tab.projectAreaId;
+			const sessionId = contentSessionId(tab);
 			if (
-				s.removedWorkspaceIds[wsId] ||
+				s.removedProjectAreaIds[wsId] ||
 				(sessionId !== null && isSessionDeleted(s, wsId, sessionId))
 			) {
 				return {};
 			}
-			const tabs = s.tabsByWorkspace[wsId] ?? [];
-			const resolvedId = availableEditorTabId(tabs, tab);
+			const tabs = s.tabsByProjectArea[wsId] ?? [];
+			const resolvedId = availableContentTabId(tabs, tab);
 			const resolvedTab = resolvedId === tab.id ? tab : { ...tab, id: resolvedId };
 			const previewCompatible = resolvedTab.kind === "file" || resolvedTab.kind === "diff";
 			const effectiveIntent = previewCompatible ? intent : "keep";
 			const claimPreview = previewCompatible && options.claimPreview === true;
-			const preview = s.previewTabByWorkspace[wsId];
-			const activeTabByWorkspace =
+			const preview = s.previewTabByProjectArea[wsId];
+			const activeTabByProjectArea =
 				options.activate === false
-					? s.activeTabByWorkspace
-					: { ...s.activeTabByWorkspace, [wsId]: resolvedTab.id };
+					? s.activeTabByProjectArea
+					: { ...s.activeTabByProjectArea, [wsId]: resolvedTab.id };
 			const existingIndex = tabs.findIndex((candidate) => candidate.id === resolvedTab.id);
 			if (existingIndex >= 0) {
 				const existing = tabs[existingIndex];
 				return {
-					tabsByWorkspace:
+					tabsByProjectArea:
 						existing === resolvedTab
-							? s.tabsByWorkspace
-							: { ...s.tabsByWorkspace, [wsId]: tabs.with(existingIndex, resolvedTab) },
-					activeTabByWorkspace,
-					previewTabByWorkspace:
+							? s.tabsByProjectArea
+							: { ...s.tabsByProjectArea, [wsId]: tabs.with(existingIndex, resolvedTab) },
+					activeTabByProjectArea,
+					previewTabByProjectArea:
 						effectiveIntent === "keep" &&
 						(preview === resolvedTab.id || (claimPreview && preview !== undefined))
-							? omitKey(s.previewTabByWorkspace, wsId)
-							: s.previewTabByWorkspace,
+							? omitKey(s.previewTabByProjectArea, wsId)
+							: s.previewTabByProjectArea,
 				};
 			}
 			const at =
@@ -1135,62 +1168,65 @@ export const useAppStore = create<AppState>((set, get) => ({
 					? tabs.findIndex((t) => t.id === preview)
 					: -1;
 			return {
-				tabsByWorkspace: {
-					...s.tabsByWorkspace,
+				tabsByProjectArea: {
+					...s.tabsByProjectArea,
 					[wsId]: at === -1 ? [...tabs, resolvedTab] : tabs.with(at, resolvedTab),
 				},
-				activeTabByWorkspace,
-				previewTabByWorkspace:
+				activeTabByProjectArea,
+				previewTabByProjectArea:
 					effectiveIntent === "preview"
-						? { ...s.previewTabByWorkspace, [wsId]: resolvedTab.id }
+						? { ...s.previewTabByProjectArea, [wsId]: resolvedTab.id }
 						: claimPreview && preview
-							? omitKey(s.previewTabByWorkspace, wsId)
-							: s.previewTabByWorkspace,
+							? omitKey(s.previewTabByProjectArea, wsId)
+							: s.previewTabByProjectArea,
 			};
 		}),
-	closeTab: (id, countNavigation = true, workspaceId) =>
+	closeTab: (id, countNavigation = true, projectAreaId) =>
 		set((s) => {
-			const wsId = workspaceId ?? s.activeWorkspaceId;
-			if (!wsId || s.removedWorkspaceIds[wsId]) return {};
-			const tabs = (s.tabsByWorkspace[wsId] ?? []).filter((t) => t.id !== id);
-			const wasActive = s.activeTabByWorkspace[wsId] === id;
+			const wsId = projectAreaId ?? s.activeProjectAreaId;
+			if (!wsId || s.removedProjectAreaIds[wsId]) return {};
+			const tabs = (s.tabsByProjectArea[wsId] ?? []).filter((t) => t.id !== id);
+			const wasActive = s.activeTabByProjectArea[wsId] === id;
 			return {
-				tabsByWorkspace: { ...s.tabsByWorkspace, [wsId]: tabs },
-				activeTabByWorkspace: {
-					...s.activeTabByWorkspace,
-					[wsId]: wasActive ? (tabs.at(-1)?.id ?? null) : (s.activeTabByWorkspace[wsId] ?? null),
+				tabsByProjectArea: { ...s.tabsByProjectArea, [wsId]: tabs },
+				activeTabByProjectArea: {
+					...s.activeTabByProjectArea,
+					[wsId]: wasActive ? (tabs.at(-1)?.id ?? null) : (s.activeTabByProjectArea[wsId] ?? null),
 				},
-				navTickByWorkspace: wasActive && countNavigation ? bumpNav(s, wsId) : s.navTickByWorkspace,
-				...(s.previewTabByWorkspace[wsId] === id
-					? { previewTabByWorkspace: omitKey(s.previewTabByWorkspace, wsId) }
+				navTickByProjectArea:
+					wasActive && countNavigation ? bumpNav(s, wsId) : s.navTickByProjectArea,
+				...(s.previewTabByProjectArea[wsId] === id
+					? { previewTabByProjectArea: omitKey(s.previewTabByProjectArea, wsId) }
 					: {}),
 			};
 		}),
 	setActiveTab: (id, intent) =>
 		set((s) => {
-			const wsId = s.activeWorkspaceId;
+			const wsId = s.activeProjectAreaId;
 			if (!wsId) return {};
 			return {
-				activeTabByWorkspace: { ...s.activeTabByWorkspace, [wsId]: id },
-				navTickByWorkspace: bumpNav(s, wsId),
-				...(intent === "keep" && s.previewTabByWorkspace[wsId] === id
-					? { previewTabByWorkspace: omitKey(s.previewTabByWorkspace, wsId) }
+				activeTabByProjectArea: { ...s.activeTabByProjectArea, [wsId]: id },
+				navTickByProjectArea: bumpNav(s, wsId),
+				...(intent === "keep" && s.previewTabByProjectArea[wsId] === id
+					? { previewTabByProjectArea: omitKey(s.previewTabByProjectArea, wsId) }
 					: {}),
 			};
 		}),
-	noteNavigation: (workspaceId) =>
+	noteNavigation: (projectAreaId) =>
 		set((s) =>
-			s.removedWorkspaceIds[workspaceId] ? {} : { navTickByWorkspace: bumpNav(s, workspaceId) },
+			s.removedProjectAreaIds[projectAreaId]
+				? {}
+				: { navTickByProjectArea: bumpNav(s, projectAreaId) },
 		),
 	setFileTabView: (id, view) =>
 		set((s) => {
-			const wsId = s.activeWorkspaceId;
+			const wsId = s.activeProjectAreaId;
 			if (!wsId) return {};
-			const tabs = s.tabsByWorkspace[wsId] ?? [];
+			const tabs = s.tabsByProjectArea[wsId] ?? [];
 			if (!tabs.some((t) => t.id === id && t.kind === "file")) return {};
 			return {
-				tabsByWorkspace: {
-					...s.tabsByWorkspace,
+				tabsByProjectArea: {
+					...s.tabsByProjectArea,
 					[wsId]: tabs.map((t) => (t.id === id && t.kind === "file" ? { ...t, view } : t)),
 				},
 			};
@@ -1198,28 +1234,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 	setDiffTabIgnoreWhitespace: (id, ignoreWhitespace) =>
 		set((s) => patchDiffTab(s, id, { ignoreWhitespace })),
 	setChangesView: (view) => set({ changesView: view }),
-	setDiffScope: (workspaceId, scope) =>
+	setDiffScope: (projectAreaId, scope) =>
 		set((s) =>
-			s.removedWorkspaceIds[workspaceId]
+			s.removedProjectAreaIds[projectAreaId]
 				? {}
-				: { diffScopeByWorkspace: { ...s.diffScopeByWorkspace, [workspaceId]: scope } },
+				: { diffScopeByProjectArea: { ...s.diffScopeByProjectArea, [projectAreaId]: scope } },
 		),
 	noteFsChanged: (payload) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[payload.workspaceId]) return {};
-			const prev = s.fsChangesByWorkspace[payload.workspaceId];
+			if (s.removedProjectAreaIds[payload.projectId]) return {};
+			const prev = s.fsChangesByProjectArea[payload.projectId];
 			const tick = (prev?.tick ?? 0) + 1;
-			const skillChanged = payload.skillChange !== "none";
+			const skillChanged = payload.paths.some((path) => /(^|\/)SKILL\.md$/.test(path));
 			return {
-				fsChangesByWorkspace: {
-					...s.fsChangesByWorkspace,
-					[payload.workspaceId]: { tick, paths: payload.paths, truncated: payload.truncated },
+				fsChangesByProjectArea: {
+					...s.fsChangesByProjectArea,
+					[payload.projectId]: { tick, paths: payload.paths, truncated: payload.truncated },
 				},
 				...(skillChanged
 					? {
-							skillChangeTickByWorkspace: {
-								...s.skillChangeTickByWorkspace,
-								[payload.workspaceId]: tick,
+							skillChangeTickByProjectArea: {
+								...s.skillChangeTickByProjectArea,
+								[payload.projectId]: tick,
 							},
 						}
 					: {}),
@@ -1233,29 +1269,29 @@ export const useAppStore = create<AppState>((set, get) => ({
 				skillsSyncedTickBySession: { ...s.skillsSyncedTickBySession, [sessionId]: synced },
 			};
 		}),
-	updateFileTabContent: (workspaceId, id, content, tick) =>
+	updateFileTabContent: (projectAreaId, id, content, tick) =>
 		set((state) => {
-			if (state.removedWorkspaceIds[workspaceId]) return {};
-			const tabs = state.tabsByWorkspace[workspaceId] ?? [];
+			if (state.removedProjectAreaIds[projectAreaId]) return {};
+			const tabs = state.tabsByProjectArea[projectAreaId] ?? [];
 			if (!tabs.some((tab) => tab.id === id && tab.kind === "file")) return {};
 			return {
-				tabsByWorkspace: {
-					...state.tabsByWorkspace,
-					[workspaceId]: tabs.map((tab) =>
+				tabsByProjectArea: {
+					...state.tabsByProjectArea,
+					[projectAreaId]: tabs.map((tab) =>
 						tab.id === id && tab.kind === "file" ? { ...tab, content, loadedTick: tick } : tab,
 					),
 				},
 			};
 		}),
-	updateDiffTabContent: (workspaceId, id, original, modified, tick, loadedTarget) =>
+	updateDiffTabContent: (projectAreaId, id, original, modified, tick, loadedTarget) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const tabs = s.tabsByWorkspace[workspaceId] ?? [];
+			if (s.removedProjectAreaIds[projectAreaId]) return {};
+			const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
 			if (!tabs.some((tab) => tab.id === id && tab.kind === "diff")) return {};
 			return {
-				tabsByWorkspace: {
-					...s.tabsByWorkspace,
-					[workspaceId]: tabs.map((tab) =>
+				tabsByProjectArea: {
+					...s.tabsByProjectArea,
+					[projectAreaId]: tabs.map((tab) =>
 						tab.id === id && tab.kind === "diff"
 							? { ...tab, original, modified, loadedTick: tick, loadedTarget }
 							: tab,
@@ -1263,66 +1299,66 @@ export const useAppStore = create<AppState>((set, get) => ({
 				},
 			};
 		}),
-	clearWorkspaceTabs: (workspaceId) =>
+	clearProjectAreaTabs: (projectAreaId) =>
 		set((s) => {
 			const sessions = { ...s.sessions };
 			const skillsSyncedTickBySession = { ...s.skillsSyncedTickBySession };
-			for (const sessionId of selectWorkspaceSessionIds(s, workspaceId)) {
+			for (const sessionId of selectProjectAreaSessionIds(s, projectAreaId)) {
 				delete sessions[sessionId];
 				delete skillsSyncedTickBySession[sessionId];
 			}
 			return {
-				tabsByWorkspace: omitKey(s.tabsByWorkspace, workspaceId),
-				activeTabByWorkspace: omitKey(s.activeTabByWorkspace, workspaceId),
-				previewTabByWorkspace: omitKey(s.previewTabByWorkspace, workspaceId),
-				navTickByWorkspace: omitKey(s.navTickByWorkspace, workspaceId),
-				closedChatsByWorkspace: omitKey(s.closedChatsByWorkspace, workspaceId),
-				activeActivityByWorkspace: omitKey(s.activeActivityByWorkspace, workspaceId),
+				tabsByProjectArea: omitKey(s.tabsByProjectArea, projectAreaId),
+				activeTabByProjectArea: omitKey(s.activeTabByProjectArea, projectAreaId),
+				previewTabByProjectArea: omitKey(s.previewTabByProjectArea, projectAreaId),
+				navTickByProjectArea: omitKey(s.navTickByProjectArea, projectAreaId),
+				closedChatsByProjectArea: omitKey(s.closedChatsByProjectArea, projectAreaId),
+				activeActivityByProjectArea: omitKey(s.activeActivityByProjectArea, projectAreaId),
 				sessions,
 				skillsSyncedTickBySession,
 			};
 		}),
-	setActiveActivity: (workspaceId, activity) =>
+	setActiveActivity: (projectAreaId, activity) =>
 		set((s) =>
-			s.removedWorkspaceIds[workspaceId]
+			s.removedProjectAreaIds[projectAreaId]
 				? {}
 				: {
-						activeActivityByWorkspace: {
-							...s.activeActivityByWorkspace,
-							[workspaceId]: activity,
+						activeActivityByProjectArea: {
+							...s.activeActivityByProjectArea,
+							[projectAreaId]: activity,
 						},
 					},
 		),
-	openChatSession: (workspaceId, sessionId, model, thinkingLevel, syncedTick, options = {}) =>
+	openChatSession: (projectAreaId, sessionId, model, thinkingLevel, syncedTick, options = {}) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId] || isSessionDeleted(s, workspaceId, sessionId)) {
+			if (s.removedProjectAreaIds[projectAreaId] || isSessionDeleted(s, projectAreaId, sessionId)) {
 				return {};
 			}
-			const tabs = s.tabsByWorkspace[workspaceId] ?? [];
+			const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
 			const existing = tabs.find(
 				(candidate): candidate is ChatTab =>
 					candidate.kind === "chat" && candidate.sessionId === sessionId,
 			);
 			const preferred: ChatTab = existing ?? {
 				kind: "chat",
-				id: chatTabId(workspaceId, sessionId),
-				workspaceId,
+				id: chatTabId(projectAreaId, sessionId),
+				projectAreaId,
 				name: "Chat",
 				sessionId,
 			};
-			const id = existing?.id ?? availableEditorTabId(tabs, preferred);
+			const id = existing?.id ?? availableContentTabId(tabs, preferred);
 			const tab: ChatTab = id === preferred.id ? preferred : { ...preferred, id };
 			const fresh = !s.sessions[sessionId];
 			return {
-				tabsByWorkspace: existing
-					? s.tabsByWorkspace
-					: { ...s.tabsByWorkspace, [workspaceId]: [...tabs, tab] },
-				activeTabByWorkspace:
+				tabsByProjectArea: existing
+					? s.tabsByProjectArea
+					: { ...s.tabsByProjectArea, [projectAreaId]: [...tabs, tab] },
+				activeTabByProjectArea:
 					options.activate === false
-						? s.activeTabByWorkspace
-						: { ...s.activeTabByWorkspace, [workspaceId]: id },
-				navTickByWorkspace:
-					options.activate === false ? s.navTickByWorkspace : bumpNav(s, workspaceId),
+						? s.activeTabByProjectArea
+						: { ...s.activeTabByProjectArea, [projectAreaId]: id },
+				navTickByProjectArea:
+					options.activate === false ? s.navTickByProjectArea : bumpNav(s, projectAreaId),
 				sessions: fresh
 					? { ...s.sessions, [sessionId]: newRuntime(model, thinkingLevel) }
 					: s.sessions,
@@ -1330,7 +1366,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 					? {
 							skillsSyncedTickBySession: {
 								...s.skillsSyncedTickBySession,
-								[sessionId]: syncedTick ?? selectWorkspaceTick(s, workspaceId),
+								[sessionId]: syncedTick ?? selectProjectAreaTick(s, projectAreaId),
 							},
 						}
 					: {}),
@@ -1344,58 +1380,59 @@ export const useAppStore = create<AppState>((set, get) => ({
 				skillsSyncedTickBySession: omitKey(s.skillsSyncedTickBySession, sessionId),
 			};
 		}),
-	closeChatToHistory: (sessionId, workspaceId, countNavigation = true) =>
+	closeChatToHistory: (sessionId, projectAreaId, countNavigation = true) =>
 		set((s) => {
-			const wsId = workspaceId ?? s.activeWorkspaceId;
-			if (!wsId || s.removedWorkspaceIds[wsId]) return {};
-			const tabs = s.tabsByWorkspace[wsId] ?? [];
+			const wsId = projectAreaId ?? s.activeProjectAreaId;
+			if (!wsId || s.removedProjectAreaIds[wsId]) return {};
+			const tabs = s.tabsByProjectArea[wsId] ?? [];
 			const tab = tabs.find((t) => t.kind === "chat" && t.sessionId === sessionId);
 			if (!tab) return {};
 			const remaining = tabs.filter((t) => t.id !== tab.id);
-			const wasActive = s.activeTabByWorkspace[wsId] === tab.id;
+			const wasActive = s.activeTabByProjectArea[wsId] === tab.id;
 			const entry: ClosedChat = { sessionId, title: tab.name, closedAt: Date.now() };
 			const targetsLocation =
-				s.chatLocationRequest?.workspaceId === wsId &&
+				s.chatLocationRequest?.projectAreaId === wsId &&
 				s.chatLocationRequest.sessionId === sessionId;
 			const targetsHistory = s.historyOpenRequest?.sessionId === sessionId;
 			return {
-				tabsByWorkspace: { ...s.tabsByWorkspace, [wsId]: remaining },
-				navTickByWorkspace: wasActive && countNavigation ? bumpNav(s, wsId) : s.navTickByWorkspace,
-				activeTabByWorkspace: {
-					...s.activeTabByWorkspace,
+				tabsByProjectArea: { ...s.tabsByProjectArea, [wsId]: remaining },
+				navTickByProjectArea:
+					wasActive && countNavigation ? bumpNav(s, wsId) : s.navTickByProjectArea,
+				activeTabByProjectArea: {
+					...s.activeTabByProjectArea,
 					[wsId]: wasActive
 						? (remaining.at(-1)?.id ?? null)
-						: (s.activeTabByWorkspace[wsId] ?? null),
+						: (s.activeTabByProjectArea[wsId] ?? null),
 				},
-				closedChatsByWorkspace: {
-					...s.closedChatsByWorkspace,
-					[wsId]: [entry, ...(s.closedChatsByWorkspace[wsId] ?? [])],
+				closedChatsByProjectArea: {
+					...s.closedChatsByProjectArea,
+					[wsId]: [entry, ...(s.closedChatsByProjectArea[wsId] ?? [])],
 				},
 				...(targetsLocation ? { chatLocationRequest: null } : {}),
 				...(targetsHistory ? { historyOpenRequest: null } : {}),
 			};
 		}),
-	deleteChat: (workspaceId, sessionId, countNavigation = true) =>
-		set((s) => withoutChat(s, workspaceId, sessionId, countNavigation)),
-	reconcileWorkspaceSessions: (workspaceId, baselineSessionIds, authoritativeSessionIds) =>
+	deleteChat: (projectAreaId, sessionId, countNavigation = true) =>
+		set((s) => withoutChat(s, projectAreaId, sessionId, countNavigation)),
+	reconcileProjectAreaSessions: (projectAreaId, baselineSessionIds, authoritativeSessionIds) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
+			if (s.removedProjectAreaIds[projectAreaId]) return {};
 			const authoritative = new Set(authoritativeSessionIds);
 			let next = s;
 			for (const sessionId of baselineSessionIds) {
 				if (!authoritative.has(sessionId)) {
-					next = withoutChat(next, workspaceId, sessionId, false);
+					next = withoutChat(next, projectAreaId, sessionId, false);
 				}
 			}
 			return next;
 		}),
 	reopenChat: (wsId, sessionId, options = {}) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[wsId] || isSessionDeleted(s, wsId, sessionId)) return {};
-			const closed = s.closedChatsByWorkspace[wsId] ?? [];
+			if (s.removedProjectAreaIds[wsId] || isSessionDeleted(s, wsId, sessionId)) return {};
+			const closed = s.closedChatsByProjectArea[wsId] ?? [];
 			const entry = closed.find((c) => c.sessionId === sessionId);
 			if (!entry) return {};
-			const tabs = s.tabsByWorkspace[wsId] ?? [];
+			const tabs = s.tabsByProjectArea[wsId] ?? [];
 			const existing = tabs.find(
 				(candidate): candidate is ChatTab =>
 					candidate.kind === "chat" && candidate.sessionId === sessionId,
@@ -1403,66 +1440,67 @@ export const useAppStore = create<AppState>((set, get) => ({
 			const preferred: ChatTab = {
 				kind: "chat",
 				id: existing?.id ?? chatTabId(wsId, sessionId),
-				workspaceId: wsId,
+				projectAreaId: wsId,
 				name: entry.title,
 				sessionId,
 			};
-			const id = existing?.id ?? availableEditorTabId(tabs, preferred);
+			const id = existing?.id ?? availableContentTabId(tabs, preferred);
 			const tab: ChatTab = id === preferred.id ? preferred : { ...preferred, id };
 			return {
-				tabsByWorkspace: existing
+				tabsByProjectArea: existing
 					? existing.name === tab.name
-						? s.tabsByWorkspace
+						? s.tabsByProjectArea
 						: {
-								...s.tabsByWorkspace,
+								...s.tabsByProjectArea,
 								[wsId]: tabs.map((candidate) => (candidate === existing ? tab : candidate)),
 							}
-					: { ...s.tabsByWorkspace, [wsId]: [...tabs, tab] },
-				activeTabByWorkspace:
+					: { ...s.tabsByProjectArea, [wsId]: [...tabs, tab] },
+				activeTabByProjectArea:
 					options.activate === false
-						? s.activeTabByWorkspace
-						: { ...s.activeTabByWorkspace, [wsId]: id },
-				navTickByWorkspace: options.activate === false ? s.navTickByWorkspace : bumpNav(s, wsId),
-				closedChatsByWorkspace: {
-					...s.closedChatsByWorkspace,
+						? s.activeTabByProjectArea
+						: { ...s.activeTabByProjectArea, [wsId]: id },
+				navTickByProjectArea:
+					options.activate === false ? s.navTickByProjectArea : bumpNav(s, wsId),
+				closedChatsByProjectArea: {
+					...s.closedChatsByProjectArea,
 					[wsId]: closed.filter((c) => c.sessionId !== sessionId),
 				},
 			};
 		}),
-	noteClosedChats: (workspaceId, entries) =>
+	noteClosedChats: (projectAreaId, entries) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const existing = s.closedChatsByWorkspace[workspaceId] ?? [];
+			if (s.removedProjectAreaIds[projectAreaId]) return {};
+			const existing = s.closedChatsByProjectArea[projectAreaId] ?? [];
 			const known = new Set([
 				...existing.map((c) => c.sessionId),
-				...(s.tabsByWorkspace[workspaceId] ?? [])
+				...(s.tabsByProjectArea[projectAreaId] ?? [])
 					.filter((t): t is ChatTab => t.kind === "chat")
 					.map((t) => t.sessionId),
 			]);
 			const fresh = entries.filter(
 				(e) =>
-					!isSessionDeleted(s, workspaceId, e.sessionId) &&
+					!isSessionDeleted(s, projectAreaId, e.sessionId) &&
 					!known.has(e.sessionId) &&
 					!s.sessions[e.sessionId],
 			);
 			if (fresh.length === 0) return {};
 			return {
-				closedChatsByWorkspace: {
-					...s.closedChatsByWorkspace,
-					[workspaceId]: [...existing, ...fresh].sort((a, b) => b.closedAt - a.closedAt),
+				closedChatsByProjectArea: {
+					...s.closedChatsByProjectArea,
+					[projectAreaId]: [...existing, ...fresh].sort((a, b) => b.closedAt - a.closedAt),
 				},
 			};
 		}),
 	hydrateSession: (summary, hydrated, activate = false, syncedTick, options = {}) =>
 		set((s) => {
 			if (
-				s.removedWorkspaceIds[summary.workspaceId] ||
-				isSessionDeleted(s, summary.workspaceId, summary.sessionId)
+				s.removedProjectAreaIds[summary.projectId] ||
+				isSessionDeleted(s, summary.projectId, summary.sessionId)
 			) {
 				return {};
 			}
 			if (s.sessions[summary.sessionId]) return {};
-			const wsId = summary.workspaceId;
+			const wsId = summary.projectId;
 			const runtime: SessionRuntime = {
 				...newRuntime(summary.model, summary.thinkingLevel),
 				turns: hydrated.turns,
@@ -1474,7 +1512,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 					? { turnIdByMessageIndex: hydrated.turnIdByMessageIndex }
 					: {}),
 			};
-			const tabs = s.tabsByWorkspace[wsId] ?? [];
+			const tabs = s.tabsByProjectArea[wsId] ?? [];
 			const existing = tabs.find(
 				(candidate): candidate is ChatTab =>
 					candidate.kind === "chat" && candidate.sessionId === summary.sessionId,
@@ -1482,15 +1520,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 			const preferred: ChatTab = {
 				kind: "chat",
 				id: existing?.id ?? chatTabId(wsId, summary.sessionId),
-				workspaceId: wsId,
+				projectAreaId: wsId,
 				name: summary.title,
 				sessionId: summary.sessionId,
 			};
-			const id = existing?.id ?? availableEditorTabId(tabs, preferred);
+			const id = existing?.id ?? availableContentTabId(tabs, preferred);
 			const tab: ChatTab = id === preferred.id ? preferred : { ...preferred, id };
-			const hasActive = s.activeTabByWorkspace[wsId] != null;
+			const hasActive = s.activeTabByProjectArea[wsId] != null;
 			const takesFocus = options.activate !== false && (activate || !hasActive);
-			const closed = s.closedChatsByWorkspace[wsId] ?? [];
+			const closed = s.closedChatsByProjectArea[wsId] ?? [];
 			return {
 				sessions: { ...s.sessions, [summary.sessionId]: runtime },
 				...(syncedTick !== undefined
@@ -1501,24 +1539,24 @@ export const useAppStore = create<AppState>((set, get) => ({
 							},
 						}
 					: {}),
-				tabsByWorkspace: existing
+				tabsByProjectArea: existing
 					? existing.name === tab.name
-						? s.tabsByWorkspace
+						? s.tabsByProjectArea
 						: {
-								...s.tabsByWorkspace,
+								...s.tabsByProjectArea,
 								[wsId]: tabs.map((candidate) => (candidate === existing ? tab : candidate)),
 							}
-					: { ...s.tabsByWorkspace, [wsId]: [...tabs, tab] },
-				activeTabByWorkspace: takesFocus
-					? { ...s.activeTabByWorkspace, [wsId]: id }
-					: s.activeTabByWorkspace,
-				navTickByWorkspace: takesFocus ? bumpNav(s, wsId) : s.navTickByWorkspace,
-				closedChatsByWorkspace: closed.some((c) => c.sessionId === summary.sessionId)
+					: { ...s.tabsByProjectArea, [wsId]: [...tabs, tab] },
+				activeTabByProjectArea: takesFocus
+					? { ...s.activeTabByProjectArea, [wsId]: id }
+					: s.activeTabByProjectArea,
+				navTickByProjectArea: takesFocus ? bumpNav(s, wsId) : s.navTickByProjectArea,
+				closedChatsByProjectArea: closed.some((c) => c.sessionId === summary.sessionId)
 					? {
-							...s.closedChatsByWorkspace,
+							...s.closedChatsByProjectArea,
 							[wsId]: closed.filter((c) => c.sessionId !== summary.sessionId),
 						}
-					: s.closedChatsByWorkspace,
+					: s.closedChatsByProjectArea,
 			};
 		}),
 	appendUserMessage: (sessionId, text, attachments) =>
@@ -1594,18 +1632,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, commands }))),
 	setChatDraft: (sessionId, draft) =>
 		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, draft }))),
-	setSessionGoalLoading: (sessionId, workspaceId) =>
+	setSessionGoalLoading: (sessionId, projectAreaId) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => ({
 				...rt,
-				goal: { ...rt.goal, workspaceId, status: "loading", error: null },
+				goal: { ...rt.goal, projectAreaId, status: "loading", error: null },
 			})),
 		),
-	setSessionGoalSaving: (sessionId, workspaceId) =>
+	setSessionGoalSaving: (sessionId, projectAreaId) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => ({
 				...rt,
-				goal: { ...rt.goal, workspaceId, status: "saving", error: null },
+				goal: { ...rt.goal, projectAreaId, status: "saving", error: null },
 			})),
 		),
 	setSessionGoal: (sessionId, value) =>
@@ -1613,19 +1651,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 			withRuntime(s, sessionId, (rt) => ({
 				...rt,
 				goal: {
-					workspaceId: value.workspaceId,
+					projectAreaId: value.projectId,
 					status: "ready",
 					goal: value.goal,
+					tasks: value.tasks,
 					updatedAt: value.updatedAt,
 					error: null,
 				},
 			})),
 		),
-	setSessionGoalError: (sessionId, workspaceId, error) =>
+	setSessionGoalError: (sessionId, projectAreaId, error) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => ({
 				...rt,
-				goal: { ...rt.goal, workspaceId, status: "error", error },
+				goal: { ...rt.goal, projectAreaId, status: "error", error },
 			})),
 		),
 	clearPendingExtUi: (sessionId, id) =>
@@ -1639,26 +1678,26 @@ export const useAppStore = create<AppState>((set, get) => ({
 	applyExtUi: (request) =>
 		set((s): Partial<AppState> => {
 			if (request.kind === "setTitle") {
-				for (const [wsId, tabs] of Object.entries(s.tabsByWorkspace)) {
+				for (const [wsId, tabs] of Object.entries(s.tabsByProjectArea)) {
 					const chat = tabs.find(
 						(tab): tab is ChatTab => tab.kind === "chat" && tab.sessionId === request.sessionId,
 					);
 					if (!chat) continue;
 					if (chat.name === request.title) continue;
 					return {
-						tabsByWorkspace: {
-							...s.tabsByWorkspace,
+						tabsByProjectArea: {
+							...s.tabsByProjectArea,
 							[wsId]: tabs.map((tab) =>
 								tab.id === chat.id ? { ...chat, name: request.title } : tab,
 							),
 						},
 					};
 				}
-				for (const [wsId, chats] of Object.entries(s.closedChatsByWorkspace)) {
+				for (const [wsId, chats] of Object.entries(s.closedChatsByProjectArea)) {
 					if (!chats.some((chat) => chat.sessionId === request.sessionId)) continue;
 					return {
-						closedChatsByWorkspace: {
-							...s.closedChatsByWorkspace,
+						closedChatsByProjectArea: {
+							...s.closedChatsByProjectArea,
 							[wsId]: chats.map((chat) =>
 								chat.sessionId === request.sessionId ? { ...chat, title: request.title } : chat,
 							),
@@ -1693,30 +1732,29 @@ export const useAppStore = create<AppState>((set, get) => ({
 	closeSettings: () => set({ settingsOpen: false }),
 	setSettingsSection: (section) => set({ settingsSection: section }),
 	applyConfig: (config) => set(configPatch(config)),
-	applyPiProfile: (profile) => set({ piProfile: profile }),
-	requestToolView: (workspaceId, tool) =>
+	requestToolView: (projectAreaId, tool) =>
 		set((state) =>
-			state.removedWorkspaceIds[workspaceId]
+			state.removedProjectAreaIds[projectAreaId]
 				? {}
 				: {
-						activeActivityByWorkspace: {
-							...state.activeActivityByWorkspace,
-							[workspaceId]: tool === "changes" ? "changes" : "files",
+						activeActivityByProjectArea: {
+							...state.activeActivityByProjectArea,
+							[projectAreaId]: tool === "changes" ? "changes" : "files",
 						},
 					},
 		),
-	requestChangesView: (workspaceId, path) =>
+	requestChangesView: (projectAreaId, path) =>
 		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
+			if (s.removedProjectAreaIds[projectAreaId]) return {};
 			return {
-				activeActivityByWorkspace: {
-					...s.activeActivityByWorkspace,
-					[workspaceId]: "changes",
+				activeActivityByProjectArea: {
+					...s.activeActivityByProjectArea,
+					[projectAreaId]: "changes",
 				},
 				changesRequest: {
-					workspaceId,
+					projectAreaId,
 					path,
-					navTick: selectWorkspaceNavTick(s, workspaceId) + 1,
+					navTick: selectProjectAreaNavTick(s, projectAreaId) + 1,
 				},
 			};
 		}),
@@ -1724,36 +1762,36 @@ export const useAppStore = create<AppState>((set, get) => ({
 	requestChatLocation: (req) =>
 		set((state) => {
 			if (
-				state.removedWorkspaceIds[req.workspaceId] ||
-				isSessionDeleted(state, req.workspaceId, req.sessionId)
+				state.removedProjectAreaIds[req.projectAreaId] ||
+				isSessionDeleted(state, req.projectAreaId, req.sessionId)
 			) {
 				return {};
 			}
 			return {
 				chatLocationRequest: req,
 				selectedProjectId: req.projectId,
-				activeWorkspaceId: req.workspaceId,
+				activeProjectAreaId: req.projectAreaId,
 			};
 		}),
 	clearChatLocation: () => set({ chatLocationRequest: null }),
 	requestHistoryOpen: (target) =>
 		set((s) => {
 			if (
-				s.removedWorkspaceIds[target.workspaceId] ||
-				isSessionDeleted(s, target.workspaceId, target.sessionId)
+				s.removedProjectAreaIds[target.projectAreaId] ||
+				isSessionDeleted(s, target.projectAreaId, target.sessionId)
 			) {
 				return {};
 			}
-			const cache = s.tabsByWorkspace[target.workspaceId]?.find(
+			const cache = s.tabsByProjectArea[target.projectAreaId]?.find(
 				(candidate): candidate is ChatTab =>
 					candidate.kind === "chat" && candidate.sessionId === target.sessionId,
 			);
 			const historyRequestId = randomId("history-open");
 			return {
 				historyOpenRequest: { id: historyRequestId, sessionId: target.sessionId },
-				activeTabByWorkspace: cache
-					? { ...s.activeTabByWorkspace, [target.workspaceId]: cache.id }
-					: s.activeTabByWorkspace,
+				activeTabByProjectArea: cache
+					? { ...s.activeTabByProjectArea, [target.projectAreaId]: cache.id }
+					: s.activeTabByProjectArea,
 			};
 		}),
 	clearHistoryOpen: () => set({ historyOpenRequest: null }),

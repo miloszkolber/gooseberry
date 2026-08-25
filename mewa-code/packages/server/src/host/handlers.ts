@@ -1,3 +1,4 @@
+import { isAbsolute, relative } from "node:path";
 import type {
 	AppConfigPatch,
 	AskUserQuestionResult,
@@ -9,7 +10,6 @@ import type {
 	QueueLane,
 	ThinkingLevel,
 	WireModel,
-	Workspace,
 } from "@mewa-code/contracts";
 import {
 	abortSession,
@@ -22,21 +22,19 @@ import {
 	ensureSessionAttached,
 	followUpSession,
 	getDefaultModel,
-	getPiProfile,
 	getSessionCommands,
+	getSessionCwd,
 	getSessionMessages,
+	getSessionProjectId,
 	getSessionStats,
-	getSessionWorkspaceId,
 	hasSession,
 	listAvailableModels,
 	listSessions,
-	listSkillCatalog,
 	listSkillCommands,
 	promptSession,
 	refreshAvailableModels,
 	reloadSessionResources,
 	removeQueuedSession,
-	removeWorkspaceSessions,
 	resolveExtUi,
 	setAllModelVisibility,
 	setModelVisibility,
@@ -47,35 +45,27 @@ import {
 import { cancelLogin, getProviderStatus, logoutProvider, resolveLogin, startLogin } from "../auth";
 import { selectDirectory } from "../dialog";
 import { readDir, readFile } from "../fs";
-import { gitDiffFile, gitStatus, listBranches, listCommits, prefetchBranch } from "../git";
+import { canonicalPath, gitDiffFile, gitStatus, listCommits, listRepositories } from "../git";
 import { clampLimit, getHistoryIndex } from "../history";
-import { clearStoredSessionGoal, sessionGoalState, writeStoredSessionGoal } from "../persistence";
 import {
+	clearStoredSessionGoal,
+	loadProjectSessionRecords,
+	sessionGoalState,
+	writeStoredSessionGoal,
+	writeStoredSessionTasks,
+} from "../persistence";
+import {
+	addProjectRoot,
+	assertProjectCwd,
 	closeProject,
+	getProject,
 	listProjects,
 	openProject,
-	setProjectGroupEnabled,
-	setProjectSkillEnabled,
-	setProjectTrust,
+	removeProjectRoot,
 } from "../projects";
-import { updateConfig } from "../settings";
-import { ensureWatch, stopWatch } from "../watch";
-import {
-	createWorkspace,
-	ensureWorkspaceScratchDir,
-	forgetWorkspace,
-	getWorkspace,
-	listExistingWorktrees,
-	listWorkspaceRecords,
-	listWorkspaces,
-	openExistingWorktree,
-	reclaimWorktree,
-	setWorkspaceDiffBase,
-	setWorkspaceSkillOverride,
-	workspaceDiffStats,
-} from "../workspaces";
+import { getSignetStatus, updateConfig } from "../settings";
+import { ensureWatch } from "../watch";
 import { ackSend } from "./ack-send";
-import { nudgeBaseRefWorkspaces } from "./fs-nudge";
 import { buildHistoryScope } from "./history-scope";
 
 export interface RequestContext {
@@ -84,304 +74,256 @@ export interface RequestContext {
 
 type Handler = (params: unknown, ctx: RequestContext) => unknown | Promise<unknown>;
 
-async function archiveTeardown(ws: Workspace): Promise<void> {
-	try {
-		await removeWorkspaceSessions(ws.id, ws.worktreePath);
-		reclaimWorktree(ws);
-	} catch (error) {
-		console.warn(`workspace archive teardown failed for ${ws.id}: ${error}`);
-	}
+function recordedCwd(projectId: string, sessionId: string): string | undefined {
+	return loadProjectSessionRecords().find(
+		(record) => record.projectId === projectId && record.sessionId === sessionId,
+	)?.cwd;
 }
 
-async function authorizeSessionGoal(workspaceId: unknown, sessionId: unknown): Promise<void> {
-	if (typeof workspaceId !== "string" || typeof sessionId !== "string") {
-		throw new Error("Malformed session goal request");
+async function authorizeSession(projectId: unknown, sessionId: unknown): Promise<string> {
+	if (typeof projectId !== "string" || typeof sessionId !== "string") {
+		throw new Error("Malformed session request");
 	}
-	const workspace = getWorkspace(workspaceId);
-	const attached = await ensureSessionAttached(sessionId, workspaceId, workspace.worktreePath);
-	if (!attached || getSessionWorkspaceId(sessionId) !== workspaceId) {
+	const liveCwd = getSessionCwd(sessionId);
+	if (liveCwd) {
+		if (getSessionProjectId(sessionId) !== projectId)
+			throw new Error(`Unknown session: ${sessionId}`);
+		return assertProjectCwd(projectId, liveCwd);
+	}
+	const cwd = recordedCwd(projectId, sessionId);
+	if (!cwd) throw new Error(`Unknown session: ${sessionId}`);
+	const admitted = assertProjectCwd(projectId, cwd);
+	if (!(await ensureSessionAttached(sessionId, projectId, admitted))) {
 		throw new Error(`Unknown session: ${sessionId}`);
 	}
+	return admitted;
 }
 
 const handlers: Record<string, Handler> = {
 	"project.open": (params) => openProject((params as { path: string }).path),
+	"project.addRoot": (params) => {
+		const value = params as { id: string; path: string };
+		return addProjectRoot(value.id, value.path);
+	},
+	"project.removeRoot": (params) => {
+		const value = params as { id: string; path: string };
+		const root = canonicalPath(value.path);
+		const ownsSession = loadProjectSessionRecords().some((record) => {
+			if (record.projectId !== value.id) return false;
+			const rel = relative(root, canonicalPath(record.cwd));
+			return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+		});
+		if (ownsSession) throw new Error("Move or delete sessions using this root before removing it.");
+		return removeProjectRoot(value.id, value.path);
+	},
 	"project.list": () => listProjects(),
 	"project.close": (params) => {
 		closeProject((params as { id: string }).id);
 		return { ok: true } as const;
 	},
-	"project.setTrust": async (params) => {
-		const p = params as { id: string; trusted: boolean };
-		const project = listProjects().find((candidate) => candidate.id === p.id);
-		if (!project) throw new Error(`Unknown project: ${p.id}`);
-		return setProjectTrust(p.id, p.trusted);
+	"project.watchReady": (params) => {
+		const value = params as { projectId: string; prewarm?: boolean };
+		return ensureWatch(value.projectId, { prewarm: value.prewarm === true });
 	},
-	"workspace.create": (params) => {
-		const p = params as { projectId: string; name?: string; baseRef?: string };
-		return createWorkspace(p.projectId, p.name, p.baseRef);
-	},
-	"workspace.listExisting": (params) =>
-		listExistingWorktrees((params as { projectId: string }).projectId),
-	"workspace.openExisting": (params) => {
-		const p = params as { projectId: string; path: string };
-		return openExistingWorktree(p.projectId, p.path);
-	},
-	"workspace.list": (params) => {
-		const p = params as { projectId: string; includeDiffStats?: boolean };
-		return listWorkspaces(p.projectId, { includeDiffStats: p.includeDiffStats ?? true });
-	},
-	"workspace.remove": (params) => {
-		const id = (params as { id: string }).id;
-		const ws = forgetWorkspace(id);
-		if (ws) {
-			stopWatch(ws.id);
-			void archiveTeardown(ws);
-		}
-		return { ok: true } as const;
-	},
-	"workspace.diffStats": (params) => workspaceDiffStats((params as { id: string }).id),
-	"git.listBranches": (params) => listBranches((params as { projectId: string }).projectId),
-	"git.prefetch": async (params) => {
-		const p = params as { projectId: string; ref: string };
-		const { ok, moved } = await prefetchBranch(p.projectId, p.ref);
-		if (moved) nudgeBaseRefWorkspaces(p.projectId, p.ref);
-		return { ok };
-	},
+	"git.listRepositories": (params) => listRepositories((params as { projectId: string }).projectId),
 	"dialog.selectDirectory": () => selectDirectory(),
 	"fs.readDir": (params) => {
-		const p = params as { workspaceId: string; path: string };
-		void ensureWatch(p.workspaceId);
-		return readDir(p.workspaceId, p.path);
+		const value = params as { projectId: string; root: string; path: string };
+		void ensureWatch(value.projectId);
+		return readDir(value.projectId, value.root, value.path);
 	},
 	"fs.readFile": (params) => {
-		const p = params as { workspaceId: string; path: string };
-		void ensureWatch(p.workspaceId);
-		return readFile(p.workspaceId, p.path);
+		const value = params as { projectId: string; root: string; path: string };
+		void ensureWatch(value.projectId);
+		return readFile(value.projectId, value.root, value.path);
 	},
 	"git.status": (params) => {
-		const p = params as { workspaceId: string; scope?: GitDiffScope };
-		void ensureWatch(p.workspaceId);
-		return gitStatus(p.workspaceId, p.scope);
+		const value = params as { projectId: string; repository: string };
+		void ensureWatch(value.projectId);
+		return gitStatus(value.projectId, value.repository);
 	},
-
 	"git.diffFile": (params) => {
-		const p = params as { workspaceId: string; path: string; scope?: GitDiffScope };
-		void ensureWatch(p.workspaceId);
-		return gitDiffFile(p.workspaceId, p.path, p.scope);
+		const value = params as {
+			projectId: string;
+			repository: string;
+			path: string;
+			scope?: GitDiffScope;
+		};
+		return gitDiffFile(value.projectId, value.repository, value.path, value.scope);
 	},
-	"git.listCommits": (params) => listCommits((params as { workspaceId: string }).workspaceId),
+	"git.listCommits": (params) => {
+		const value = params as { projectId: string; repository: string };
+		return listCommits(value.projectId, value.repository);
+	},
 	"skill.list": (params) => {
-		const { projectId } = params as { projectId: string };
-		const project = listProjects().find((candidate) => candidate.id === projectId);
-		if (!project) throw new Error(`Unknown project: ${projectId}`);
-		return listSkillCommands(project.path, {
-			trusted: project.trusted === true,
-			disabled: project.disabledSkills ?? [],
-			disabledGroups: project.disabledGroups ?? [],
-			overrides: {},
-		});
-	},
-	"skills.state": (params) => {
-		const { workspaceId } = params as { workspaceId: string };
-		const ws = getWorkspace(workspaceId);
-		const project = listProjects().find((p) => p.id === ws.projectId);
-		return listSkillCatalog(ws.worktreePath, {
-			trusted: project?.trusted === true,
-			disabled: project?.disabledSkills ?? [],
-			disabledGroups: project?.disabledGroups ?? [],
-			overrides: ws.skillOverrides ?? {},
-		});
-	},
-	"project.setSkillEnabled": (params) => {
-		const p = params as { id: string; name: string; enabled: boolean };
-		return setProjectSkillEnabled(p.id, p.name, p.enabled);
-	},
-	"project.setGroupEnabled": (params) => {
-		const p = params as { id: string; group: string; enabled: boolean };
-		return setProjectGroupEnabled(p.id, p.group, p.enabled);
-	},
-	"project.skills": (params) => {
-		const { projectId } = params as { projectId: string };
-		const project = listProjects().find((p) => p.id === projectId);
-		if (!project) throw new Error(`Unknown project: ${projectId}`);
-		return listSkillCatalog(project.path, {
-			trusted: project.trusted === true,
-			disabled: project.disabledSkills ?? [],
-			disabledGroups: project.disabledGroups ?? [],
-			overrides: {},
-		});
-	},
-	"workspace.setSkillOverride": (params) => {
-		const p = params as { id: string; name: string; override: "on" | "off" | null };
-		return setWorkspaceSkillOverride(p.id, p.name, p.override);
-	},
-	"workspace.setDiffBase": (params) => {
-		const p = params as { id: string; ref: string | null };
-		return setWorkspaceDiffBase(p.id, p.ref);
-	},
-	"workspace.watchReady": (params) => {
-		const p = params as { workspaceId: string; prewarm?: boolean };
-		return ensureWatch(p.workspaceId, { prewarm: p.prewarm === true });
+		const project = getProject((params as { projectId: string }).projectId);
+		const cwd = project.roots[0];
+		if (!cwd) return [];
+		return listSkillCommands(cwd);
 	},
 	"session.reloadResources": async (params) => {
 		await reloadSessionResources((params as { sessionId: string }).sessionId);
 		return { ok: true } as const;
 	},
 	"session.create": async (params) => {
-		const p = params as {
-			workspaceId: string;
+		const value = params as {
+			projectId: string;
+			cwd?: string;
 			model?: WireModel;
 			thinkingLevel?: ThinkingLevel;
 		};
-		const ws = getWorkspace(p.workspaceId);
-		ensureWorkspaceScratchDir(ws);
-		const created = await createSession({
-			cwd: ws.worktreePath,
-			workspaceId: p.workspaceId,
-			...(p.model ? { model: p.model } : {}),
-			...(p.thinkingLevel ? { thinkingLevel: p.thinkingLevel } : {}),
+		return createSession({
+			projectId: value.projectId,
+			cwd: assertProjectCwd(value.projectId, value.cwd),
+			...(value.model ? { model: value.model } : {}),
+			...(value.thinkingLevel ? { thinkingLevel: value.thinkingLevel } : {}),
 		});
-		return created;
 	},
 	"session.prompt": async (params) => {
-		const p = params as { sessionId: string; text: string; images?: ImageContent[] };
-		await ackSend(promptSession(p.sessionId, p.text, p.images));
+		const value = params as { sessionId: string; text: string; images?: ImageContent[] };
+		await ackSend(promptSession(value.sessionId, value.text, value.images));
 		return { ok: true } as const;
 	},
 	"session.steer": async (params) => {
-		const p = params as { sessionId: string; text: string; images?: ImageContent[] };
-		await ackSend(steerSession(p.sessionId, p.text, p.images));
+		const value = params as { sessionId: string; text: string; images?: ImageContent[] };
+		await ackSend(steerSession(value.sessionId, value.text, value.images));
 		return { ok: true } as const;
 	},
 	"session.followUp": async (params) => {
-		const p = params as { sessionId: string; text: string; images?: ImageContent[] };
-		await ackSend(followUpSession(p.sessionId, p.text, p.images));
+		const value = params as { sessionId: string; text: string; images?: ImageContent[] };
+		await ackSend(followUpSession(value.sessionId, value.text, value.images));
 		return { ok: true } as const;
 	},
-	"session.clearQueue": (params) => {
-		return clearQueueSession((params as { sessionId: string }).sessionId);
-	},
-	"session.removeQueued": async (params) => {
-		const p = params as { sessionId: string; kind: QueueLane; index: number };
-		return removeQueuedSession(p.sessionId, p.kind, p.index);
+	"session.clearQueue": (params) => clearQueueSession((params as { sessionId: string }).sessionId),
+	"session.removeQueued": (params) => {
+		const value = params as { sessionId: string; kind: QueueLane; index: number };
+		return removeQueuedSession(value.sessionId, value.kind, value.index);
 	},
 	"session.abort": async (params) => {
 		await abortSession((params as { sessionId: string }).sessionId);
 		return { ok: true } as const;
 	},
 	"session.delete": async (params) => {
-		const p = params as { workspaceId: string; sessionId: string };
-		await deleteSession(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
+		const value = params as { projectId: string; sessionId: string };
+		const cwd = await authorizeSession(value.projectId, value.sessionId);
+		await deleteSession(value.sessionId, value.projectId, cwd);
 		return { ok: true } as const;
 	},
 	"session.setModel": async (params) => {
-		const p = params as { sessionId: string; model: WireModel };
-		await setSessionModel(p.sessionId, p.model);
+		const value = params as { sessionId: string; model: WireModel };
+		await setSessionModel(value.sessionId, value.model);
 		return { ok: true } as const;
 	},
 	"session.setThinkingLevel": (params) => {
-		const p = params as { sessionId: string; level: ThinkingLevel };
-		setSessionThinkingLevel(p.sessionId, p.level);
+		const value = params as { sessionId: string; level: ThinkingLevel };
+		setSessionThinkingLevel(value.sessionId, value.level);
 		return { ok: true } as const;
 	},
 	"session.compact": async (params) => {
-		const p = params as { sessionId: string; instructions?: string };
-		await compactSession(p.sessionId, p.instructions);
+		const value = params as { sessionId: string; instructions?: string };
+		await compactSession(value.sessionId, value.instructions);
 		return { ok: true } as const;
 	},
 	"session.getStats": (params) => getSessionStats((params as { sessionId: string }).sessionId),
 	"session.getCommands": (params) =>
 		getSessionCommands((params as { sessionId: string }).sessionId),
-	"session.list": async (params) => {
-		const { workspaceId } = params as { workspaceId: string };
-		return listSessions(workspaceId, getWorkspace(workspaceId).worktreePath);
-	},
-	"session.getMessages": (params) => {
-		const p = params as { sessionId: string; workspaceId: string };
-		return getSessionMessages(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
+	"session.list": (params) => listSessions((params as { projectId: string }).projectId),
+	"session.getMessages": async (params) => {
+		const value = params as { sessionId: string; projectId: string };
+		const cwd = await authorizeSession(value.projectId, value.sessionId);
+		return getSessionMessages(value.sessionId, value.projectId, cwd);
 	},
 	"session.extUiReply": (params) => {
 		resolveExtUi((params as { response: ExtUiResponse }).response);
 		return { ok: true } as const;
 	},
 	"session.answerQuestion": async (params) => {
-		const p = params as { sessionId: string; toolCallId: string; result: AskUserQuestionResult };
-		if (!hasSession(p.sessionId)) throw new Error(`Unknown session: ${p.sessionId}`);
-		if (!p.result || !Array.isArray(p.result.answers) || typeof p.result.cancelled !== "boolean")
+		const value = params as {
+			sessionId: string;
+			toolCallId: string;
+			result: AskUserQuestionResult;
+		};
+		if (!hasSession(value.sessionId)) throw new Error(`Unknown session: ${value.sessionId}`);
+		if (
+			!value.result ||
+			!Array.isArray(value.result.answers) ||
+			typeof value.result.cancelled !== "boolean"
+		) {
 			throw new Error("Malformed ask_user_question result");
-		await ackSend(answerQuestion(p.sessionId, p.toolCallId, p.result));
+		}
+		await ackSend(answerQuestion(value.sessionId, value.toolCallId, value.result));
 		return { ok: true } as const;
 	},
 	"session.goalGet": async (params) => {
-		const p = params as { workspaceId?: unknown; sessionId?: unknown };
-		await authorizeSessionGoal(p.workspaceId, p.sessionId);
-		return sessionGoalState(p.workspaceId as string, p.sessionId as string);
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		return sessionGoalState(value.projectId as string, value.sessionId as string);
 	},
 	"session.goalSet": async (params) => {
-		const p = params as { workspaceId?: unknown; sessionId?: unknown; goal?: unknown };
-		await authorizeSessionGoal(p.workspaceId, p.sessionId);
-		writeStoredSessionGoal(p.workspaceId as string, p.sessionId as string, p.goal);
-		return sessionGoalState(p.workspaceId as string, p.sessionId as string);
+		const value = params as { projectId?: unknown; sessionId?: unknown; goal?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		writeStoredSessionGoal(value.projectId as string, value.sessionId as string, value.goal);
+		return sessionGoalState(value.projectId as string, value.sessionId as string);
 	},
 	"session.goalClear": async (params) => {
-		const p = params as { workspaceId?: unknown; sessionId?: unknown };
-		await authorizeSessionGoal(p.workspaceId, p.sessionId);
-		clearStoredSessionGoal(p.workspaceId as string, p.sessionId as string);
-		return sessionGoalState(p.workspaceId as string, p.sessionId as string);
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		clearStoredSessionGoal(value.projectId as string, value.sessionId as string);
+		return sessionGoalState(value.projectId as string, value.sessionId as string);
+	},
+	"session.tasksSet": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown; tasks?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		writeStoredSessionTasks(value.projectId as string, value.sessionId as string, value.tasks);
+		return sessionGoalState(value.projectId as string, value.sessionId as string);
 	},
 	"model.list": () => listAvailableModels(),
 	"model.clampThinking": async (params) => {
-		const p = params as { provider: string; id: string; level: ThinkingLevel };
-		return { level: await clampThinkingForModel({ provider: p.provider, id: p.id }, p.level) };
+		const value = params as { provider: string; id: string; level: ThinkingLevel };
+		return {
+			level: await clampThinkingForModel({ provider: value.provider, id: value.id }, value.level),
+		};
 	},
-	"model.refresh": (params) => {
-		const p = params as { force?: boolean };
-		return refreshAvailableModels(p.force === true);
-	},
+	"model.refresh": (params) =>
+		refreshAvailableModels((params as { force?: boolean }).force === true),
 	"model.default": () => getDefaultModel(),
 	"model.setVisibility": (params) => {
-		const p = params as { provider: string; id: string; hidden: boolean };
-		return setModelVisibility(p.provider, p.id, p.hidden === true);
+		const value = params as { provider: string; id: string; hidden: boolean };
+		return setModelVisibility(value.provider, value.id, value.hidden === true);
 	},
-	"model.setAllVisibility": (params) => {
-		const p = params as { hidden: boolean };
-		return setAllModelVisibility(p.hidden === true);
-	},
+	"model.setAllVisibility": (params) =>
+		setAllModelVisibility((params as { hidden: boolean }).hidden === true),
 	"provider.status": () => getProviderStatus(),
 	"provider.loginStart": (params) => {
-		const p = params as { providerId: string; type?: "oauth" | "api_key" };
-		const type = p.type ?? "oauth";
-		return startLogin(p.providerId, type);
+		const value = params as { providerId: string; type?: "oauth" | "api_key" };
+		return startLogin(value.providerId, value.type ?? "oauth");
 	},
 	"provider.loginReply": (params) => {
 		resolveLogin(params as LoginReply);
 		return { ok: true } as const;
 	},
 	"provider.loginCancel": (params) => {
-		const { loginId } = params as { loginId: string };
-		cancelLogin(loginId);
+		cancelLogin((params as { loginId: string }).loginId);
 		return { ok: true } as const;
 	},
 	"provider.logout": async (params) => {
 		await logoutProvider((params as { providerId: string }).providerId);
 		return { ok: true } as const;
 	},
-	"settings.profile": () => getPiProfile(),
-	"settings.update": (params) => {
-		const config = (params as { config: AppConfigPatch }).config;
-		return updateConfig(config);
-	},
+	"settings.update": (params) => updateConfig((params as { config: AppConfigPatch }).config),
+	"signet.status": () => getSignetStatus(),
 	"history.search": (params) => {
-		const p = params as { query: string; scope: HistoryScope; limit?: number };
-		const { filter, labels } = buildHistoryScope(p.scope, listProjects(), (projectId) =>
-			listWorkspaceRecords(projectId),
+		const value = params as { query: string; scope: HistoryScope; limit?: number };
+		const { filter, labels } = buildHistoryScope(
+			value.scope,
+			listProjects(),
+			loadProjectSessionRecords(),
 		);
 		return getHistoryIndex().search({
-			query: p.query,
+			query: value.query,
 			filter,
 			labels,
-			limit: clampLimit(p.limit),
+			limit: clampLimit(value.limit),
 		});
 	},
 };

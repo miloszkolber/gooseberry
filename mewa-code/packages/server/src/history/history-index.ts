@@ -127,7 +127,7 @@ export class HistoryIndex {
 		query: string;
 		limit?: number;
 		filter: (cwd: string, sessionId: string) => boolean;
-		labels: (cwd: string) => { workspaceId?: string; projectId?: string };
+		labels: (cwd: string) => { projectId?: string };
 	}): Promise<HistorySearchResult> {
 		const wasCold = !this.built;
 		this.ensureFresh();
@@ -158,7 +158,6 @@ export class HistoryIndex {
 					messageIndex: entry.messageIndex,
 					anchorText: entry.text.slice(0, 120),
 					...(rec.title ? { sessionTitle: rec.title } : {}),
-					...(scope.workspaceId ? { workspaceId: scope.workspaceId } : {}),
 					...(scope.projectId ? { projectId: scope.projectId } : {}),
 				};
 				if (entry.role === "user") promptCandidates.push(hit);

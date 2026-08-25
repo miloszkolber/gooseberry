@@ -10,20 +10,12 @@ import {
 	getAgentDir,
 	type InlineExtension,
 	type PathMetadata,
-	type ResourceDiagnostic,
 	type ResourceLoader,
 	SettingsManager,
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
-import type {
-	PiProfileCapability,
-	PiProfileCapabilityId,
-	PiProfileDescriptor,
-	PiProfileSettings,
-	SkillCatalogEntry,
-	SlashCommandInfo,
-} from "@mewa-code/contracts";
-import { DEFAULT_PI_PROFILE_SETTINGS } from "@mewa-code/contracts";
+import type { SkillCatalogEntry, SlashCommandInfo } from "@mewa-code/contracts";
+import { sshBashExtension } from "@mewa-code/mewa-remote";
 import { PiConnector } from "@signetai/connector-pi";
 import { getConfig } from "../settings";
 import { askUserQuestionExtension } from "./ask-user-question";
@@ -31,8 +23,6 @@ import { oversizedImageGuard } from "./image-guard";
 import { protectedStateRoots } from "./protected-paths";
 import { protectedStateGuard } from "./protected-state-guard";
 import { sessionGoalExtension } from "./session-goal-extension";
-import { decideSkill, type SkillAdmissionContext } from "./skill-admission";
-import { sshBashExtension } from "./ssh-bash-extension";
 import { type SubagentHost, subagentExtension } from "./subagent-extension";
 import { type BundledTrashHelpers, setBundledTrashHelpers } from "./trash";
 
@@ -120,15 +110,19 @@ let signetExtensionState: { configuredKey: string; path: Promise<string | undefi
  * prevents an otherwise valid Pi session from starting.
  */
 async function resolveSignetExtensionPath(): Promise<string | undefined> {
-	const configuredUrl = process.env.SIGNET_DAEMON_URL?.trim() ?? "";
-	if (!configuredUrl) return undefined;
+	const settings = getConfig().signet;
+	if (!settings.enabled) return undefined;
+	const host = settings.address.includes(":") ? `[${settings.address}]` : settings.address;
+	const configuredUrl = `http://${host}:${settings.port}`;
 	const configuredKey = `${configuredUrl}\0${getAgentDir()}`;
 	if (signetExtensionState?.configuredKey === configuredKey) {
 		return signetExtensionState.path;
 	}
 
 	const path = (async (): Promise<string | undefined> => {
+		const previousUrl = process.env.SIGNET_DAEMON_URL;
 		try {
+			process.env.SIGNET_DAEMON_URL = configuredUrl;
 			const connector = new PiConnector();
 			await connector.install("");
 			return connector.getConfigPath();
@@ -137,6 +131,9 @@ async function resolveSignetExtensionPath(): Promise<string | undefined> {
 				`Signet memory extension unavailable: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return undefined;
+		} finally {
+			if (previousUrl === undefined) delete process.env.SIGNET_DAEMON_URL;
+			else process.env.SIGNET_DAEMON_URL = previousUrl;
 		}
 	})();
 	signetExtensionState = { configuredKey, path };
@@ -149,108 +146,6 @@ function signetManagedExtensionPath(): string | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-const PROFILE_SETTING_KEY: Record<
-	Exclude<PiProfileCapabilityId, "protectedStateGuard">,
-	keyof PiProfileSettings
-> = {
-	browser: "browser",
-	webAccess: "webAccess",
-	signetMemory: "signetMemory",
-	goals: "goals",
-	subagents: "subagents",
-};
-
-function profileChoiceEnabled(settings: PiProfileSettings, id: PiProfileCapabilityId): boolean {
-	if (id === "protectedStateGuard") return true;
-	return settings[PROFILE_SETTING_KEY[id]] !== false;
-}
-
-function profileCapability(
-	id: PiProfileCapabilityId,
-	label: string,
-	description: string,
-	available: boolean,
-	settings: PiProfileSettings,
-	options: { required?: boolean; unavailableReason?: string } = {},
-): PiProfileCapability {
-	const required = options.required === true;
-	const enabled = required ? true : available && profileChoiceEnabled(settings, id);
-	return {
-		id,
-		label,
-		description,
-		enabled,
-		available,
-		...(required ? { required: true } : {}),
-		...(available || !options.unavailableReason
-			? {}
-			: { unavailableReason: options.unavailableReason }),
-	};
-}
-
-export async function getPiProfile(): Promise<PiProfileDescriptor> {
-	const settings = getConfig().piProfile ?? DEFAULT_PI_PROFILE_SETTINGS;
-	const paths = resolveDevPaths();
-	const signetConfigured = Boolean(process.env.SIGNET_DAEMON_URL?.trim());
-	const signetPath = signetConfigured ? await resolveSignetExtensionPath() : undefined;
-	return {
-		id: "mewa",
-		label: "Mewa",
-		capabilities: [
-			profileCapability(
-				"browser",
-				"Browser QA",
-				"Bounded browser actions run through the isolated mewa-browser service.",
-				paths.browserPath !== undefined,
-				settings,
-				{ unavailableReason: "The Mewa browser extension is not available." },
-			),
-			profileCapability(
-				"webAccess",
-				"Web access",
-				"Search and fetch tools return source URLs for citations.",
-				paths.webAccessPath !== undefined,
-				settings,
-				{ unavailableReason: "The Pi web-access extension is not available." },
-			),
-			profileCapability(
-				"signetMemory",
-				"Signet memory",
-				"Recall and save durable context through the configured Signet connector.",
-				signetPath !== undefined,
-				settings,
-				{
-					unavailableReason: signetConfigured
-						? "The Signet memory extension could not be loaded."
-						: "Signet memory is not configured.",
-				},
-			),
-			profileCapability(
-				"goals",
-				"Session goals",
-				"Keep one visible goal active for each Pi session.",
-				true,
-				settings,
-			),
-			profileCapability(
-				"subagents",
-				"Subagents",
-				"Run one explicitly requested child session through Mewa's built-in in-process Pi extension.",
-				true,
-				settings,
-			),
-			profileCapability(
-				"protectedStateGuard",
-				"Protected-state guard",
-				"Keep Pi and Mewa credentials and state roots out of project-scoped access.",
-				true,
-				settings,
-				{ required: true },
-			),
-		],
-	};
 }
 
 const headlessSearchPolicy: ExtensionFactory = (pi: ExtensionAPI) => {
@@ -270,29 +165,12 @@ function skillGroup(skill: Skill, bundledPaths: string[]): { group: string; isPl
 	return { group: "pi", isPlugin: false };
 }
 
-function skillsGate(bundledPaths: string[], getCtx: () => SkillAdmissionContext) {
-	return (current: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
-		const ctx = getCtx();
-		return {
-			...current,
-			skills: current.skills.filter((skill) => {
-				const { group, isPlugin } = skillGroup(skill, bundledPaths);
-				const isProjectSkill = skill.sourceInfo.scope === "project";
-				if (isProjectSkill && !ctx.trusted) return false;
-				return decideSkill({ name: skill.name, isProjectSkill, group, isPlugin }, ctx) === "load";
-			}),
-		};
-	};
-}
-
-function resolveSkillInputs(getCtx: () => SkillAdmissionContext): {
+function resolveSkillInputs(): {
 	additionalSkillPaths: string[];
-	skillsOverride: ReturnType<typeof skillsGate>;
 } {
 	const bundledSkillPaths = bundled ? [bundled.skillsDir] : resolveDevPaths().skillPaths;
 	return {
 		additionalSkillPaths: bundledSkillPaths,
-		skillsOverride: skillsGate(bundledSkillPaths, getCtx),
 	};
 }
 
@@ -308,9 +186,8 @@ export function toSkillCommands(skills: readonly Skill[]): SlashCommandInfo[] {
 export async function buildResourceLoader(
 	cwd: string,
 	settingsManager: SettingsManager,
-	getAdmission: () => SkillAdmissionContext,
 	excludedExtensionPaths: readonly string[] = [],
-	workspaceId = "",
+	projectId = "",
 	subagentHost: SubagentHost = {
 		runChildSession: async () => {
 			throw new Error("The Mewa subagent host is unavailable.");
@@ -327,7 +204,7 @@ export async function buildResourceLoader(
 		{ name: "mewa-ssh-bash", factory: sshBashExtension, hidden: true },
 		{
 			name: "mewa-goals",
-			factory: sessionGoalExtension(workspaceId),
+			factory: sessionGoalExtension(projectId),
 			hidden: true,
 		},
 		{
@@ -336,7 +213,7 @@ export async function buildResourceLoader(
 			hidden: true,
 		},
 	];
-	const skillInputs = resolveSkillInputs(getAdmission);
+	const skillInputs = resolveSkillInputs();
 	const agentDir = getAgentDir();
 	const guardedFactories: InlineExtension[] = [
 		...sharedFactories,
@@ -375,28 +252,13 @@ export async function buildResourceLoader(
 		...(signetPath ? [signetPath] : []),
 		...discoveredExtensionPaths,
 	].filter((path) => !excluded.has(resolve(path)));
-	const extensionPathsByCapability: Partial<Record<PiProfileCapabilityId, string>> = {
-		...(defaultPaths.browserPath ? { browser: defaultPaths.browserPath } : {}),
-		...(defaultPaths.webAccessPath ? { webAccess: defaultPaths.webAccessPath } : {}),
-		...(signetPath ? { signetMemory: signetPath } : {}),
-	};
 	const extensionsOverride = (current: ReturnType<ResourceLoader["getExtensions"]>) => ({
 		...current,
 		extensions: current.extensions.filter((extension) => {
-			const activeSettings = getConfig().piProfile ?? DEFAULT_PI_PROFILE_SETTINGS;
 			if (excluded.has(resolve(extension.resolvedPath))) return false;
 			if (managedSignetPath && resolve(extension.resolvedPath) === managedSignetPath) {
-				return signetPath !== undefined && profileChoiceEnabled(activeSettings, "signetMemory");
+				return signetPath !== undefined;
 			}
-			const path = extensionPathsByCapability;
-			for (const [id, configuredPath] of Object.entries(path)) {
-				if (resolve(extension.resolvedPath) !== resolve(configuredPath)) continue;
-				return profileChoiceEnabled(activeSettings, id as PiProfileCapabilityId);
-			}
-			if (extension.path === "<inline:mewa-goals>")
-				return profileChoiceEnabled(activeSettings, "goals");
-			if (extension.path === "<inline:mewa-subagents>")
-				return profileChoiceEnabled(activeSettings, "subagents");
 			return true;
 		}),
 	});
@@ -417,7 +279,6 @@ export async function buildResourceLoader(
 					extensionFactories: guardedFactories,
 				},
 	);
-	settingsManager.setProjectTrusted(getAdmission().trusted);
 	await loader.reload();
 
 	for (const extension of loader.getExtensions().extensions) {
@@ -430,32 +291,20 @@ export async function buildResourceLoader(
 	return loader;
 }
 
-function admissionCacheKey(cwd: string, ctx: SkillAdmissionContext): string {
-	return JSON.stringify([
-		cwd,
-		ctx.trusted,
-		[...ctx.disabled].sort(),
-		[...ctx.disabledGroups].sort(),
-		Object.entries(ctx.overrides).sort(([a], [b]) => a.localeCompare(b)),
-	]);
-}
-
 const SKILL_LIST_TTL_MS = 5_000;
 const skillListCache = new Map<string, { at: number; value: SlashCommandInfo[] }>();
 
-export async function listSkillCommands(
-	cwd: string,
-	admission: SkillAdmissionContext,
-): Promise<SlashCommandInfo[]> {
-	const cacheKey = admissionCacheKey(cwd, admission);
+export async function listSkillCommands(cwd: string): Promise<SlashCommandInfo[]> {
+	const cacheKey = cwd;
 	const cached = skillListCache.get(cacheKey);
 	if (cached && Date.now() - cached.at < SKILL_LIST_TTL_MS) return cached.value;
-	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: true });
+	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
+	settingsManager.setProjectTrusted(settingsManager.getDefaultProjectTrust() === "always");
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir: getAgentDir(),
 		settingsManager,
-		...resolveSkillInputs(() => admission),
+		...resolveSkillInputs(),
 		noExtensions: true,
 		noPromptTemplates: true,
 		noThemes: true,
@@ -467,12 +316,10 @@ export async function listSkillCommands(
 	return value;
 }
 
-export async function listSkillCatalog(
-	cwd: string,
-	admission: SkillAdmissionContext,
-): Promise<SkillCatalogEntry[]> {
+export async function listSkillCatalog(cwd: string): Promise<SkillCatalogEntry[]> {
 	const bundledSkillPaths = bundled ? [bundled.skillsDir] : resolveDevPaths().skillPaths;
-	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: true });
+	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
+	settingsManager.setProjectTrusted(settingsManager.getDefaultProjectTrust() === "always");
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir: getAgentDir(),
@@ -485,19 +332,14 @@ export async function listSkillCatalog(
 	});
 	await loader.reload();
 	return loader.getSkills().skills.map((skill) => {
-		const gated = skill.sourceInfo.scope === "project";
-		const { group, isPlugin } = skillGroup(skill, bundledSkillPaths);
-		const decision =
-			gated && !admission.trusted
-				? "untrusted"
-				: decideSkill({ name: skill.name, isProjectSkill: gated, group, isPlugin }, admission);
+		const { group } = skillGroup(skill, bundledSkillPaths);
 		return {
 			name: skill.name,
 			description: skill.description,
 			sourceInfo: skill.sourceInfo,
-			gated,
+			gated: false,
 			group,
-			decision,
+			decision: "load",
 		};
 	});
 }

@@ -1,21 +1,17 @@
 import type {
 	AppConfig,
 	AppConfigPatch,
-	BranchList,
-	DiffStats,
-	ExistingWorktreeCandidate,
 	FileNode,
 	GitCommit,
 	GitDiffScope,
-	GitStatus,
+	GitRepository,
 	HistoryScope,
 	HistorySearchResult,
 	LoginReply,
-	PiProfileDescriptor,
 	Project,
 	ProviderStatusReport,
 	SessionGoal,
-	Workspace,
+	SignetStatus,
 } from "./domain";
 import type {
 	AskUserAnswersDetails,
@@ -28,7 +24,6 @@ import type {
 	SessionQueueState,
 	SessionStats,
 	SessionSummary,
-	SkillCatalogEntry,
 	SlashCommandInfo,
 	ThinkingLevel,
 	TranscriptMessage,
@@ -36,7 +31,7 @@ import type {
 	WireModel,
 } from "./pi-protocol";
 
-export const PROTOCOL_VERSION = 52;
+export const PROTOCOL_VERSION = 53;
 
 export interface ServerWelcome {
 	protocolVersion: number;
@@ -46,35 +41,19 @@ export interface ServerWelcome {
 	config: AppConfig;
 }
 
-export interface WorkspaceRemoved {
-	projectId: string;
-	id: string;
-}
-
 export interface SessionDeletedPayload {
-	workspaceId: string;
+	projectId: string;
 	sessionId: string;
 }
 
 export const WS_METHODS = {
 	projectOpen: "project.open",
+	projectAddRoot: "project.addRoot",
+	projectRemoveRoot: "project.removeRoot",
 	projectList: "project.list",
 	projectClose: "project.close",
-	projectSetTrust: "project.setTrust",
-	projectSetSkillEnabled: "project.setSkillEnabled",
-	projectSetGroupEnabled: "project.setGroupEnabled",
-	projectSkills: "project.skills",
-	workspaceCreate: "workspace.create",
-	workspaceListExisting: "workspace.listExisting",
-	workspaceOpenExisting: "workspace.openExisting",
-	workspaceList: "workspace.list",
-	workspaceRemove: "workspace.remove",
-	workspaceDiffStats: "workspace.diffStats",
-	workspaceSetSkillOverride: "workspace.setSkillOverride",
-	workspaceSetDiffBase: "workspace.setDiffBase",
-	workspaceWatchReady: "workspace.watchReady",
-	gitListBranches: "git.listBranches",
-	gitPrefetch: "git.prefetch",
+	projectWatchReady: "project.watchReady",
+	gitListRepositories: "git.listRepositories",
 	fsReadDir: "fs.readDir",
 	fsReadFile: "fs.readFile",
 	gitStatus: "git.status",
@@ -82,7 +61,6 @@ export const WS_METHODS = {
 	gitListCommits: "git.listCommits",
 	dialogSelectDirectory: "dialog.selectDirectory",
 	skillList: "skill.list",
-	skillsState: "skills.state",
 	sessionCreate: "session.create",
 	sessionPrompt: "session.prompt",
 	sessionSteer: "session.steer",
@@ -102,6 +80,7 @@ export const WS_METHODS = {
 	sessionGoalGet: "session.goalGet",
 	sessionGoalSet: "session.goalSet",
 	sessionGoalClear: "session.goalClear",
+	sessionTasksSet: "session.tasksSet",
 	sessionList: "session.list",
 	sessionGetMessages: "session.getMessages",
 	modelList: "model.list",
@@ -115,8 +94,8 @@ export const WS_METHODS = {
 	providerLoginReply: "provider.loginReply",
 	providerLoginCancel: "provider.loginCancel",
 	providerLogout: "provider.logout",
-	settingsProfile: "settings.profile",
 	settingsUpdate: "settings.update",
+	signetStatus: "signet.status",
 	historySearch: "history.search",
 } as const;
 
@@ -127,10 +106,7 @@ export const WS_CHANNELS = {
 	piExtensionUi: "pi.extensionUi",
 	sessionDeleted: "session.deleted",
 	providerLogin: "provider.login",
-	workspaceCreated: "workspace.created",
-	workspaceUpdated: "workspace.updated",
-	workspaceRemoved: "workspace.removed",
-	workspaceFsChanged: "workspace.fsChanged",
+	projectFsChanged: "project.fsChanged",
 	settingsChanged: "settings.changed",
 } as const;
 
@@ -161,66 +137,42 @@ export interface Ack {
 	ok: true;
 }
 
-export interface WorkspaceWatchReadyResult {
+export interface ProjectWatchReadyResult {
 	startupNudge: boolean;
 }
 
 export interface WsMethodMap {
 	"project.open": { params: { path: string }; result: Project };
+	"project.addRoot": { params: { id: string; path: string }; result: Project };
+	"project.removeRoot": { params: { id: string; path: string }; result: Project };
 	"project.list": { params: Record<string, never>; result: Project[] };
 	"project.close": { params: { id: string }; result: Ack };
-	"project.setTrust": { params: { id: string; trusted: boolean }; result: Project };
-	"project.setSkillEnabled": {
-		params: { id: string; name: string; enabled: boolean };
-		result: Project;
+	"project.watchReady": {
+		params: { projectId: string; prewarm?: boolean };
+		result: ProjectWatchReadyResult;
 	};
-	"project.setGroupEnabled": {
-		params: { id: string; group: string; enabled: boolean };
-		result: Project;
+	"git.listRepositories": { params: { projectId: string }; result: GitRepository[] };
+	"fs.readDir": { params: { projectId: string; root: string; path: string }; result: FileNode[] };
+	"fs.readFile": {
+		params: { projectId: string; root: string; path: string };
+		result: { content: string };
 	};
-	"project.skills": { params: { projectId: string }; result: SkillCatalogEntry[] };
-	"workspace.create": {
-		params: { projectId: string; name?: string; baseRef?: string };
-		result: Workspace;
+	"git.status": {
+		params: { projectId: string; repository: string };
+		result: GitRepository;
 	};
-	"workspace.listExisting": {
-		params: { projectId: string };
-		result: ExistingWorktreeCandidate[];
-	};
-	"workspace.openExisting": {
-		params: { projectId: string; path: string };
-		result: Workspace;
-	};
-	"workspace.list": {
-		params: { projectId: string; includeDiffStats?: boolean };
-		result: Workspace[];
-	};
-	"workspace.remove": { params: { id: string }; result: Ack };
-	"workspace.diffStats": { params: { id: string }; result: DiffStats };
-	"workspace.setSkillOverride": {
-		params: { id: string; name: string; override: "on" | "off" | null };
-		result: Workspace;
-	};
-	"workspace.setDiffBase": { params: { id: string; ref: string | null }; result: Workspace };
-	"workspace.watchReady": {
-		params: { workspaceId: string; prewarm?: boolean };
-		result: WorkspaceWatchReadyResult;
-	};
-	"git.listBranches": { params: { projectId: string }; result: BranchList };
-	"git.prefetch": { params: { projectId: string; ref: string }; result: { ok: boolean } };
-	"fs.readDir": { params: { workspaceId: string; path: string }; result: FileNode[] };
-	"fs.readFile": { params: { workspaceId: string; path: string }; result: { content: string } };
-	"git.status": { params: { workspaceId: string; scope?: GitDiffScope }; result: GitStatus };
 	"git.diffFile": {
-		params: { workspaceId: string; path: string; scope?: GitDiffScope };
+		params: { projectId: string; repository: string; path: string; scope?: GitDiffScope };
 		result: { original: string; modified: string };
 	};
-	"git.listCommits": { params: { workspaceId: string }; result: { commits: GitCommit[] } };
+	"git.listCommits": {
+		params: { projectId: string; repository: string };
+		result: { commits: GitCommit[] };
+	};
 	"dialog.selectDirectory": { params: Record<string, never>; result: { path: string | null } };
 	"skill.list": { params: { projectId: string }; result: SlashCommandInfo[] };
-	"skills.state": { params: { workspaceId: string }; result: SkillCatalogEntry[] };
 	"session.create": {
-		params: { workspaceId: string; model?: WireModel; thinkingLevel?: ThinkingLevel };
+		params: { projectId: string; cwd?: string; model?: WireModel; thinkingLevel?: ThinkingLevel };
 		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
 	};
 	"session.prompt": {
@@ -241,7 +193,7 @@ export interface WsMethodMap {
 		result: RemovedQueuedMessage;
 	};
 	"session.abort": { params: { sessionId: string }; result: Ack };
-	"session.delete": { params: { workspaceId: string; sessionId: string }; result: Ack };
+	"session.delete": { params: { projectId: string; sessionId: string }; result: Ack };
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
 	"session.compact": { params: { sessionId: string; instructions?: string }; result: Ack };
@@ -254,20 +206,24 @@ export interface WsMethodMap {
 		result: Ack;
 	};
 	"session.goalGet": {
-		params: { workspaceId: string; sessionId: string };
+		params: { projectId: string; sessionId: string };
 		result: SessionGoal;
 	};
 	"session.goalSet": {
-		params: { workspaceId: string; sessionId: string; goal: string };
+		params: { projectId: string; sessionId: string; goal: string };
 		result: SessionGoal;
 	};
 	"session.goalClear": {
-		params: { workspaceId: string; sessionId: string };
+		params: { projectId: string; sessionId: string };
 		result: SessionGoal;
 	};
-	"session.list": { params: { workspaceId: string }; result: SessionSummary[] };
+	"session.tasksSet": {
+		params: { projectId: string; sessionId: string; tasks: SessionGoal["tasks"] };
+		result: SessionGoal;
+	};
+	"session.list": { params: { projectId: string }; result: SessionSummary[] };
 	"session.getMessages": {
-		params: { sessionId: string; workspaceId: string };
+		params: { sessionId: string; projectId: string };
 		result: { summary: SessionSummary; messages: TranscriptMessage[] };
 	};
 	"model.list": { params: Record<string, never>; result: WireModel[] };
@@ -296,8 +252,8 @@ export interface WsMethodMap {
 	"provider.loginReply": { params: LoginReply; result: Ack };
 	"provider.loginCancel": { params: { loginId: string }; result: Ack };
 	"provider.logout": { params: { providerId: string }; result: Ack };
-	"settings.profile": { params: Record<string, never>; result: PiProfileDescriptor };
 	"settings.update": { params: { config: AppConfigPatch }; result: AppConfig };
+	"signet.status": { params: Record<string, never>; result: SignetStatus };
 	"history.search": {
 		params: { query: string; scope: HistoryScope; limit?: number };
 		result: HistorySearchResult;

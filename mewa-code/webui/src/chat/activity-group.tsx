@@ -9,19 +9,19 @@ export function ActivityGroup({
 	id,
 	steps,
 	live,
-	workspaceRoot,
+	projectAreaRoot,
 }: {
 	id: string;
 	steps: ActivityStep[];
 	live: boolean;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 }) {
 	const [expanded, toggle] = useFold(id);
 	const single = steps.length === 1 ? steps[0] : undefined;
 	if (single)
-		return <ActivityStepRow step={single} isCurrent={live} workspaceRoot={workspaceRoot} />;
+		return <ActivityStepRow step={single} isCurrent={live} projectAreaRoot={projectAreaRoot} />;
 
-	const summary = live ? liveTicker(steps, workspaceRoot) : summarizeSteps(steps);
+	const summary = live ? liveTicker(steps, projectAreaRoot) : summarizeSteps(steps);
 	return (
 		<div
 			data-testid="activity-group"
@@ -56,7 +56,7 @@ export function ActivityGroup({
 							key={step.id}
 							step={step}
 							isCurrent={live && i === steps.length - 1}
-							workspaceRoot={workspaceRoot}
+							projectAreaRoot={projectAreaRoot}
 						/>
 					))}
 				</div>
@@ -79,17 +79,17 @@ export function summarizeSteps(steps: ActivityStep[]): string {
 	return `${count} · ${shown}${more > 0 ? `, +${more} more` : ""}`;
 }
 
-function liveTicker(steps: ActivityStep[], workspaceRoot: string | undefined): string {
+function liveTicker(steps: ActivityStep[], projectAreaRoot: string | undefined): string {
 	const current = steps[steps.length - 1];
 	if (!current) return "Working…";
 	if (current.kind === "thinking") return "Thinking…";
-	const summary = getToolSummary(current.toolName, toolRenderProps(current, workspaceRoot));
+	const summary = getToolSummary(current.toolName, toolRenderProps(current, projectAreaRoot));
 	return summary ? `${current.toolName} · ${summary}` : `${current.toolName}…`;
 }
 
 function toolRenderProps(
 	step: Extract<ActivityStep, { kind: "tool" }>,
-	workspaceRoot: string | undefined,
+	projectAreaRoot: string | undefined,
 ): ToolRenderProps {
 	return {
 		toolCallId: step.toolCallId,
@@ -97,7 +97,7 @@ function toolRenderProps(
 		args: step.args,
 		result: step.tool?.raw,
 		status: step.tool?.status ?? (step.dead ? "error" : "running"),
-		workspaceRoot,
+		projectAreaRoot,
 		streaming: step.streaming,
 	};
 }
@@ -105,11 +105,11 @@ function toolRenderProps(
 function ActivityStepRow({
 	step,
 	isCurrent = false,
-	workspaceRoot,
+	projectAreaRoot,
 }: {
 	step: ActivityStep;
 	isCurrent?: boolean;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 }) {
 	const [expanded, toggle] = useFold(step.id);
 	if (step.kind === "thinking") {
@@ -142,7 +142,7 @@ function ActivityStepRow({
 
 	const status: ToolStatus = step.tool?.status ?? (step.dead ? "error" : "running");
 	const Renderer = getToolRenderer(step.toolName);
-	const renderProps = toolRenderProps(step, workspaceRoot);
+	const renderProps = toolRenderProps(step, projectAreaRoot);
 	return (
 		<div
 			data-testid="activity-step"

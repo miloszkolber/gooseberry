@@ -31,11 +31,11 @@ import type { CompactionState } from "./types";
 
 export function ChatTurnView({
 	row,
-	workspaceRoot,
+	projectAreaRoot,
 	onOpenChange,
 }: {
 	row: ChatRow;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 	onOpenChange?: ((path: string) => void) | undefined;
 }) {
 	switch (row.kind) {
@@ -71,14 +71,14 @@ export function ChatTurnView({
 				</div>
 			);
 		case "tool":
-			return <ToolRow row={row} workspaceRoot={workspaceRoot} />;
+			return <ToolRow row={row} projectAreaRoot={projectAreaRoot} />;
 		case "activity":
 			return (
 				<ActivityGroup
 					id={row.id}
 					steps={row.steps}
 					live={row.live}
-					workspaceRoot={workspaceRoot}
+					projectAreaRoot={projectAreaRoot}
 				/>
 			);
 		case "divider":
@@ -86,7 +86,7 @@ export function ChatTurnView({
 				<TurnDivider
 					id={row.id}
 					data={row.data}
-					workspaceRoot={workspaceRoot}
+					projectAreaRoot={projectAreaRoot}
 					onOpenChange={onOpenChange ?? (() => {})}
 				/>
 			);
@@ -239,10 +239,10 @@ function SkillInvocationCard({
 
 function ToolRow({
 	row,
-	workspaceRoot,
+	projectAreaRoot,
 }: {
 	row: Extract<ChatRow, { kind: "tool" }>;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 }) {
 	if (getToolChrome(row.toolName) === "bare") {
 		const Renderer = getToolRenderer(row.toolName);
@@ -254,7 +254,7 @@ function ToolRow({
 					args={row.args}
 					result={row.tool?.raw}
 					status={row.tool?.status ?? (row.dead ? "error" : "running")}
-					workspaceRoot={workspaceRoot}
+					projectAreaRoot={projectAreaRoot}
 					streaming={row.streaming}
 				/>
 			</div>
@@ -268,7 +268,7 @@ function ToolRow({
 			tool={row.tool}
 			dead={row.dead}
 			streaming={row.streaming}
-			workspaceRoot={workspaceRoot}
+			projectAreaRoot={projectAreaRoot}
 		/>
 	);
 }
@@ -483,11 +483,11 @@ function ArtifactChip({
 function ArtifactList({
 	group,
 	listId,
-	workspaceRoot,
+	projectAreaRoot,
 }: {
 	group: ArtifactGroup;
 	listId: string;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 }) {
 	const { id, icon: Icon, paths, onOpen } = group;
 	const testid = `turn-divider-${id}`;
@@ -504,7 +504,7 @@ function ArtifactList({
 					>
 						<Icon className="size-3 shrink-0 text-text-muted" />
 						<span className="min-w-0 flex-1 truncate text-text-muted">
-							{projectRelativePath(path, workspaceRoot)}
+							{projectRelativePath(path, projectAreaRoot)}
 						</span>
 					</button>
 				</li>
@@ -516,12 +516,12 @@ function ArtifactList({
 export function TurnDivider({
 	id,
 	data,
-	workspaceRoot,
+	projectAreaRoot,
 	onOpenChange,
 }: {
 	id: string;
 	data: TurnDividerData;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 	onOpenChange: (path: string) => void;
 }) {
 	const { elapsedMs, toolCount, changedFiles } = data;
@@ -577,7 +577,7 @@ export function TurnDivider({
 						key={group.id}
 						group={group}
 						listId={`${id}-${group.id}-list`}
-						workspaceRoot={workspaceRoot}
+						projectAreaRoot={projectAreaRoot}
 					/>
 				))}
 		</div>

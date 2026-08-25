@@ -5,9 +5,9 @@ import { CodeBlock } from "./code-block";
 import { Collapsible, countLines } from "./collapsible";
 import { languageFromPath, numArg, resultText, strArg } from "./tool-helpers";
 
-export function ReadCard({ args, result, status, workspaceRoot }: ToolRenderProps) {
+export function ReadCard({ args, result, status, projectAreaRoot }: ToolRenderProps) {
 	const path = strArg(args, "path");
-	const displayPath = projectRelativePath(path, workspaceRoot);
+	const displayPath = projectRelativePath(path, projectAreaRoot);
 	const offset = numArg(args, "offset");
 	const limit = numArg(args, "limit");
 	const output = resultText(result);

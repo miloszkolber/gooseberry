@@ -11,23 +11,31 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { normalizeSessionGoal, type SessionGoal } from "@mewa-code/contracts";
+import {
+	normalizeSessionGoal,
+	type SessionGoal,
+	type SessionTask,
+	type SessionTaskStatus,
+} from "@mewa-code/contracts";
 import { dataDir } from "./persistence";
 
-const SESSION_GOAL_DIRECTORY = join("extensions", "session-goals");
-const MAX_SESSION_ID_LENGTH = 256;
-const MAX_WORKSPACE_ID_LENGTH = 256;
+const OBJECTIVE_DIRECTORY = join("extensions", "session-objectives");
+const LEGACY_GOAL_DIRECTORY = join("extensions", "session-goals");
+const MAX_ID_LENGTH = 256;
+const MAX_TASKS = 200;
+const MAX_TASK_TEXT_LENGTH = 2_000;
 
-interface StoredSessionGoal {
-	version: 1;
-	workspaceId: string;
+interface StoredObjective {
+	version: 2;
+	projectId: string;
 	sessionId: string;
-	goal: string;
+	goal: string | null;
+	tasks: SessionTask[];
 	updatedAt: number;
 }
 
-function validateIdentity(value: unknown, label: string, maxLength: number): string {
-	if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+function validateIdentity(value: unknown, label: string): string {
+	if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LENGTH) {
 		throw new Error(`${label} is invalid`);
 	}
 	if (value.includes("\0") || value.includes("/") || value.includes("\\")) {
@@ -36,68 +44,109 @@ function validateIdentity(value: unknown, label: string, maxLength: number): str
 	return value;
 }
 
-function validateSessionIdentity(workspaceId: string, sessionId: string): void {
-	validateIdentity(workspaceId, "Workspace id", MAX_WORKSPACE_ID_LENGTH);
-	validateIdentity(sessionId, "Session id", MAX_SESSION_ID_LENGTH);
+function key(projectId: string, sessionId: string): string {
+	validateIdentity(projectId, "Project id");
+	validateIdentity(sessionId, "Session id");
+	return createHash("sha256").update(`${projectId}\0${sessionId}`).digest("hex");
 }
 
-function sessionGoalDirectory(): string {
-	return join(dataDir(), SESSION_GOAL_DIRECTORY);
+function objectiveDirectory(): string {
+	return join(dataDir(), OBJECTIVE_DIRECTORY);
 }
 
-function sessionGoalFile(workspaceId: string, sessionId: string): string {
-	validateSessionIdentity(workspaceId, sessionId);
-	const key = createHash("sha256").update(`${workspaceId}\0${sessionId}`).digest("hex");
-	return join(sessionGoalDirectory(), `${key}.json`);
+function objectiveFile(projectId: string, sessionId: string): string {
+	return join(objectiveDirectory(), `${key(projectId, sessionId)}.json`);
 }
 
-function parseStoredGoal(
+function legacyFile(projectId: string, sessionId: string): string {
+	return join(dataDir(), LEGACY_GOAL_DIRECTORY, `${key(projectId, sessionId)}.json`);
+}
+
+function normalizeTask(value: unknown): SessionTask {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		throw new Error("Task is invalid");
+	const id = Reflect.get(value, "id");
+	const rawText = Reflect.get(value, "text");
+	const status = Reflect.get(value, "status");
+	if (typeof id !== "string" || !id || id.length > MAX_ID_LENGTH)
+		throw new Error("Task id is invalid");
+	if (typeof rawText !== "string") throw new Error("Task text is invalid");
+	const text = rawText.trim();
+	if (!text || text.length > MAX_TASK_TEXT_LENGTH || text.includes("\0")) {
+		throw new Error("Task text is invalid");
+	}
+	if (status !== "pending" && status !== "active" && status !== "done") {
+		throw new Error("Task status is invalid");
+	}
+	return { id, text, status: status as SessionTaskStatus };
+}
+
+function normalizeTasks(value: unknown): SessionTask[] {
+	if (!Array.isArray(value) || value.length > MAX_TASKS) throw new Error("Task list is invalid");
+	const tasks = value.map(normalizeTask);
+	if (new Set(tasks.map((task) => task.id)).size !== tasks.length)
+		throw new Error("Task ids must be unique");
+	return tasks;
+}
+
+function parseObjective(
 	value: unknown,
-	workspaceId: string,
+	projectId: string,
 	sessionId: string,
-): StoredSessionGoal | null {
+): StoredObjective | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-	const candidate = value as Partial<StoredSessionGoal>;
+	if (Reflect.get(value, "version") !== 2) return null;
 	if (
-		candidate.version !== 1 ||
-		candidate.workspaceId !== workspaceId ||
-		candidate.sessionId !== sessionId ||
-		typeof candidate.goal !== "string" ||
-		typeof candidate.updatedAt !== "number" ||
-		!Number.isFinite(candidate.updatedAt)
-	) {
+		Reflect.get(value, "projectId") !== projectId ||
+		Reflect.get(value, "sessionId") !== sessionId
+	)
 		return null;
-	}
+	const rawGoal = Reflect.get(value, "goal");
+	const rawUpdatedAt = Reflect.get(value, "updatedAt");
+	if (rawGoal !== null && typeof rawGoal !== "string") return null;
+	if (typeof rawUpdatedAt !== "number" || !Number.isFinite(rawUpdatedAt)) return null;
 	try {
-		if (normalizeSessionGoal(candidate.goal) !== candidate.goal) return null;
+		const goal = rawGoal === null ? null : normalizeSessionGoal(rawGoal);
+		const tasks = normalizeTasks(Reflect.get(value, "tasks"));
+		return { version: 2, projectId, sessionId, goal, tasks, updatedAt: rawUpdatedAt };
 	} catch {
 		return null;
 	}
-	return candidate as StoredSessionGoal;
 }
 
-export function readStoredSessionGoal(
-	workspaceId: string,
-	sessionId: string,
-): { goal: string; updatedAt: number } | null {
-	const file = sessionGoalFile(workspaceId, sessionId);
-	if (!existsSync(file)) return null;
+function readJson(file: string): unknown {
 	try {
-		const parsed = parseStoredGoal(
-			JSON.parse(readFileSync(file, "utf8")) as unknown,
-			workspaceId,
+		return JSON.parse(readFileSync(file, "utf8")) as unknown;
+	} catch {
+		return null;
+	}
+}
+
+function readLegacy(projectId: string, sessionId: string): StoredObjective | null {
+	const value = readJson(legacyFile(projectId, sessionId));
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	if (Reflect.get(value, "version") !== 1 || Reflect.get(value, "sessionId") !== sessionId)
+		return null;
+	const owner = Reflect.get(value, "workspaceId");
+	const rawGoal = Reflect.get(value, "goal");
+	if (owner !== projectId || typeof rawGoal !== "string") return null;
+	try {
+		return {
+			version: 2,
+			projectId,
 			sessionId,
-		);
-		return parsed ? { goal: parsed.goal, updatedAt: parsed.updatedAt } : null;
+			goal: normalizeSessionGoal(rawGoal),
+			tasks: [],
+			updatedAt: Number(Reflect.get(value, "updatedAt")) || Date.now(),
+		};
 	} catch {
 		return null;
 	}
 }
 
-function atomicReplace(file: string, value: StoredSessionGoal): void {
-	const directory = sessionGoalDirectory();
-	mkdirSync(directory, { recursive: true, mode: 0o700 });
-	const temporary = join(directory, `.${randomUUID()}.tmp`);
+function atomicReplace(file: string, value: StoredObjective): void {
+	mkdirSync(objectiveDirectory(), { recursive: true, mode: 0o700 });
+	const temporary = join(objectiveDirectory(), `.${randomUUID()}.tmp`);
 	try {
 		writeFileSync(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
 		renameSync(temporary, file);
@@ -106,78 +155,93 @@ function atomicReplace(file: string, value: StoredSessionGoal): void {
 	}
 }
 
-export function writeStoredSessionGoal(
-	workspaceId: string,
+function readStoredObjective(projectId: string, sessionId: string): StoredObjective | null {
+	const file = objectiveFile(projectId, sessionId);
+	const stored = existsSync(file) ? parseObjective(readJson(file), projectId, sessionId) : null;
+	if (stored) return stored;
+	const legacy = readLegacy(projectId, sessionId);
+	if (!legacy) return null;
+	atomicReplace(file, legacy);
+	return legacy;
+}
+
+function writeObjective(
+	projectId: string,
 	sessionId: string,
-	value: unknown,
-): StoredSessionGoal {
-	validateSessionIdentity(workspaceId, sessionId);
-	const goal = normalizeSessionGoal(value);
-	const stored: StoredSessionGoal = {
-		version: 1,
-		workspaceId,
-		sessionId,
+	goal: string | null,
+	tasks: SessionTask[],
+): StoredObjective {
+	const stored: StoredObjective = {
+		version: 2,
+		projectId: validateIdentity(projectId, "Project id"),
+		sessionId: validateIdentity(sessionId, "Session id"),
 		goal,
+		tasks: normalizeTasks(tasks),
 		updatedAt: Date.now(),
 	};
-	atomicReplace(sessionGoalFile(workspaceId, sessionId), stored);
+	atomicReplace(objectiveFile(projectId, sessionId), stored);
 	return stored;
 }
 
-export function clearStoredSessionGoal(workspaceId: string, sessionId: string): void {
-	const file = sessionGoalFile(workspaceId, sessionId);
-	try {
-		unlinkSync(file);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-	}
+export function writeStoredSessionGoal(
+	projectId: string,
+	sessionId: string,
+	value: unknown,
+): StoredObjective {
+	const current = readStoredObjective(projectId, sessionId);
+	return writeObjective(projectId, sessionId, normalizeSessionGoal(value), current?.tasks ?? []);
 }
 
-export function clearStoredSessionGoalsForWorkspace(workspaceId: string): void {
-	validateIdentity(workspaceId, "Workspace id", MAX_WORKSPACE_ID_LENGTH);
-	const directory = sessionGoalDirectory();
-	let names: string[];
-	try {
-		names = readdirSync(directory);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-		throw error;
-	}
+export function writeStoredSessionTasks(
+	projectId: string,
+	sessionId: string,
+	tasks: unknown,
+): StoredObjective {
+	const current = readStoredObjective(projectId, sessionId);
+	return writeObjective(projectId, sessionId, current?.goal ?? null, normalizeTasks(tasks));
+}
 
-	for (const name of names) {
-		if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
-		const file = join(directory, name);
-		let parsed: unknown;
+export function clearStoredSessionGoal(projectId: string, sessionId: string): void {
+	const current = readStoredObjective(projectId, sessionId);
+	if (!current) return;
+	if (current.tasks.length > 0) writeObjective(projectId, sessionId, null, current.tasks);
+	else {
 		try {
-			if (!lstatSync(file).isFile()) continue;
-			parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
-		} catch {
-			continue;
-		}
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-		const sessionId = Reflect.get(parsed, "sessionId");
-		if (typeof sessionId !== "string") continue;
-		try {
-			if (sessionGoalFile(workspaceId, sessionId) !== file) continue;
-		} catch {
-			continue;
-		}
-		if (!parseStoredGoal(parsed, workspaceId, sessionId)) continue;
-		try {
-			unlinkSync(file);
+			unlinkSync(objectiveFile(projectId, sessionId));
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
 	}
 }
 
-export function sessionGoalState(workspaceId: string, sessionId: string): SessionGoal {
-	const stored = readStoredSessionGoal(workspaceId, sessionId);
+export function clearStoredSessionGoalsForProject(projectId: string): void {
+	validateIdentity(projectId, "Project id");
+	let names: string[];
+	try {
+		names = readdirSync(objectiveDirectory());
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	for (const name of names) {
+		if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
+		const file = join(objectiveDirectory(), name);
+		try {
+			if (!lstatSync(file).isFile()) continue;
+			const value = readJson(file);
+			if (value && typeof value === "object" && Reflect.get(value, "projectId") === projectId)
+				unlinkSync(file);
+		} catch {}
+	}
+}
+
+export function sessionGoalState(projectId: string, sessionId: string): SessionGoal {
+	const stored = readStoredObjective(projectId, sessionId);
 	return {
-		workspaceId,
+		projectId,
 		sessionId,
 		goal: stored?.goal ?? null,
-		active: stored !== null,
+		tasks: stored?.tasks ?? [],
 		updatedAt: stored?.updatedAt ?? null,
 	};
 }

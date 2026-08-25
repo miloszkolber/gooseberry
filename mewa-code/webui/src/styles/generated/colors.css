@@ -13,7 +13,7 @@
 	--text-disabled: color-mix(in srgb, var(--text) 60%, transparent); /* disabled non-control text = the default text colour at the `strong` (60%) alpha step — a disabled element inherits its enabled semantic colour, dimmed at the token level, never a dedicated disabled palette value */
 	--text-on-primary: var(--on-accent);
 	--text-link: var(--info); /* global.css `a {}` is the only consumer; no component styles a bare link */
-	--container-workspace-bg: var(--background); /* the focused session surface shared by chat, read-only previews, and project context */
+	--container-project-bg: var(--background); /* the focused session surface shared by chat, read-only previews, and project context */
 	--container-sidebar-bg: var(--sidebar);
 	--container-header-bg: var(--header);
 	--container-content-bg: var(--content); /* the recessed read-only code and diff canvas used by Shiki previews and changed-file inspection */
@@ -81,7 +81,7 @@
 	--color-text-subtle: var(--text-subtle);
 	--color-text-disabled: var(--text-disabled);
 	--color-text-on-primary: var(--text-on-primary);
-	--color-container-workspace-bg: var(--container-workspace-bg);
+	--color-container-project-bg: var(--container-project-bg);
 	--color-container-sidebar-bg: var(--container-sidebar-bg);
 	--color-container-header-bg: var(--container-header-bg);
 	--color-container-content-bg: var(--container-content-bg);

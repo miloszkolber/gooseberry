@@ -3,12 +3,10 @@ import type {
 	ExtUiRequest,
 	LoginPush,
 	Project,
+	ProjectFsChangedPayload,
 	ServerWelcome,
 	SessionDeletedPayload,
 	SessionEventPayload,
-	Workspace,
-	WorkspaceFsChangedPayload,
-	WorkspaceRemoved,
 } from "@mewa-code/contracts";
 import { WS_CHANNELS } from "@mewa-code/contracts";
 import { useAppStore } from "../store";
@@ -50,29 +48,16 @@ export function initTransport(): WsTransport {
 	});
 
 	transport.subscribe(WS_CHANNELS.sessionDeleted, (data) => {
-		const { workspaceId, sessionId } = data as SessionDeletedPayload;
-		useAppStore.getState().deleteChat(workspaceId, sessionId, false);
+		const { projectId, sessionId } = data as SessionDeletedPayload;
+		useAppStore.getState().deleteChat(projectId, sessionId, false);
 	});
 
 	transport.subscribe(WS_CHANNELS.providerLogin, (data) => {
 		useAppStore.getState().applyLoginFrame(data as LoginPush);
 	});
 
-	transport.subscribe(WS_CHANNELS.workspaceCreated, (data) => {
-		useAppStore.getState().addWorkspace(data as Workspace);
-	});
-
-	transport.subscribe(WS_CHANNELS.workspaceUpdated, (data) => {
-		useAppStore.getState().updateWorkspace(data as Workspace);
-	});
-
-	transport.subscribe(WS_CHANNELS.workspaceRemoved, (data) => {
-		const { projectId, id } = data as WorkspaceRemoved;
-		useAppStore.getState().applyWorkspaceRemoved(projectId, id);
-	});
-
-	transport.subscribe(WS_CHANNELS.workspaceFsChanged, (data) => {
-		useAppStore.getState().noteFsChanged(data as WorkspaceFsChangedPayload);
+	transport.subscribe(WS_CHANNELS.projectFsChanged, (data) => {
+		useAppStore.getState().noteFsChanged(data as ProjectFsChangedPayload);
 	});
 
 	transport.subscribe(WS_CHANNELS.settingsChanged, (data) => {

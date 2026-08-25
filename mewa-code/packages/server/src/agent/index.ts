@@ -3,11 +3,11 @@ export * from "./ask-user-question";
 export {
 	type BundledExtensionFactory,
 	type BundledExtensions,
-	getPiProfile,
 	listSkillCatalog,
 	listSkillCommands,
 	registerBundledRuntime,
 } from "./extensions";
+export { classifyModel, routeSubagentModel } from "./model-routing";
 export * from "./oneshot";
 export {
 	activatePiRuntimeGeneration,
@@ -26,12 +26,10 @@ export {
 	sessionGoalExtension,
 } from "./session-goal-extension";
 export * from "./session-repair";
-export type { SkillAdmissionContext, SkillDecision, SkillFacts } from "./skill-admission";
-export { type SshBashExtensionOptions, sshBashExtension } from "./ssh-bash-extension";
 export type { SubagentHost } from "./subagent-extension";
 export { SubagentParameters, subagentDetails, subagentExtension } from "./subagent-extension";
+export * from "./subagent-roles";
 export type {
-	ChildModelRef,
 	ChildRunSnapshot,
 	ChildRunStatus,
 	RunChildSessionInput,

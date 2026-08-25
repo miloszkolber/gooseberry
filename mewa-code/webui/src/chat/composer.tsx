@@ -331,7 +331,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	};
 
 	return (
-		<div className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-workspace-bg">
+		<div className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-projectArea-bg">
 			{mentionOpen ? (
 				<div
 					data-testid="mention-menu"

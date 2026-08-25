@@ -4,7 +4,7 @@ import type { ToolRenderProps } from "../tool-registry";
 import { Collapsible } from "./collapsible";
 import { resultText, strArg } from "./tool-helpers";
 
-export function EditCard({ args, result, status, workspaceRoot }: ToolRenderProps) {
+export function EditCard({ args, result, status, projectAreaRoot }: ToolRenderProps) {
 	const path = strArg(args, "path");
 	const oldText = strArg(args, "oldText") || strArg(args, "old_string") || strArg(args, "old");
 	const newText = strArg(args, "newText") || strArg(args, "new_string") || strArg(args, "new");
@@ -13,7 +13,7 @@ export function EditCard({ args, result, status, workspaceRoot }: ToolRenderProp
 	if (status === "error") {
 		return (
 			<div data-testid="tool-edit" className="flex flex-col gap-xs">
-				<EditHeader path={path} workspaceRoot={workspaceRoot} />
+				<EditHeader path={path} projectAreaRoot={projectAreaRoot} />
 				<pre className="overflow-auto px-sm py-xs text-feedback-error tr-code-text">{message}</pre>
 			</div>
 		);
@@ -24,7 +24,7 @@ export function EditCard({ args, result, status, workspaceRoot }: ToolRenderProp
 
 	return (
 		<div data-testid="tool-edit" className="flex flex-col gap-xs">
-			<EditHeader path={path} workspaceRoot={workspaceRoot} />
+			<EditHeader path={path} projectAreaRoot={projectAreaRoot} />
 			<Collapsible
 				lines={oldLines.length + newLines.length}
 				fadeClass="bg-[linear-gradient(to_top,var(--container-elevated-bg),transparent)]"
@@ -58,8 +58,14 @@ export function EditCard({ args, result, status, workspaceRoot }: ToolRenderProp
 	);
 }
 
-function EditHeader({ path, workspaceRoot }: { path: string; workspaceRoot?: string | undefined }) {
-	const displayPath = projectRelativePath(path, workspaceRoot);
+function EditHeader({
+	path,
+	projectAreaRoot,
+}: {
+	path: string;
+	projectAreaRoot?: string | undefined;
+}) {
+	const displayPath = projectRelativePath(path, projectAreaRoot);
 	return (
 		<div className="flex items-center gap-xs tr-text-metadata">
 			<Pencil className="size-3.5 shrink-0 text-feedback-warning" />

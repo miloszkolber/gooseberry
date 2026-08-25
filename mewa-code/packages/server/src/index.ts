@@ -6,4 +6,3 @@ export {
 export * from "./host";
 export * from "./path-admission";
 export { dataDir } from "./persistence";
-export * from "./ssh";

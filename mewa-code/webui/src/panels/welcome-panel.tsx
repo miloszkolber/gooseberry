@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { PRODUCT_NAME } from "../constants/branding";
 import { useAppStore } from "../store";
 import { AddProjectMenu } from "./add-project-menu";
-import { enterDefaultWorkspace } from "./default-workspace";
+import { enterDefaultProjectArea } from "./default-project-area";
 import { ProviderWarningBanner } from "./provider-warning-banner";
 import { useOpenProject } from "./use-open-project";
 
@@ -40,7 +40,7 @@ export function WelcomePanel() {
 						icon={House}
 						title="Continue project"
 						subtitle="Open the project directory and its persistent Pi sessions."
-						onClick={() => void enterDefaultWorkspace(project.id)}
+						onClick={() => void enterDefaultProjectArea(project.id)}
 					/>
 				) : (
 					<AddProjectMenu
@@ -87,7 +87,7 @@ const Card = forwardRef<HTMLButtonElement, CardProps>(function Card(
 				"relative flex h-[150px] w-[220px] flex-col items-start justify-between rounded-[var(--radius-sm)] border bg-clip-padding p-lg text-left transition-colors",
 				primary
 					? "border-primary-muted bg-primary-subtle hover:bg-primary-soft"
-					: "border-border-default bg-container-workspace-bg hover:border-primary-muted hover:bg-container-elevated-bg",
+					: "border-border-default bg-container-projectArea-bg hover:border-primary-muted hover:bg-container-elevated-bg",
 				className,
 			)}
 		>

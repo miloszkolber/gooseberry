@@ -1,6 +1,6 @@
-import type { GitDiffScope, Project, WireModel, Workspace } from "@mewa-code/contracts";
+import type { GitDiffScope, Project, WireModel } from "@mewa-code/contracts";
 import { isAbsolutePath, normalizePath } from "../lib";
-import type { ClosedChat, EditorTab, RouteChatTarget } from "./app-store";
+import type { ClosedChat, ContentTab, ProjectArea, RouteChatTarget } from "./app-store";
 
 interface ConnectionGenerationState {
 	status: string;
@@ -14,120 +14,120 @@ export function isConnectedGeneration(
 	return state.status === "connected" && state.connectionGeneration === connectionGeneration;
 }
 
-interface ActiveWorkspaceState {
-	activeWorkspaceId: string | null;
-	workspaces: Record<string, Workspace[]>;
+interface ActiveProjectAreaState {
+	activeProjectAreaId: string | null;
+	projectAreas: Record<string, ProjectArea[]>;
 }
 
-interface ProjectContextState extends ActiveWorkspaceState {
+interface ProjectContextState extends ActiveProjectAreaState {
 	selectedProjectId: string | null;
 	projects: Project[];
 }
 
-export function isDefaultWorkspace(workspace: Pick<Workspace, "kind">): boolean {
-	return workspace.kind === "default";
+export function isDefaultProjectArea(_projectArea: Pick<ProjectArea, "kind">): boolean {
+	return true;
 }
 
-export function isExternalWorkspace(workspace: Pick<Workspace, "kind">): boolean {
-	return workspace.kind === "external";
+export function isExternalProjectArea(_projectArea: Pick<ProjectArea, "kind">): boolean {
+	return false;
 }
 
-export function isUserOwnedWorkspace(workspace: Pick<Workspace, "kind">): boolean {
-	return isDefaultWorkspace(workspace) || isExternalWorkspace(workspace);
+export function isUserOwnedProjectArea(_projectArea: Pick<ProjectArea, "kind">): boolean {
+	return true;
 }
 
-export function selectActiveWorkspace(state: ActiveWorkspaceState): Workspace | null {
-	return state.activeWorkspaceId ? selectWorkspaceById(state, state.activeWorkspaceId) : null;
+export function selectActiveProjectArea(state: ActiveProjectAreaState): ProjectArea | null {
+	return state.activeProjectAreaId ? selectProjectAreaById(state, state.activeProjectAreaId) : null;
 }
 
-export function selectWorkspaceById(
-	state: ActiveWorkspaceState,
-	workspaceId: string,
-): Workspace | null {
-	for (const workspaces of Object.values(state.workspaces)) {
-		const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
-		if (workspace) return workspace;
+export function selectProjectAreaById(
+	state: ActiveProjectAreaState,
+	projectAreaId: string,
+): ProjectArea | null {
+	for (const projectAreas of Object.values(state.projectAreas)) {
+		const projectArea = projectAreas.find((candidate) => candidate.id === projectAreaId);
+		if (projectArea) return projectArea;
 	}
 	return null;
 }
 
-export function selectActiveWorkspaceProjectId(state: ActiveWorkspaceState): string | null {
-	return selectActiveWorkspace(state)?.projectId ?? null;
+export function selectActiveProjectAreaProjectId(state: ActiveProjectAreaState): string | null {
+	return selectActiveProjectArea(state)?.projectId ?? null;
 }
 
 export function selectContextProject(state: ProjectContextState): Project | null {
-	const projectId = selectActiveWorkspace(state)?.projectId ?? state.selectedProjectId;
+	const projectId = selectActiveProjectArea(state)?.projectId ?? state.selectedProjectId;
 	return state.projects.find((project) => project.id === projectId) ?? null;
 }
 
 export interface HistoryTarget {
-	workspaceId: string;
+	projectAreaId: string;
 	tabId: string;
 	sessionId: string;
 }
 
-export function selectActiveEditorTab(
+export function selectActiveContentTab(
 	state: {
-		tabsByWorkspace: Record<string, EditorTab[]>;
-		activeTabByWorkspace: Record<string, string | null>;
+		tabsByProjectArea: Record<string, ContentTab[]>;
+		activeTabByProjectArea: Record<string, string | null>;
 	},
-	workspaceId: string,
-): EditorTab | null {
-	const activeId = state.activeTabByWorkspace[workspaceId];
-	return (state.tabsByWorkspace[workspaceId] ?? []).find((tab) => tab.id === activeId) ?? null;
+	projectAreaId: string,
+): ContentTab | null {
+	const activeId = state.activeTabByProjectArea[projectAreaId];
+	return (state.tabsByProjectArea[projectAreaId] ?? []).find((tab) => tab.id === activeId) ?? null;
 }
 
 export function selectHistoryTarget(state: {
-	activeWorkspaceId: string | null;
-	tabsByWorkspace: Record<string, EditorTab[]>;
-	activeTabByWorkspace: Record<string, string | null>;
+	activeProjectAreaId: string | null;
+	tabsByProjectArea: Record<string, ContentTab[]>;
+	activeTabByProjectArea: Record<string, string | null>;
 }): HistoryTarget | null {
-	const workspaceId = state.activeWorkspaceId;
-	if (!workspaceId) return null;
-	const tabs = state.tabsByWorkspace[workspaceId] ?? [];
-	const active = selectActiveEditorTab(state, workspaceId);
+	const projectAreaId = state.activeProjectAreaId;
+	if (!projectAreaId) return null;
+	const tabs = state.tabsByProjectArea[projectAreaId] ?? [];
+	const active = selectActiveContentTab(state, projectAreaId);
 	const chat = active?.kind === "chat" ? active : tabs.findLast((t) => t.kind === "chat");
-	return chat ? { workspaceId, tabId: chat.id, sessionId: chat.sessionId } : null;
+	return chat ? { projectAreaId, tabId: chat.id, sessionId: chat.sessionId } : null;
 }
 
 export interface KnownChatLocation {
-	workspaceId: string;
+	projectAreaId: string;
 	title: string;
 }
 
 export function selectKnownChatLocation(
 	state: {
-		tabsByWorkspace: Record<string, EditorTab[]>;
-		closedChatsByWorkspace: Record<string, ClosedChat[]>;
+		tabsByProjectArea: Record<string, ContentTab[]>;
+		closedChatsByProjectArea: Record<string, ClosedChat[]>;
 	},
 	sessionId: string,
 ): KnownChatLocation | null {
-	for (const [workspaceId, tabs] of Object.entries(state.tabsByWorkspace)) {
+	for (const [projectAreaId, tabs] of Object.entries(state.tabsByProjectArea)) {
 		const tab = tabs.find(
 			(candidate) => candidate.kind === "chat" && candidate.sessionId === sessionId,
 		);
-		if (tab?.kind === "chat") return { workspaceId, title: tab.name };
+		if (tab?.kind === "chat") return { projectAreaId, title: tab.name };
 	}
-	for (const [workspaceId, chats] of Object.entries(state.closedChatsByWorkspace)) {
+	for (const [projectAreaId, chats] of Object.entries(state.closedChatsByProjectArea)) {
 		const chat = chats.find((candidate) => candidate.sessionId === sessionId);
-		if (chat) return { workspaceId, title: chat.title };
+		if (chat) return { projectAreaId, title: chat.title };
 	}
 	return null;
 }
 
-export function selectWorkspaceSessionIds(
+export function selectProjectAreaSessionIds(
 	state: {
-		tabsByWorkspace: Record<string, EditorTab[]>;
-		closedChatsByWorkspace: Record<string, ClosedChat[]>;
+		tabsByProjectArea: Record<string, ContentTab[]>;
+		closedChatsByProjectArea: Record<string, ClosedChat[]>;
 	},
-	workspaceId: string,
+	projectAreaId: string,
 ): string[] {
 	const sessionIds = new Set(
-		(state.tabsByWorkspace[workspaceId] ?? []).flatMap((tab) =>
+		(state.tabsByProjectArea[projectAreaId] ?? []).flatMap((tab) =>
 			tab.kind === "chat" ? [tab.sessionId] : [],
 		),
 	);
-	for (const chat of state.closedChatsByWorkspace[workspaceId] ?? []) {
+	for (const chat of state.closedChatsByProjectArea[projectAreaId] ?? []) {
 		sessionIds.add(chat.sessionId);
 	}
 	return [...sessionIds];
@@ -144,89 +144,88 @@ export function selectCatalogModel(
 export const BRANCH_SCOPE: GitDiffScope = { kind: "branch" };
 
 export function selectDiffScope(
-	state: { diffScopeByWorkspace: Record<string, GitDiffScope> },
-	workspaceId: string,
+	state: { diffScopeByProjectArea: Record<string, GitDiffScope> },
+	projectAreaId: string,
 ): GitDiffScope {
-	return state.diffScopeByWorkspace[workspaceId] ?? BRANCH_SCOPE;
+	return state.diffScopeByProjectArea[projectAreaId] ?? BRANCH_SCOPE;
 }
 
-export function selectDiffBaseRef(state: ActiveWorkspaceState, workspaceId: string): string {
-	const workspace = selectWorkspaceById(state, workspaceId);
-	return workspace ? (workspace.diffBase ?? workspace.baseBranch) : "";
+export function selectDiffBaseRef(state: ActiveProjectAreaState, projectAreaId: string): string {
+	return selectProjectAreaById(state, projectAreaId) ? "HEAD" : "";
 }
 
 export function selectDiffTabTargetRef(
-	state: ActiveWorkspaceState,
-	tab: { workspaceId: string; scope: GitDiffScope },
+	state: ActiveProjectAreaState,
+	tab: { projectAreaId: string; scope: GitDiffScope },
 ): string {
-	return tab.scope.kind === "branch" ? selectDiffBaseRef(state, tab.workspaceId) : "";
+	return tab.scope.kind === "branch" ? selectDiffBaseRef(state, tab.projectAreaId) : "";
 }
 
-export function matchesWorktreePath(reported: string, rel: string): boolean {
+export function matchesChangePath(reported: string, rel: string): boolean {
 	const path = normalizePath(reported);
 	if (path === rel) return true;
 	return isAbsolutePath(path) && path.endsWith(`/${rel}`);
 }
 
 export function selectChatTitle(
-	state: { tabsByWorkspace: Record<string, EditorTab[]> },
-	workspaceId: string,
+	state: { tabsByProjectArea: Record<string, ContentTab[]> },
+	projectAreaId: string,
 	sessionId: string,
 ): string {
-	const tabs = state.tabsByWorkspace[workspaceId] ?? [];
+	const tabs = state.tabsByProjectArea[projectAreaId] ?? [];
 	const chatTab = tabs.find((t) => t.kind === "chat" && t.sessionId === sessionId);
 	return (chatTab?.name ?? "Chat").trim() || "Chat";
 }
 
-export function selectWorkspaceTick(
-	state: { fsChangesByWorkspace: Record<string, { tick: number }> },
-	workspaceId: string,
+export function selectProjectAreaTick(
+	state: { fsChangesByProjectArea: Record<string, { tick: number }> },
+	projectAreaId: string,
 ): number {
-	return state.fsChangesByWorkspace[workspaceId]?.tick ?? 0;
+	return state.fsChangesByProjectArea[projectAreaId]?.tick ?? 0;
 }
 
 export function selectCurrentRouteChatTarget(state: {
 	routeChatTarget: RouteChatTarget | null;
-	activeWorkspaceId: string | null;
-	navTickByWorkspace: Record<string, number>;
+	activeProjectAreaId: string | null;
+	navTickByProjectArea: Record<string, number>;
 }): RouteChatTarget | null {
 	const target = state.routeChatTarget;
-	if (!target || state.activeWorkspaceId !== target.workspaceId) return null;
-	return selectWorkspaceNavTick(state, target.workspaceId) === target.navTick ? target : null;
+	if (!target || state.activeProjectAreaId !== target.projectAreaId) return null;
+	return selectProjectAreaNavTick(state, target.projectAreaId) === target.navTick ? target : null;
 }
 
-export function selectWorkspaceNavTick(
-	state: { navTickByWorkspace: Record<string, number> },
-	workspaceId: string,
+export function selectProjectAreaNavTick(
+	state: { navTickByProjectArea: Record<string, number> },
+	projectAreaId: string,
 ): number {
-	return state.navTickByWorkspace[workspaceId] ?? 0;
+	return state.navTickByProjectArea[projectAreaId] ?? 0;
 }
 
 interface SkillsStaleState {
-	skillChangeTickByWorkspace: Record<string, number>;
+	skillChangeTickByProjectArea: Record<string, number>;
 	skillsSyncedTickBySession: Record<string, number>;
 }
 
 export function selectSkillsStale(
 	state: SkillsStaleState,
-	workspaceId: string,
+	projectAreaId: string,
 	sessionId: string,
 ): boolean {
 	return (
-		(state.skillChangeTickByWorkspace[workspaceId] ?? 0) >
+		(state.skillChangeTickByProjectArea[projectAreaId] ?? 0) >
 		(state.skillsSyncedTickBySession[sessionId] ?? 0)
 	);
 }
 
 export function selectLastOpenChatSession(
 	state: {
-		tabsByWorkspace: Record<string, { kind: string; id: string; sessionId?: string }[]>;
-		activeTabByWorkspace: Record<string, string | null>;
+		tabsByProjectArea: Record<string, { kind: string; id: string; sessionId?: string }[]>;
+		activeTabByProjectArea: Record<string, string | null>;
 	},
-	workspaceId: string,
+	projectAreaId: string,
 ): string | null {
-	const tabs = state.tabsByWorkspace[workspaceId] ?? [];
-	const activeId = state.activeTabByWorkspace[workspaceId];
+	const tabs = state.tabsByProjectArea[projectAreaId] ?? [];
+	const activeId = state.activeTabByProjectArea[projectAreaId];
 	const active = tabs.find((t) => t.id === activeId);
 	if (active?.kind === "chat" && active.sessionId) return active.sessionId;
 	for (let i = tabs.length - 1; i >= 0; i--) {

@@ -16,10 +16,9 @@ import { basename, join } from "node:path";
 import {
 	type AppConfig,
 	DEFAULT_CONFIG,
-	DEFAULT_PI_PROFILE_SETTINGS,
+	DEFAULT_SIGNET_SETTINGS,
 	normalizeModelReferences,
 	type Project,
-	type Workspace,
 } from "@mewa-code/contracts";
 
 const MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024;
@@ -44,54 +43,24 @@ function isStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
-function isProjectList(value: unknown): value is Project[] {
+interface PersistedProject extends Omit<Project, "roots"> {
+	roots?: string[];
+	path?: string;
+}
+
+function isProjectList(value: unknown): value is PersistedProject[] {
 	return (
 		Array.isArray(value) &&
 		value.every(
 			(project) =>
 				isRecord(project) &&
 				typeof project.id === "string" &&
-				typeof project.path === "string" &&
+				(isStringArray(project.roots) || typeof project.path === "string") &&
 				(project.name === undefined || typeof project.name === "string") &&
 				(project.slug === undefined || typeof project.slug === "string") &&
 				(project.lastOpened === undefined ||
 					(typeof project.lastOpened === "number" && Number.isFinite(project.lastOpened))) &&
-				(project.closed === undefined || project.closed === true) &&
-				(project.trusted === undefined || typeof project.trusted === "boolean") &&
-				(project.disabledSkills === undefined || isStringArray(project.disabledSkills)) &&
-				(project.disabledGroups === undefined || isStringArray(project.disabledGroups)),
-		)
-	);
-}
-
-function isWorkspaceList(value: unknown): value is Workspace[] {
-	return (
-		Array.isArray(value) &&
-		value.every(
-			(workspace) =>
-				isRecord(workspace) &&
-				typeof workspace.id === "string" &&
-				typeof workspace.worktreePath === "string" &&
-				(workspace.projectId === undefined || typeof workspace.projectId === "string") &&
-				(workspace.kind === undefined ||
-					workspace.kind === "default" ||
-					workspace.kind === "external") &&
-				(workspace.name === undefined || typeof workspace.name === "string") &&
-				(workspace.branch === undefined || typeof workspace.branch === "string") &&
-				(workspace.baseBranch === undefined || typeof workspace.baseBranch === "string") &&
-				(workspace.diffBase === undefined || typeof workspace.diffBase === "string") &&
-				(workspace.renamed === undefined || typeof workspace.renamed === "boolean") &&
-				(workspace.diffStats === undefined ||
-					(isRecord(workspace.diffStats) &&
-						typeof workspace.diffStats.added === "number" &&
-						Number.isFinite(workspace.diffStats.added) &&
-						typeof workspace.diffStats.removed === "number" &&
-						Number.isFinite(workspace.diffStats.removed))) &&
-				(workspace.skillOverrides === undefined ||
-					(isRecord(workspace.skillOverrides) &&
-						Object.values(workspace.skillOverrides).every(
-							(value) => value === "on" || value === "off",
-						))),
+				(project.closed === undefined || project.closed === true),
 		)
 	);
 }
@@ -180,48 +149,43 @@ function writeJson(file: string, value: unknown, validate: JsonValidator<unknown
 }
 
 export function loadProjects(): Project[] {
-	return readJson<Project[]>("projects.json", [], isProjectList);
+	const persisted = readJson<PersistedProject[]>("projects.json", [], isProjectList);
+	const projects = persisted.flatMap((project): Project[] => {
+		const roots = project.roots?.length ? project.roots : project.path ? [project.path] : [];
+		if (roots.length === 0) return [];
+		const { path: _path, roots: _roots, ...rest } = project;
+		return [{ ...rest, roots }];
+	});
+	if (persisted.some((project) => !project.roots?.length || "path" in project))
+		saveProjects(projects);
+	return projects;
 }
 
 export function saveProjects(projects: Project[]): void {
 	writeJson("projects.json", projects, isProjectList);
 }
 
-export function loadWorkspaces(): Workspace[] {
-	return readJson<Workspace[]>("workspaces.json", [], isWorkspaceList);
-}
-
-export function saveWorkspaces(workspaces: Workspace[]): void {
-	writeJson("workspaces.json", workspaces, isWorkspaceList);
-}
-
 export function loadConfig(): AppConfig {
 	const raw = readJson<Record<string, unknown>>("config.json", {}, isRecord);
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return structuredClone(DEFAULT_CONFIG);
 	const value = raw as Record<string, unknown>;
-	const { layout: _legacyLayout, piProfile: _rawProfile, ...extensions } = value;
 	const profile = isRecord(value.piProfile) ? value.piProfile : {};
-	const piProfile = {
-		browser:
-			typeof profile.browser === "boolean" ? profile.browser : DEFAULT_PI_PROFILE_SETTINGS.browser,
-		webAccess:
-			typeof profile.webAccess === "boolean"
-				? profile.webAccess
-				: DEFAULT_PI_PROFILE_SETTINGS.webAccess,
-		signetMemory:
-			typeof profile.signetMemory === "boolean"
-				? profile.signetMemory
-				: DEFAULT_PI_PROFILE_SETTINGS.signetMemory,
-		goals: typeof profile.goals === "boolean" ? profile.goals : DEFAULT_PI_PROFILE_SETTINGS.goals,
-		subagents:
-			typeof profile.subagents === "boolean"
-				? profile.subagents
-				: DEFAULT_PI_PROFILE_SETTINGS.subagents,
+	const rawSignet = isRecord(value.signet) ? value.signet : {};
+	const rawPort = rawSignet.port;
+	const signet = {
+		enabled:
+			typeof rawSignet.enabled === "boolean" ? rawSignet.enabled : profile.signetMemory === true,
+		address:
+			typeof rawSignet.address === "string" && rawSignet.address.trim()
+				? rawSignet.address.trim()
+				: DEFAULT_SIGNET_SETTINGS.address,
+		port:
+			typeof rawPort === "number" && Number.isInteger(rawPort) && rawPort > 0 && rawPort <= 65_535
+				? rawPort
+				: DEFAULT_SIGNET_SETTINGS.port,
 	};
 	return {
-		...extensions,
-		theme: typeof value.theme === "string" ? value.theme : DEFAULT_CONFIG.theme,
-		piProfile,
+		signet,
 		hiddenModels: normalizeModelReferences(value.hiddenModels),
 	};
 }

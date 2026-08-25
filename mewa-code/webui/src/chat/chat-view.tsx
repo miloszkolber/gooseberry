@@ -2,7 +2,7 @@ import type { AskUserQuestionResult, PromptHit, QueueLane } from "@mewa-code/con
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import { EMPTY_RUNTIME, selectWorkspaceById, toast, useAppStore } from "@/store";
+import { EMPTY_RUNTIME, selectProjectAreaById, toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 import { AskStatesContext, deriveAskStates } from "./ask-state";
 import { type ChatActions, ChatActionsContext } from "./chat-actions";
@@ -59,29 +59,29 @@ const CHAT_LIST_COMPONENTS = { Footer: StreamFooter };
 
 export default function ChatView({
 	sessionId,
-	workspaceId,
+	projectAreaId,
 }: {
 	sessionId: string;
-	workspaceId: string;
+	projectAreaId: string;
 }) {
 	const runtime = useAppStore((s) => s.sessions[sessionId]) ?? EMPTY_RUNTIME;
 	const projectId = useAppStore(
 		(state) =>
-			Object.values(state.workspaces)
+			Object.values(state.projectAreas)
 				.flat()
-				.find((workspace) => workspace.id === workspaceId)?.projectId,
+				.find((projectArea) => projectArea.id === projectAreaId)?.projectId,
 	);
-	const workspaceRoot = useAppStore(
-		(s) => selectWorkspaceById(s, workspaceId)?.worktreePath ?? undefined,
+	const projectAreaRoot = useAppStore(
+		(s) => selectProjectAreaById(s, projectAreaId)?.root ?? undefined,
 	);
-	const workspaces = useAppStore((s) => s.workspaces);
-	const workspaceNames = useMemo(() => {
+	const projectAreas = useAppStore((s) => s.projectAreas);
+	const projectAreaNames = useMemo(() => {
 		const map: Record<string, string> = {};
-		for (const list of Object.values(workspaces)) {
+		for (const list of Object.values(projectAreas)) {
 			for (const w of list) map[w.id] = w.name;
 		}
 		return map;
-	}, [workspaces]);
+	}, [projectAreas]);
 	const {
 		turns,
 		toolResults,
@@ -144,7 +144,7 @@ export default function ChatView({
 		toggleStage,
 		moveSelection,
 		openMessage,
-	} = useHistorySearch(sessionId, workspaceId, projectId);
+	} = useHistorySearch(sessionId, projectAreaId, projectId);
 
 	const chatLocationRequest = useAppStore((s) => s.chatLocationRequest);
 	const [flashRowId, setFlashRowId] = useState<string | null>(null);
@@ -177,7 +177,7 @@ export default function ChatView({
 		let cancelled = false;
 		const timer = setTimeout(() => {
 			getTransport()
-				.request("fs.readDir", { workspaceId, path: dir })
+				.request("fs.readDir", { projectId: projectAreaId, root: projectAreaRoot ?? "", path: dir })
 				.then((nodes) => {
 					if (cancelled) return;
 					setMentionCandidates(
@@ -195,7 +195,7 @@ export default function ChatView({
 			cancelled = true;
 			clearTimeout(timer);
 		};
-	}, [mentionQuery, workspaceId]);
+	}, [mentionQuery, projectAreaId, projectAreaRoot]);
 
 	const onMentionQuery = useCallback((q: string | null) => setMentionQuery(q), []);
 
@@ -289,14 +289,14 @@ export default function ChatView({
 		closeHistory();
 	};
 
-	const onDeleteHistoryChat = async (targetWorkspaceId: string, targetSessionId: string) => {
+	const onDeleteHistoryChat = async (targetProjectAreaId: string, targetSessionId: string) => {
 		try {
 			await getTransport().request("session.delete", {
-				workspaceId: targetWorkspaceId,
+				projectId: targetProjectAreaId,
 				sessionId: targetSessionId,
 			});
 			closeHistory();
-			useAppStore.getState().deleteChat(targetWorkspaceId, targetSessionId);
+			useAppStore.getState().deleteChat(targetProjectAreaId, targetSessionId);
 		} catch (err) {
 			toast.error(errorText(err), "Couldn't delete the chat");
 		}
@@ -305,7 +305,7 @@ export default function ChatView({
 	useEffect(() => {
 		if (
 			!chatLocationRequest ||
-			chatLocationRequest.workspaceId !== workspaceId ||
+			chatLocationRequest.projectAreaId !== projectAreaId ||
 			chatLocationRequest.sessionId !== sessionId ||
 			rows.length === 0
 		) {
@@ -329,7 +329,7 @@ export default function ChatView({
 		virtuosoRef.current?.scrollToIndex({ index, align: "center" });
 		setFlashRowId(rows[index]?.id ?? null);
 		useAppStore.getState().clearChatLocation();
-	}, [chatLocationRequest, sessionId, rows, runtime.turnIdByMessageIndex, turns, workspaceId]);
+	}, [chatLocationRequest, sessionId, rows, runtime.turnIdByMessageIndex, turns, projectAreaId]);
 
 	const historyOpenRequest = useAppStore((s) => s.historyOpenRequest);
 	const historyOverlayOpen = historyState.open;
@@ -349,9 +349,9 @@ export default function ChatView({
 
 	const onOpenChange = useCallback(
 		(path: string) => {
-			useAppStore.getState().requestChangesView(workspaceId, path);
+			useAppStore.getState().requestChangesView(projectAreaId, path);
 		},
-		[workspaceId],
+		[projectAreaId],
 	);
 
 	const askStates = useMemo(
@@ -388,12 +388,12 @@ export default function ChatView({
 	return (
 		<ChatActionsContext.Provider value={chatActions}>
 			<AskStatesContext.Provider value={askContext}>
-				<div className="flex h-full min-h-0 flex-col bg-container-workspace-bg">
+				<div className="flex h-full min-h-0 flex-col bg-container-projectArea-bg">
 					<div className="shrink-0">
 						<ChatHeader
 							stats={stats}
 							statusEntries={headerStatusEntries}
-							left={<SessionGoalControl workspaceId={workspaceId} sessionId={sessionId} />}
+							left={<SessionGoalControl projectAreaId={projectAreaId} sessionId={sessionId} />}
 						/>
 					</div>
 					<div
@@ -419,7 +419,7 @@ export default function ChatView({
 								>
 									<ChatTurnView
 										row={row}
-										workspaceRoot={workspaceRoot}
+										projectAreaRoot={projectAreaRoot}
 										onOpenChange={onOpenChange}
 									/>
 								</div>
@@ -448,7 +448,7 @@ export default function ChatView({
 					<div className="relative shrink-0">
 						<HistoryOverlay
 							state={historyState}
-							workspaceNames={workspaceNames}
+							projectAreaNames={projectAreaNames}
 							onQueryChange={setQuery}
 							onSetScope={setScope}
 							onToggleStage={toggleStage}

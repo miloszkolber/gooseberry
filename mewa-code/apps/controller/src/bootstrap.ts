@@ -1,5 +1,7 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { isCodeToken } from "@mewa-code/contracts";
 import { bootHost } from "@mewa-code/server";
 import { runAcp } from "@mewa-code/server/acp";
 import { printStartupMark } from "@mewa-code/shared/startupMark";
@@ -7,6 +9,25 @@ import { type CliOptions, parseArgs, USAGE } from "./args";
 import { version } from "./version";
 
 const DEFAULT_STATIC_DIR = resolve(import.meta.dir, "../../../webui/dist");
+
+function ensureControllerToken(): void {
+	if (process.env.MEWA_CODE_TOKEN?.trim()) return;
+	const dataDir = process.env.MEWA_CODE_DATA_DIR?.trim();
+	if (!dataDir) return;
+	const file = join(dataDir, "controller-token");
+	let token = "";
+	try {
+		token = readFileSync(file, "utf8").trim();
+	} catch {}
+	if (!isCodeToken(token)) {
+		token = randomBytes(32).toString("base64url");
+		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+		writeFileSync(file, `${token}\n`, { mode: 0o600 });
+		console.log(`Generated the controller login token in ${file}.`);
+	}
+	chmodSync(file, 0o600);
+	process.env.MEWA_CODE_TOKEN = token;
+}
 
 function openBrowser(url: string): void {
 	const command =
@@ -53,6 +74,8 @@ async function bootstrap(): Promise<void> {
 		process.exit(0);
 		return;
 	}
+
+	ensureControllerToken();
 
 	const staticDir = options.staticDir ?? DEFAULT_STATIC_DIR;
 	if (!existsSync(staticDir)) {

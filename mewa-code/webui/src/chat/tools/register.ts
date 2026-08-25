@@ -13,13 +13,16 @@ import "./signet/register";
 
 registerToolRenderer("bash", BashCard, { summary: ({ args }) => strArg(args, "command") });
 registerToolRenderer("read", ReadCard, {
-	summary: ({ args, workspaceRoot }) => projectRelativePath(strArg(args, "path"), workspaceRoot),
+	summary: ({ args, projectAreaRoot }) =>
+		projectRelativePath(strArg(args, "path"), projectAreaRoot),
 });
 registerToolRenderer("edit", EditCard, {
-	summary: ({ args, workspaceRoot }) => projectRelativePath(strArg(args, "path"), workspaceRoot),
+	summary: ({ args, projectAreaRoot }) =>
+		projectRelativePath(strArg(args, "path"), projectAreaRoot),
 });
 registerToolRenderer("write", WriteCard, {
-	summary: ({ args, workspaceRoot }) => projectRelativePath(strArg(args, "path"), workspaceRoot),
+	summary: ({ args, projectAreaRoot }) =>
+		projectRelativePath(strArg(args, "path"), projectAreaRoot),
 });
 
 registerToolRenderer("ask_user_question", AskUserQuestionCard, { chrome: "bare" });

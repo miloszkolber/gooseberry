@@ -1,105 +1,43 @@
-import { readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import {
+	type Dirent,
+	existsSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+} from "node:fs";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type {
-	BranchList,
 	GitCommit,
 	GitDiffScope,
 	GitFileChange,
 	GitFileStatus,
-	GitStatus,
-	Workspace,
+	GitHead,
+	GitRepository,
+	Project,
 } from "@mewa-code/contracts";
 import { assertMountedDirectory, assertMountedPath } from "../path-admission";
-import { loadProjects, loadWorkspaces } from "../persistence";
-import { changedFileArgs, type DiffRange, diffBaseRef, resolveDiffRange } from "./diff-scope";
-import { git, gitAsync } from "./git-exec";
+import { getProject } from "../projects";
+import { changedFileArgs, type DiffRange, resolveDiffRange } from "./diff-scope";
+import { git } from "./git-exec";
 
-function workspace(workspaceId: string): Workspace {
-	const ws = loadWorkspaces().find((w) => w.id === workspaceId);
-	if (!ws) throw new Error(`Unknown workspace: ${workspaceId}`);
-	return { ...ws, worktreePath: assertMountedDirectory(ws.worktreePath, "Workspace") };
-}
-
-function project(projectId: string) {
-	const value = loadProjects().find((candidate) => candidate.id === projectId);
-	if (!value) throw new Error(`Unknown project: ${projectId}`);
-	assertMountedDirectory(value.path, "Project");
-	return value;
-}
-
-export function gitCommitPaths(
-	workspaceId: string,
-	message: string,
-	paths: string[],
-): { sha: string } | null {
-	if (paths.length === 0) return null;
-	const cwd = workspace(workspaceId).worktreePath;
-	for (const path of paths) {
-		assertMountedPath(resolve(cwd, path), { allowMissingLeaf: true, label: "Git path" });
-	}
-	const unmerged = git(cwd, ["ls-files", "-u"]);
-	if (!unmerged.ok || unmerged.out) return null;
-	const indexOut = git(cwd, ["rev-parse", "--git-path", "index"]);
-	if (!indexOut.ok || !indexOut.out) return null;
-	const indexPath = isAbsolute(indexOut.out) ? indexOut.out : resolve(cwd, indexOut.out);
-	let saved: Buffer | null = null;
-	try {
-		saved = readFileSync(indexPath);
-	} catch {
-		saved = null;
-	}
-	const restore = (): null => {
-		try {
-			if (saved === null) rmSync(indexPath, { force: true });
-			else writeFileSync(indexPath, saved);
-		} catch {}
-		return null;
-	};
-	if (!git(cwd, ["--literal-pathspecs", "add", "-A", "--", ...paths]).ok) return restore();
-	if (git(cwd, ["--literal-pathspecs", "diff", "--cached", "--quiet", "--", ...paths]).ok)
-		return restore();
-	if (!git(cwd, ["--literal-pathspecs", "commit", "--no-verify", "-m", message, "--", ...paths]).ok)
-		return restore();
-	const head = git(cwd, ["rev-parse", "HEAD"]);
-	if (!head.ok) return null;
-	return { sha: head.out };
-}
-
-export function gitHeadSha(workspaceId: string): string | null {
-	const cwd = workspace(workspaceId).worktreePath;
-	const head = git(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-	return head.ok && head.out ? head.out : null;
-}
-
-function lines(out: string): string[] {
-	return out
-		.split("\n")
-		.map((l) => l.trim())
-		.filter(Boolean);
-}
-
-export function listBranches(projectId: string): BranchList {
-	const repo = project(projectId).path;
-
-	const local = lines(git(repo, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).out);
-	const remote = lines(
-		git(repo, ["for-each-ref", "--format=%(refname:short)\t%(symref)", "refs/remotes/origin"]).out,
-	)
-		.map((line) => line.split("\t"))
-		.filter((parts) => !parts[1])
-		.map((parts) => parts[0] ?? "")
-		.filter(Boolean);
-
-	return { local, remote, defaultBranch: resolveDefaultBranch(repo) };
-}
-
-export function resolveDefaultBranch(repoPath: string): string {
-	const head = git(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-	if (head.ok && head.out) return head.out;
-	if (git(repoPath, ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"]).ok)
-		return "origin/main";
-	return currentBranch(repoPath);
-}
+const DISCOVERY_MAX_DEPTH = 5;
+const DISCOVERY_MAX_REPOSITORIES = 64;
+const DISCOVERY_MAX_DIRECTORIES = 20_000;
+const DISCOVERY_IGNORES = new Set([
+	".git",
+	".cache",
+	".next",
+	".turbo",
+	".venv",
+	"build",
+	"coverage",
+	"dist",
+	"node_modules",
+	"target",
+	"vendor",
+]);
 
 export function canonicalPath(path: string): string {
 	try {
@@ -109,43 +47,66 @@ export function canonicalPath(path: string): string {
 	}
 }
 
-export function tryCurrentBranch(repoPath: string): string | null {
-	const head = git(repoPath, ["symbolic-ref", "--short", "HEAD"]);
-	if (head.ok && head.out) return head.out;
-	const topLevel = git(repoPath, ["rev-parse", "--show-toplevel"]);
-	return topLevel.ok && canonicalPath(topLevel.out) === canonicalPath(repoPath) ? "HEAD" : null;
+function isRepository(path: string): boolean {
+	if (!existsSync(join(path, ".git"))) return false;
+	const result = git(path, ["rev-parse", "--show-toplevel"]);
+	return result.ok && canonicalPath(result.out) === canonicalPath(path);
 }
 
-export function currentBranch(repoPath: string): string {
-	return tryCurrentBranch(repoPath) ?? "HEAD";
+function repositoryPaths(project: Project): string[] {
+	const found: string[] = [];
+	const seen = new Set<string>();
+	let visited = 0;
+	for (const configuredRoot of project.roots) {
+		const root = assertMountedDirectory(configuredRoot, "Project root");
+		const queue: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
+		while (queue.length > 0 && found.length < DISCOVERY_MAX_REPOSITORIES) {
+			const current = queue.shift();
+			if (!current || visited >= DISCOVERY_MAX_DIRECTORIES) break;
+			visited += 1;
+			const canonical = canonicalPath(current.path);
+			if (seen.has(canonical)) continue;
+			seen.add(canonical);
+			if (isRepository(canonical)) {
+				found.push(canonical);
+			}
+			if (current.depth >= DISCOVERY_MAX_DEPTH) continue;
+			let entries: Dirent<string>[];
+			try {
+				entries = readdirSync(canonical, { withFileTypes: true, encoding: "utf8" });
+			} catch {
+				continue;
+			}
+			for (const entry of entries) {
+				if (!entry.isDirectory() || entry.isSymbolicLink() || DISCOVERY_IGNORES.has(entry.name)) {
+					continue;
+				}
+				queue.push({ path: resolve(canonical, entry.name), depth: current.depth + 1 });
+			}
+		}
+	}
+	return found.sort((a, b) => a.localeCompare(b));
 }
 
-export async function prefetchBranch(
-	projectId: string,
-	ref: string,
-): Promise<{ ok: boolean; moved: boolean }> {
-	const projectValue = loadProjects().find((p) => p.id === projectId);
-	if (!projectValue || !ref.startsWith("origin/")) return { ok: false, moved: false };
-	const project = { ...projectValue, path: assertMountedDirectory(projectValue.path, "Project") };
-	const revParse = () =>
-		git(project.path, [
-			"rev-parse",
-			"--verify",
-			"--quiet",
-			"--end-of-options",
-			`refs/remotes/${ref}`,
-		]);
-	const before = revParse();
-	const result = await gitAsync(project.path, [
-		"fetch",
-		"origin",
-		"--",
-		ref.slice("origin/".length),
-	]);
-	if (!result.ok) return { ok: false, moved: false };
-	const after = revParse();
-	const moved = after.ok && after.out !== "" && (!before.ok || before.out !== after.out);
-	return { ok: true, moved };
+function projectRelativePath(project: Project, repository: string): string {
+	for (const root of project.roots) {
+		const rel = relative(root, repository);
+		if (rel === "") return basename(root);
+		if (!rel.startsWith("..") && !isAbsolute(rel)) return `${basename(root)}/${rel}`;
+	}
+	return basename(repository);
+}
+
+function repositoryId(path: string): string {
+	return createHash("sha256").update(canonicalPath(path)).digest("hex").slice(0, 24);
+}
+
+function repositoryFor(projectId: string, requested: string): { project: Project; path: string } {
+	const project = getProject(projectId);
+	const wanted = canonicalPath(assertMountedDirectory(requested, "Git repository"));
+	const path = repositoryPaths(project).find((candidate) => candidate === wanted);
+	if (!path) throw new Error("Directory is not a discovered repository in this project");
+	return { project, path };
 }
 
 function mapStatus(code: string): GitFileStatus {
@@ -164,13 +125,12 @@ export function numstatPath(raw: string): string {
 }
 
 function numstat(
-	worktreePath: string,
+	repository: string,
 	range: DiffRange,
 ): Map<string, { added: number; removed: number }> {
 	const counts = new Map<string, { added: number; removed: number }>();
-	const out = git(worktreePath, changedFileArgs(range, "--numstat"));
-	if (!out.ok) throw diffFailure(out.err);
-	if (!out.out) return counts;
+	const out = git(repository, changedFileArgs(range, "--numstat"));
+	if (!out.ok) throw new Error(`Could not read changed files: ${out.err || "git failed"}`);
 	for (const line of out.out.split("\n")) {
 		const parts = line.split("\t");
 		if (parts.length < 3) continue;
@@ -187,147 +147,146 @@ function lineCount(content: string): number {
 	return content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
 }
 
-const UNTRACKED_COUNT_MAX_BYTES = 2 * 1024 * 1024;
-const BINARY_SNIFF_BYTES = 8192;
-
-function untrackedAdded(worktreePath: string, path: string): number | undefined {
+function untrackedAdded(repository: string, path: string): number | undefined {
 	try {
-		const abs = resolve(worktreePath, path);
-		assertMountedPath(abs, { allowMissingLeaf: true, label: "Git status path" });
-		if (statSync(abs).size > UNTRACKED_COUNT_MAX_BYTES) return undefined;
-		const buf = readFileSync(abs);
-		if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return undefined;
-		return lineCount(buf.toString("utf8"));
+		const absolute = resolve(repository, path);
+		assertMountedPath(absolute, { allowMissingLeaf: true, label: "Git status path" });
+		if (statSync(absolute).size > 2 * 1024 * 1024) return undefined;
+		const value = readFileSync(absolute);
+		if (value.subarray(0, 8192).includes(0)) return undefined;
+		return lineCount(value.toString("utf8"));
 	} catch {
 		return undefined;
 	}
 }
 
-function diffFailure(stderr: string): Error {
-	return new Error(`Could not read the changed files: ${stderr || "git failed"}`);
-}
-
-export function gitStatus(workspaceId: string, scope?: GitDiffScope): GitStatus {
-	const ws = workspace(workspaceId);
-	const range = resolveDiffRange(ws, scope);
-	const changes: GitFileChange[] = [];
-	const counts = numstat(ws.worktreePath, range);
-
-	const tracked = git(ws.worktreePath, changedFileArgs(range, "--name-status"));
-	if (!tracked.ok) throw diffFailure(tracked.err);
-	if (tracked.out) {
-		for (const line of tracked.out.split("\n")) {
-			const parts = line.split("\t");
-			const code = parts[0] ?? "";
-			const path = parts.length > 2 ? parts[parts.length - 1] : parts[1];
-			if (path) changes.push({ path, status: mapStatus(code), ...counts.get(path) });
-		}
+function changes(
+	repository: string,
+	scope: GitDiffScope = { kind: "uncommitted" },
+): GitFileChange[] {
+	const range = resolveDiffRange(repository, scope);
+	const result: GitFileChange[] = [];
+	const counts = numstat(repository, range);
+	const tracked = git(repository, changedFileArgs(range, "--name-status"));
+	if (!tracked.ok) throw new Error(`Could not read changed files: ${tracked.err || "git failed"}`);
+	for (const line of tracked.out.split("\n")) {
+		if (!line) continue;
+		const parts = line.split("\t");
+		const code = parts[0] ?? "";
+		const path = parts.length > 2 ? parts.at(-1) : parts[1];
+		if (path) result.push({ path, status: mapStatus(code), ...counts.get(path) });
 	}
-
 	if (range.untracked) {
-		const untracked = git(ws.worktreePath, ["ls-files", "--others", "--exclude-standard"]);
-		if (untracked.ok && untracked.out) {
-			for (const path of untracked.out.split("\n")) {
-				if (!path) continue;
-				const added = untrackedAdded(ws.worktreePath, path);
-				changes.push({
-					path,
-					status: "untracked",
-					...(added !== undefined && { added, removed: 0 }),
-				});
-			}
+		const untracked = git(repository, ["ls-files", "--others", "--exclude-standard"]);
+		for (const path of untracked.out.split("\n")) {
+			if (!path) continue;
+			const added = untrackedAdded(repository, path);
+			result.push({
+				path,
+				status: "untracked",
+				...(added === undefined ? {} : { added, removed: 0 }),
+			});
 		}
 	}
-
-	changes.sort((a, b) => a.path.localeCompare(b.path));
-	const branch =
-		ws.kind === "default" || ws.kind === "external" ? currentBranch(ws.worktreePath) : ws.branch;
-	return { branch, changes };
+	return result.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export function readBlobAt(worktreePath: string, ref: string, path: string): string | null {
-	const shown = git(worktreePath, ["show", "--end-of-options", `${ref}:${path}`], { raw: true });
-	if (shown.ok) return shown.out;
-	if (!/does not exist in|exists on disk, but not in/.test(shown.err)) {
-		console.warn(`git show ${ref}:${path} failed: ${shown.err || "unknown error"}`);
-	}
-	return null;
+function head(repository: string): GitHead {
+	const branch = git(repository, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+	if (branch.ok && branch.out) return { kind: "branch", name: branch.out };
+	const oid = git(repository, ["rev-parse", "--verify", "HEAD"]);
+	return { kind: "detached", oid: oid.ok ? oid.out : "" };
 }
 
-function showBlob(worktreePath: string, ref: string, path: string): string {
-	return readBlobAt(worktreePath, ref, path) ?? "";
+function projectRepository(project: Project, repository: string): GitRepository {
+	const fileChanges = changes(repository);
+	return {
+		id: repositoryId(repository),
+		root: repository,
+		relativePath: projectRelativePath(project, repository),
+		name: basename(repository),
+		head: head(repository),
+		clean: fileChanges.length === 0,
+		changes: fileChanges,
+	};
+}
+
+export function listRepositories(projectId: string): GitRepository[] {
+	const project = getProject(projectId);
+	return repositoryPaths(project).map((repository) => projectRepository(project, repository));
+}
+
+export function gitStatus(projectId: string, repository: string): GitRepository {
+	const admitted = repositoryFor(projectId, repository);
+	return projectRepository(admitted.project, admitted.path);
+}
+
+export function readBlobAt(repository: string, ref: string, path: string): string | null {
+	const shown = git(repository, ["show", "--end-of-options", `${ref}:${path}`], { raw: true });
+	return shown.ok ? shown.out : null;
 }
 
 export function gitDiffFile(
-	workspaceId: string,
+	projectId: string,
+	repository: string,
 	path: string,
 	scope?: GitDiffScope,
 ): { original: string; modified: string } {
-	const ws = workspace(workspaceId);
-	const range = resolveDiffRange(ws, scope);
-
-	const abs = resolve(ws.worktreePath, path);
-	const rel = relative(ws.worktreePath, abs);
-	if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Path escapes the worktree");
-	assertMountedPath(abs, { allowMissingLeaf: true, label: "Git diff path" });
-
-	const original = range.originalRef ? showBlob(ws.worktreePath, range.originalRef, path) : "";
-
+	const admitted = repositoryFor(projectId, repository).path;
+	const range = resolveDiffRange(admitted, scope);
+	const absolute = resolve(admitted, path);
+	const rel = relative(admitted, absolute);
+	if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Path escapes the repository");
+	assertMountedPath(absolute, { allowMissingLeaf: true, label: "Git diff path" });
+	const original = range.originalRef ? (readBlobAt(admitted, range.originalRef, path) ?? "") : "";
 	if (range.modifiedRef)
-		return { original, modified: showBlob(ws.worktreePath, range.modifiedRef, path) };
-	let modified = "";
+		return { original, modified: readBlobAt(admitted, range.modifiedRef, path) ?? "" };
 	try {
-		modified = readFileSync(abs, "utf8");
-	} catch {}
-	return { original, modified };
+		return { original, modified: readFileSync(absolute, "utf8") };
+	} catch {
+		return { original, modified: "" };
+	}
 }
 
-const COMMIT_LIST_MAX = 200;
 const LOG_SEP = "\u0000";
 
-const LOG_LEADING_FIELDS = 4;
-
 function plainText(raw: string): string {
-	let out = "";
+	let value = "";
 	for (const char of raw) {
 		const code = char.codePointAt(0) ?? 0;
-		if (code < 0x20 || code === 0x7f) continue; // C0 controls + DEL
-		if (code >= 0x80 && code <= 0x9f) continue; // C1 controls
-		if (code >= 0x200b && code <= 0x200f) continue; // zero-width + LRM/RLM
-		if (code >= 0x202a && code <= 0x202e) continue; // bidi embeddings/overrides
-		if (code >= 0x2066 && code <= 0x2069) continue; // bidi isolates
-		if (code === 0x061c) continue; // Arabic letter mark
-		if (code === 0xfeff) continue; // BOM / zero-width no-break space
-		if (code === 0x00ad) continue; // soft hyphen
-		out += char;
+		if (code < 0x20 || code === 0x7f) continue;
+		if (code >= 0x80 && code <= 0x9f) continue;
+		if (code >= 0x200b && code <= 0x200f) continue;
+		if (code >= 0x202a && code <= 0x202e) continue;
+		if (code >= 0x2066 && code <= 0x2069) continue;
+		if (code === 0x061c || code === 0xfeff || code === 0x00ad) continue;
+		value += char;
 	}
-	return out;
+	return value;
 }
 
-export function listCommits(workspaceId: string): { commits: GitCommit[] } {
-	const ws = workspace(workspaceId);
-	const log = git(ws.worktreePath, [
+export function listCommits(projectId: string, repository: string): { commits: GitCommit[] } {
+	const admitted = repositoryFor(projectId, repository).path;
+	const log = git(admitted, [
 		"log",
-		`--max-count=${COMMIT_LIST_MAX}`,
-		`--format=%H%x00%h%x00%cI%x00%an%x00%s`,
-		"--end-of-options",
-		`${diffBaseRef(ws)}..HEAD`,
+		"--max-count=200",
+		"--format=%H%x00%h%x00%cI%x00%an%x00%s",
 		"--",
 	]);
 	if (!log.ok || !log.out) return { commits: [] };
-	const commits: GitCommit[] = [];
-	for (const line of log.out.split("\n")) {
-		const parts = line.split(LOG_SEP);
-		const [sha, shortSha, committedAt, author] = parts;
-		if (!sha || !shortSha) continue;
-		const subject = parts.slice(LOG_LEADING_FIELDS).join(LOG_SEP);
-		commits.push({
-			sha,
-			shortSha,
-			subject: plainText(subject),
-			author: plainText(author ?? ""),
-			committedAt: committedAt ?? "",
-		});
-	}
-	return { commits };
+	return {
+		commits: log.out.split("\n").flatMap((line): GitCommit[] => {
+			const [sha, shortSha, committedAt, author, ...subject] = line.split(LOG_SEP);
+			if (!sha || !shortSha) return [];
+			return [
+				{
+					sha,
+					shortSha,
+					committedAt: committedAt ?? "",
+					author: plainText(author ?? ""),
+					subject: plainText(subject.join(LOG_SEP)),
+				},
+			];
+		}),
+	};
 }

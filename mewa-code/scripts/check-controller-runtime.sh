@@ -25,7 +25,7 @@ for path in \
 		echo "unrelated controller runtime content is present at $path" >&2
 		exit 1
 	fi
-	done
+done
 
 is_legal_file() {
 	local base=${1##*/}
@@ -35,7 +35,8 @@ is_legal_file() {
 
 is_non_runtime_file() {
 	local base=${1##*/}
-	local lower=${base,,}
+	local lower
+	lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
 	case "$lower" in
 		readme*|changelog*|history*|contributing*|security*|code_of_conduct*|*.md|*.markdown|*.rst|*.adoc|*.map|*.d.ts|*.ts|*.tsx|*.mts|*.cts|*.test.*|*.spec.*|*.log|.npmrc|.yarnrc*|.pnp.*|.yarn-integrity|.package-lock.json|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lockb)
 			return 0

@@ -1,10 +1,10 @@
 import type { GitDiffScope } from "@mewa-code/contracts";
 import { DOUBLE_CLICK_SETTLE_MS, projectRelativePath, tupleKey } from "../lib";
 import {
-	type EditorTab,
+	type ContentTab,
 	selectDiffTabTargetRef,
-	selectWorkspaceById,
-	selectWorkspaceTick,
+	selectProjectAreaById,
+	selectProjectAreaTick,
 	type TabIntent,
 	useAppStore,
 } from "../store";
@@ -15,39 +15,39 @@ function baseName(path: string): string {
 	return path.split("/").pop() || path;
 }
 
-type ReadEditorTab = Extract<EditorTab, { kind: "file" | "diff" }>;
+type ReadContentTab = Extract<ContentTab, { kind: "file" | "diff" }>;
 
-function resourceIdentity(tab: ReadEditorTab): string {
+function resourceIdentity(tab: ReadContentTab): string {
 	return tab.kind === "diff" ? `diff:${tab.scope}:${tab.path}` : `file:${tab.path}`;
 }
 
 const inFlight = new Map<string, { intent: TabIntent; claimPreview: boolean }>();
-const previewEpochByWorkspace = new Map<string, number>();
+const previewEpochByProjectArea = new Map<string, number>();
 
-function previewEpoch(workspaceId: string, intent: TabIntent): number {
-	if (intent !== "preview") return previewEpochByWorkspace.get(workspaceId) ?? 0;
-	const next = (previewEpochByWorkspace.get(workspaceId) ?? 0) + 1;
-	previewEpochByWorkspace.set(workspaceId, next);
+function previewEpoch(projectAreaId: string, intent: TabIntent): number {
+	if (intent !== "preview") return previewEpochByProjectArea.get(projectAreaId) ?? 0;
+	const next = (previewEpochByProjectArea.get(projectAreaId) ?? 0) + 1;
+	previewEpochByProjectArea.set(projectAreaId, next);
 	return next;
 }
 
 async function openReadTab<T>(
-	workspaceId: string,
+	projectAreaId: string,
 	id: string,
 	identity: string,
 	intent: TabIntent,
 	read: () => Promise<T>,
-	build: (payload: T, loadedTick: number) => EditorTab,
+	build: (payload: T, loadedTick: number) => ContentTab,
 ): Promise<void> {
 	const store = useAppStore.getState();
-	if (store.removedWorkspaceIds[workspaceId]) return;
+	if (store.removedProjectAreaIds[projectAreaId]) return;
 	const pending = inFlight.get(id);
 	if (pending) {
 		pending.claimPreview ||= intent === "preview";
 		if (intent === "keep") pending.intent = "keep";
 		return;
 	}
-	const epoch = previewEpoch(workspaceId, intent);
+	const epoch = previewEpoch(projectAreaId, intent);
 	const flight = { intent, claimPreview: intent === "preview", epoch };
 	inFlight.set(id, flight);
 	try {
@@ -55,12 +55,12 @@ async function openReadTab<T>(
 			await new Promise((resolve) => setTimeout(resolve, DOUBLE_CLICK_SETTLE_MS));
 		if (
 			flight.intent === "preview" &&
-			flight.epoch !== (previewEpochByWorkspace.get(workspaceId) ?? 0)
+			flight.epoch !== (previewEpochByProjectArea.get(projectAreaId) ?? 0)
 		) {
 			return;
 		}
 		const latest = useAppStore.getState();
-		const cached = (latest.tabsByWorkspace[workspaceId] ?? []).find(
+		const cached = (latest.tabsByProjectArea[projectAreaId] ?? []).find(
 			(tab) => (tab.kind === "file" || tab.kind === "diff") && resourceIdentity(tab) === identity,
 		);
 		if (cached) {
@@ -71,16 +71,16 @@ async function openReadTab<T>(
 			);
 			return;
 		}
-		const loadedTick = selectWorkspaceTick(latest, workspaceId);
+		const loadedTick = selectProjectAreaTick(latest, projectAreaId);
 		const payload = await read();
 		const current = useAppStore.getState();
 		if (
 			flight.intent === "preview" &&
-			flight.epoch !== (previewEpochByWorkspace.get(workspaceId) ?? 0)
+			flight.epoch !== (previewEpochByProjectArea.get(projectAreaId) ?? 0)
 		) {
 			return;
 		}
-		const installed = (current.tabsByWorkspace[workspaceId] ?? []).find(
+		const installed = (current.tabsByProjectArea[projectAreaId] ?? []).find(
 			(tab) => (tab.kind === "file" || tab.kind === "diff") && resourceIdentity(tab) === identity,
 		);
 		current.openTab(
@@ -96,26 +96,28 @@ async function openReadTab<T>(
 }
 
 export function openFileInTab(
-	workspaceId: string,
+	projectAreaId: string,
 	reported: string,
 	intent: TabIntent,
 	_requestedNavigation?: unknown,
+	root?: string,
 ): Promise<void> {
-	const path = projectRelativePath(
-		reported,
-		selectWorkspaceById(useAppStore.getState(), workspaceId)?.worktreePath,
-	);
-	const id = tupleKey("file", workspaceId, path);
+	const projectArea = selectProjectAreaById(useAppStore.getState(), projectAreaId);
+	const selectedRoot = root ?? projectArea?.root ?? "";
+	const path = projectRelativePath(reported, selectedRoot);
+	const id = tupleKey("file", projectAreaId, path);
 	return openReadTab(
-		workspaceId,
+		projectAreaId,
 		id,
 		`file:${path}`,
 		intent,
-		() => getTransport().request("fs.readFile", { workspaceId, path }),
+		() =>
+			getTransport().request("fs.readFile", { projectId: projectAreaId, root: selectedRoot, path }),
 		({ content }, loadedTick) => ({
 			kind: "file",
 			id,
-			workspaceId,
+			projectAreaId,
+			root: selectedRoot,
 			path,
 			name: baseName(path),
 			content,
@@ -125,28 +127,34 @@ export function openFileInTab(
 }
 
 export function openDiffInTab(
-	workspaceId: string,
+	projectAreaId: string,
 	scope: GitDiffScope,
 	path: string,
 	intent: TabIntent,
 	_requestedNavigation?: unknown,
+	repository?: string,
 ): Promise<void> {
-	const canonicalPath = projectRelativePath(
-		path,
-		selectWorkspaceById(useAppStore.getState(), workspaceId)?.worktreePath,
-	);
-	const id = diffTabId(workspaceId, scope, canonicalPath);
-	const target = selectDiffTabTargetRef(useAppStore.getState(), { workspaceId, scope });
+	const selectedRepository = repository ?? "";
+	const canonicalPath = projectRelativePath(path, selectedRepository);
+	const id = diffTabId(projectAreaId, scope, canonicalPath);
+	const target = selectDiffTabTargetRef(useAppStore.getState(), { projectAreaId, scope });
 	return openReadTab(
-		workspaceId,
+		projectAreaId,
 		id,
 		`diff:${scope}:${canonicalPath}`,
 		intent,
-		() => getTransport().request("git.diffFile", { workspaceId, path: canonicalPath, scope }),
+		() =>
+			getTransport().request("git.diffFile", {
+				projectId: projectAreaId,
+				repository: selectedRepository,
+				path: canonicalPath,
+				scope,
+			}),
 		({ original, modified }, loadedTick) => ({
 			kind: "diff",
 			id,
-			workspaceId,
+			projectAreaId,
+			repository: selectedRepository,
 			path: canonicalPath,
 			scope,
 			name: diffTabName(scope, canonicalPath),

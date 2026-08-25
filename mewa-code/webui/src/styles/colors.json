@@ -39,7 +39,7 @@
 			"publish": false,
 			"note": "global.css `a {}` is the only consumer; no component styles a bare link"
 		},
-		"container-workspace-bg": {
+		"container-project-bg": {
 			"from": "background",
 			"publish": true,
 			"note": "the focused session surface shared by chat, read-only previews, and project context"

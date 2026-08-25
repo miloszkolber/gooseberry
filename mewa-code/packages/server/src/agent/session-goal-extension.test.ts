@@ -40,6 +40,7 @@ function setup() {
 		on(event: string, handler: (...args: never[]) => unknown) {
 			handlers.set(event, handler);
 		},
+		registerTool() {},
 	} as unknown as ExtensionAPI;
 	sessionGoalExtension("workspace-a")(api);
 	const statuses: Array<{ key: string; text: string | undefined }> = [];
@@ -96,7 +97,16 @@ describe("session goal Pi extension", () => {
 		expect(second).toBeUndefined();
 		expect(first.messages.at(-1)).toMatchObject({
 			role: "user",
-			content: sessionGoalContextMessage("Keep changes scoped", 1).content,
+			content: sessionGoalContextMessage(
+				{
+					projectId: "workspace-a",
+					sessionId: "session-1",
+					goal: "Keep changes scoped",
+					tasks: [],
+					updatedAt: 1,
+				},
+				1,
+			).content,
 		});
 	});
 });

@@ -11,7 +11,7 @@ export function ToolCard({
 	tool,
 	dead = false,
 	streaming,
-	workspaceRoot,
+	projectAreaRoot,
 }: {
 	toolCallId: string;
 	toolName: string;
@@ -19,7 +19,7 @@ export function ToolCard({
 	tool: ToolResultState | undefined;
 	dead?: boolean;
 	streaming: boolean;
-	workspaceRoot?: string | undefined;
+	projectAreaRoot?: string | undefined;
 }) {
 	const status = tool?.status ?? (dead ? "error" : "running");
 	const isError = status === "error";
@@ -30,7 +30,7 @@ export function ToolCard({
 		args,
 		result: tool?.raw,
 		status,
-		workspaceRoot,
+		projectAreaRoot,
 		streaming,
 	};
 	const summary = getToolSummary(toolName, renderProps);

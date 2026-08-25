@@ -3,7 +3,7 @@ export { RequestError, wsErrorCode } from "./request-error";
 export {
 	createSessionWithSkillBaseline,
 	getSessionMessagesWithSkillBaseline,
-	prewarmWorkspaceSkillLoad,
+	prewarmProjectAreaSkillLoad,
 	reloadSessionResourcesWithSkillBaseline,
 } from "./skill-load";
 export type { ConnectionStatus, TransportOptions } from "./transport";

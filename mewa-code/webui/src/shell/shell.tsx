@@ -1,18 +1,13 @@
-import { ChevronRight, GitBranch, Settings } from "lucide-react";
+import { ChevronRight, Settings } from "lucide-react";
 import { ProjectTree } from "../panels/project-tree";
 import { SettingsDialog } from "../panels/settings-dialog";
 import { Toaster } from "../panels/toaster";
 import { WelcomePanel } from "../panels/welcome-panel";
-import {
-	isUserOwnedWorkspace,
-	selectActiveWorkspace,
-	selectContextProject,
-	useAppStore,
-} from "../store";
+import { selectActiveProjectArea, selectContextProject, useAppStore } from "../store";
 import type { ConnectionStatus } from "../transport";
 import { BrandLogo } from "./brand-logo";
+import { ProjectWorkArea } from "./project-work-area";
 import { useGlobalHotkeys } from "./use-global-hotkeys";
-import { WorkspaceWorkbench } from "./workspace-workbench";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
 	connected: "Connected",
@@ -28,17 +23,17 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
 
 export function Shell() {
 	const status = useAppStore((s) => s.status);
-	const activeWorkspaceId = useAppStore((s) => s.activeWorkspaceId);
-	const activeWorkspace = useAppStore(selectActiveWorkspace);
+	const activeProjectAreaId = useAppStore((s) => s.activeProjectAreaId);
+	const activeProjectArea = useAppStore(selectActiveProjectArea);
 	const contextProject = useAppStore(selectContextProject);
-	const hasActiveWorkspace = activeWorkspaceId != null;
+	const hasActiveProjectArea = activeProjectAreaId != null;
 	useGlobalHotkeys({
 		onProjects: () => {
 			(document.querySelector('[data-testid="left-nav"]') as HTMLElement | null)?.focus();
 		},
-		...(hasActiveWorkspace
+		...(hasActiveProjectArea
 			? {
-					onWorkspace: () => {
+					onProjectArea: () => {
 						(
 							document.querySelector('[data-testid="activity-tabs"]') as HTMLElement | null
 						)?.focus();
@@ -55,7 +50,7 @@ export function Shell() {
 					{contextProject ? (
 						<div
 							data-testid="scope-context"
-							data-context={activeWorkspace ? "workspace" : "project-home"}
+							data-context={activeProjectArea ? "project" : "project-home"}
 							className="flex min-w-0 items-center gap-xs leading-tight tr-text-ui"
 						>
 							<span className="hidden min-w-0 items-center gap-xs sm:flex">
@@ -68,23 +63,12 @@ export function Shell() {
 								<ChevronRight className="size-3 shrink-0 text-text-muted" />
 							</span>
 							<span data-testid="scope-name" className="max-w-[220px] truncate text-text-default">
-								{activeWorkspace?.name ?? "Project home"}
+								{activeProjectArea?.name ?? "Project home"}
 							</span>
-							{activeWorkspace ? (
-								<>
-									<GitBranch className="size-3 shrink-0 text-text-muted" />
-									<span data-testid="scope-branch" className="truncate text-text-muted">
-										{activeWorkspace.branch}
-									</span>
-									{isUserOwnedWorkspace(activeWorkspace) ? null : (
-										<span
-											data-testid="scope-base"
-											className="hidden shrink-0 text-text-muted md:inline"
-										>
-											· from {activeWorkspace.baseBranch}
-										</span>
-									)}
-								</>
+							{activeProjectArea ? (
+								<span className="max-w-[260px] truncate text-text-muted">
+									{activeProjectArea.root}
+								</span>
 							) : null}
 						</div>
 					) : null}
@@ -115,9 +99,9 @@ export function Shell() {
 				</div>
 				<SettingsDialog />
 			</header>
-			{hasActiveWorkspace && activeWorkspaceId ? (
-				<div data-testid="workspace-shell" className="h-full min-h-0 min-w-0">
-					<WorkspaceWorkbench key={activeWorkspaceId} workspaceId={activeWorkspaceId} />
+			{hasActiveProjectArea && activeProjectAreaId ? (
+				<div data-testid="project-shell" className="h-full min-h-0 min-w-0">
+					<ProjectWorkArea key={activeProjectAreaId} projectAreaId={activeProjectAreaId} />
 				</div>
 			) : (
 				<div data-testid="welcome-shell" className="flex h-full min-h-0 min-w-0">

@@ -22,8 +22,8 @@ export function scopeKey(scope: GitDiffScope): string {
 	return scope.kind;
 }
 
-export function diffTabId(workspaceId: string, scope: GitDiffScope, path: string): string {
-	return tupleKey("diff", workspaceId, scopeKey(scope), path);
+export function diffTabId(projectAreaId: string, scope: GitDiffScope, path: string): string {
+	return tupleKey("diff", projectAreaId, scopeKey(scope), path);
 }
 
 export function diffTabName(scope: GitDiffScope, path: string): string {

@@ -19,14 +19,12 @@ import {
 
 const SCOPE_LABELS: Record<HistoryScope["kind"], string> = {
 	chat: "Chat",
-	workspace: "Workspace",
 	project: "Project",
 	all: "All",
 };
 
 const SCOPE_MENU_LABELS: Record<HistoryScope["kind"], string> = {
 	chat: "This chat",
-	workspace: "Workspace",
 	project: "Project",
 	all: "Everywhere",
 };
@@ -63,17 +61,17 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 function DeleteChatButton({
-	workspaceId,
+	projectAreaId,
 	sessionId,
 	isSelected,
 	onDeleteChat,
 }: {
-	workspaceId: string | undefined;
+	projectAreaId: string | undefined;
 	sessionId: string;
 	isSelected: boolean;
-	onDeleteChat: (workspaceId: string, sessionId: string) => void;
+	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
 }) {
-	if (!workspaceId) return null;
+	if (!projectAreaId) return null;
 	return (
 		<button
 			type="button"
@@ -82,7 +80,7 @@ function DeleteChatButton({
 			title="Move chat to trash"
 			onClick={(event) => {
 				event.stopPropagation();
-				onDeleteChat(workspaceId, sessionId);
+				onDeleteChat(projectAreaId, sessionId);
 			}}
 			className={`flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] p-xs text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-feedback-error group-hover:opacity-100 ${
 				isSelected ? "opacity-100" : ""
@@ -97,7 +95,7 @@ function PromptRow({
 	hit,
 	query,
 	scope,
-	workspaceName,
+	projectAreaName,
 	isSelected,
 	onPick,
 	onOpenMessage,
@@ -106,14 +104,14 @@ function PromptRow({
 	hit: PromptHit;
 	query: string;
 	scope: HistoryScope;
-	workspaceName: string | undefined;
+	projectAreaName: string | undefined;
 	isSelected: boolean;
 	onPick: () => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
-	onDeleteChat: (workspaceId: string, sessionId: string) => void;
+	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
 }) {
 	const firstLine = hit.text.split("\n")[0] ?? hit.text;
-	const showChip = (scope.kind === "project" || scope.kind === "all") && !!hit.workspaceId;
+	const showChip = (scope.kind === "project" || scope.kind === "all") && !!hit.projectId;
 	const target = jumpTarget(hit);
 	return (
 		<div
@@ -135,8 +133,8 @@ function PromptRow({
 					<Highlight text={firstLine} query={query} />
 				</span>
 				{showChip ? (
-					<span className="shrink-0 rounded-full border border-border-default bg-container-workspace-bg px-xs text-text-muted tr-text-metadata">
-						{workspaceName ?? "workspace"}
+					<span className="shrink-0 rounded-full border border-border-default bg-container-projectArea-bg px-xs text-text-muted tr-text-metadata">
+						{projectAreaName ?? "projectArea"}
 					</span>
 				) : null}
 				<span className="shrink-0 text-text-muted tr-text-metadata">
@@ -171,7 +169,7 @@ function PromptRow({
 				</>
 			) : null}
 			<DeleteChatButton
-				workspaceId={hit.workspaceId}
+				projectAreaId={hit.projectId}
 				sessionId={hit.sessionId}
 				isSelected={isSelected}
 				onDeleteChat={onDeleteChat}
@@ -191,9 +189,9 @@ function MessageRow({
 	query: string;
 	isSelected: boolean;
 	onPick: () => void;
-	onDeleteChat: (workspaceId: string, sessionId: string) => void;
+	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
 }) {
-	const unmapped = !hit.workspaceId;
+	const unmapped = !hit.projectId;
 	return (
 		<div
 			data-testid="history-item"
@@ -219,14 +217,14 @@ function MessageRow({
 					<span>{hit.role}</span>
 					<span>·</span>
 					<span>{relativeTime(hit.timestamp)}</span>
-					{unmapped ? <span>· not a Mewa Code workspace</span> : null}
+					{unmapped ? <span>· not a Mewa Code projectArea</span> : null}
 				</span>
 				<span className="overflow-hidden whitespace-nowrap text-ellipsis">
 					<Highlight text={hit.snippet} query={query} />
 				</span>
 			</button>
 			<DeleteChatButton
-				workspaceId={hit.workspaceId}
+				projectAreaId={hit.projectId}
 				sessionId={hit.sessionId}
 				isSelected={isSelected}
 				onDeleteChat={onDeleteChat}
@@ -237,14 +235,14 @@ function MessageRow({
 
 function PromptPreviewFooter({
 	hit,
-	workspaceName,
+	projectAreaName,
 }: {
 	hit: PromptHit;
-	workspaceName: string | undefined;
+	projectAreaName: string | undefined;
 }) {
 	const parts = [
 		hit.sessionTitle,
-		hit.workspaceId ? (workspaceName ?? "workspace") : undefined,
+		hit.projectId ? (projectAreaName ?? "projectArea") : undefined,
 		relativeTime(hit.timestamp),
 	].filter((part): part is string => !!part);
 	return <>{parts.join(" · ")}</>;
@@ -253,12 +251,12 @@ function PromptPreviewFooter({
 function HistoryPreview({
 	item,
 	query,
-	workspaceName,
+	projectAreaName,
 	className,
 }: {
 	item: HistorySelection | null;
 	query: string;
-	workspaceName: string | undefined;
+	projectAreaName: string | undefined;
 	className: string;
 }) {
 	return (
@@ -270,7 +268,7 @@ function HistoryPreview({
 					</div>
 					<div className="shrink-0 border-t border-border-default px-sm py-xs text-text-muted tr-text-metadata">
 						{item.kind === "prompt" ? (
-							<PromptPreviewFooter hit={item.hit} workspaceName={workspaceName} />
+							<PromptPreviewFooter hit={item.hit} projectAreaName={projectAreaName} />
 						) : (
 							messageCrumb(item.hit)
 						)}
@@ -287,7 +285,7 @@ function messageCrumb(hit: MessageHit): string {
 
 export interface HistoryOverlayProps {
 	state: HistorySearchState;
-	workspaceNames: Record<string, string>;
+	projectAreaNames: Record<string, string>;
 	onQueryChange: (query: string) => void;
 	onToggleStage: () => void;
 	onMoveSelection: (delta: number) => void;
@@ -295,13 +293,13 @@ export interface HistoryOverlayProps {
 	onInsert: (hit: PromptHit) => void;
 	onInsertAndSend: (hit: PromptHit) => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
-	onDeleteChat: (workspaceId: string, sessionId: string) => void;
+	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
 	onSetScope: (kind: HistoryScope["kind"]) => void;
 }
 
 export function HistoryOverlay({
 	state,
-	workspaceNames,
+	projectAreaNames,
 	onQueryChange,
 	onToggleStage,
 	onMoveSelection,
@@ -391,8 +389,8 @@ export function HistoryOverlay({
 	const isEmpty = !!result && !result.indexing && !hasResults;
 
 	const selectedItem = resolveHistorySelection(stage, result, selected);
-	const selectedWorkspaceName = selectedItem?.hit.workspaceId
-		? workspaceNames[selectedItem.hit.workspaceId]
+	const selectedProjectAreaName = selectedItem?.hit.projectId
+		? projectAreaNames[selectedItem.hit.projectId]
 		: undefined;
 
 	const resultsBody = error ? (
@@ -425,7 +423,7 @@ export function HistoryOverlay({
 									hit={hit}
 									query={query}
 									scope={scope}
-									workspaceName={hit.workspaceId ? workspaceNames[hit.workspaceId] : undefined}
+									projectAreaName={hit.projectId ? projectAreaNames[hit.projectId] : undefined}
 									isSelected={i === selected}
 									onPick={() => onInsert(hit)}
 									onOpenMessage={onOpenMessage}
@@ -484,7 +482,7 @@ export function HistoryOverlay({
 					<DropdownMenuTrigger
 						data-testid="history-scope"
 						data-scope={scope.kind}
-						className="flex shrink-0 items-center gap-xs rounded-full border border-border-default bg-container-workspace-bg px-sm py-0.5 text-text-muted tr-text-metadata outline-none hover:bg-control-bg-hovered"
+						className="flex shrink-0 items-center gap-xs rounded-full border border-border-default bg-container-projectArea-bg px-sm py-0.5 text-text-muted tr-text-metadata outline-none hover:bg-control-bg-hovered"
 					>
 						<span>{SCOPE_LABELS[scope.kind]}</span>
 						<span className="text-text-muted">⌃R</span>
@@ -522,7 +520,7 @@ export function HistoryOverlay({
 					<HistoryPreview
 						item={selectedItem}
 						query={query}
-						workspaceName={selectedWorkspaceName}
+						projectAreaName={selectedProjectAreaName}
 						className="max-h-[37.5vh] border-border-default border-t md:max-h-[75vh] md:w-[45%] md:border-t-0 md:border-l"
 					/>
 				</div>

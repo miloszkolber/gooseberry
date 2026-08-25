@@ -17,6 +17,7 @@
         "mewa-code": "./src/index.ts",
       },
       "dependencies": {
+        "@mewa-code/contracts": "workspace:*",
         "@mewa-code/server": "workspace:*",
         "@mewa-code/shared": "workspace:*",
       },
@@ -31,6 +32,17 @@
       "devDependencies": {
         "@earendil-works/pi-agent-core": "catalog:",
         "@earendil-works/pi-ai": "catalog:",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/mewa-remote": {
+      "name": "@mewa-code/mewa-remote",
+      "version": "0.0.0",
+      "dependencies": {
+        "@earendil-works/pi-coding-agent": "catalog:",
+      },
+      "devDependencies": {
         "@types/bun": "catalog:",
         "typescript": "catalog:",
       },
@@ -56,6 +68,7 @@
         "@earendil-works/pi-ai": "catalog:",
         "@earendil-works/pi-coding-agent": "catalog:",
         "@mewa-code/contracts": "workspace:*",
+        "@mewa-code/mewa-remote": "workspace:*",
         "@mewa-code/pi-mewa-browser": "workspace:*",
         "@mewa-code/shared": "workspace:*",
         "@signetai/connector-pi": "0.157.3",
@@ -326,6 +339,8 @@
     "@mewa-code/contracts": ["@mewa-code/contracts@workspace:packages/contracts"],
 
     "@mewa-code/controller": ["@mewa-code/controller@workspace:apps/controller"],
+
+    "@mewa-code/mewa-remote": ["@mewa-code/mewa-remote@workspace:packages/mewa-remote"],
 
     "@mewa-code/pi-mewa-browser": ["@mewa-code/pi-mewa-browser@workspace:packages/pi-mewa-browser"],
 

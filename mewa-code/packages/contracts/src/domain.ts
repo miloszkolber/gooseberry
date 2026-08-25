@@ -3,13 +3,10 @@ export type TabStatus = "idle" | "running" | "waiting" | "error";
 export interface Project {
 	id: string;
 	name: string;
-	path: string;
+	roots: string[];
 	slug: string;
 	lastOpened: number;
 	closed?: true;
-	trusted?: boolean;
-	disabledSkills?: string[];
-	disabledGroups?: string[];
 }
 
 export interface DiffStats {
@@ -17,47 +14,35 @@ export interface DiffStats {
 	removed: number;
 }
 
-export interface Workspace {
-	id: string;
+export interface ProjectFsChangedPayload {
 	projectId: string;
-	kind?: "default" | "external";
-	name: string;
-	branch: string;
-	worktreePath: string;
-	baseBranch: string;
-	diffBase?: string;
-	renamed?: boolean;
-	diffStats?: DiffStats;
-	skillOverrides?: Record<string, "on" | "off">;
-}
-
-export type ExistingWorktreeCandidate =
-	| { path: string; branch: string; status: "available" }
-	| { path: string; status: "detached" };
-
-export type WorkspaceSkillChange = "none" | "detected" | "unknown";
-
-export interface WorkspaceFsChangedPayload {
-	workspaceId: string;
 	paths: string[];
 	truncated: boolean;
-	skillChange: WorkspaceSkillChange;
 }
 
 export interface Session {
 	id: string;
-	workspaceId: string;
+	projectId: string;
+	cwd: string;
 	sessionId: string;
 	title: string;
 	status: TabStatus;
 }
 
 export interface SessionGoal {
-	workspaceId: string;
+	projectId: string;
 	sessionId: string;
 	goal: string | null;
-	active: boolean;
+	tasks: SessionTask[];
 	updatedAt: number | null;
+}
+
+export type SessionTaskStatus = "pending" | "active" | "done";
+
+export interface SessionTask {
+	id: string;
+	text: string;
+	status: SessionTaskStatus;
 }
 
 export const SESSION_GOAL_MAX_LENGTH = 2_000;
@@ -92,8 +77,15 @@ export interface GitFileChange {
 	removed?: number;
 }
 
-export interface GitStatus {
-	branch: string;
+export type GitHead = { kind: "branch"; name: string } | { kind: "detached"; oid: string };
+
+export interface GitRepository {
+	id: string;
+	root: string;
+	relativePath: string;
+	name: string;
+	head: GitHead;
+	clean: boolean;
 	changes: GitFileChange[];
 }
 
@@ -136,45 +128,6 @@ export interface ProviderStatusReport {
 	providers: ProviderStatus[];
 }
 
-export type PiProfileCapabilityId =
-	| "browser"
-	| "webAccess"
-	| "signetMemory"
-	| "goals"
-	| "subagents"
-	| "protectedStateGuard";
-
-/** Persisted Mewa choices for the curated Pi profile.
- *
- * The protected-state guard is intentionally absent. It is a mandatory
- * safety boundary and cannot be disabled through Mewa settings.
- */
-export interface PiProfileSettings {
-	browser: boolean;
-	webAccess: boolean;
-	signetMemory: boolean;
-	goals: boolean;
-	subagents: boolean;
-}
-
-export type PiProfileSettingsPatch = Partial<PiProfileSettings>;
-
-export interface PiProfileCapability {
-	id: PiProfileCapabilityId;
-	label: string;
-	description: string;
-	enabled: boolean;
-	available: boolean;
-	required?: boolean;
-	unavailableReason?: string;
-}
-
-export interface PiProfileDescriptor {
-	id: "mewa";
-	label: "Mewa";
-	capabilities: PiProfileCapability[];
-}
-
 export type LoginFrame =
 	| { kind: "authUrl"; url: string; instructions?: string }
 	| { kind: "deviceCode"; userCode: string; verificationUri: string; expiresInSeconds?: number }
@@ -200,8 +153,6 @@ export interface LoginReply {
 	loginId: string;
 	value: string;
 }
-
-export type ThemeId = string;
 
 export interface ModelReference {
 	provider: string;
@@ -232,27 +183,35 @@ export function normalizeModelReferences(value: unknown): ModelReference[] {
 }
 
 export interface AppConfig {
-	theme: ThemeId;
-	piProfile?: PiProfileSettings;
+	signet: SignetSettings;
 	/** Models hidden from Mewa catalog and selection surfaces. */
 	hiddenModels?: ModelReference[];
 }
 
-export type AppConfigPatch = Omit<Partial<AppConfig>, "piProfile"> & {
-	piProfile?: PiProfileSettingsPatch;
+export interface SignetSettings {
+	enabled: boolean;
+	address: string;
+	port: number;
+}
+
+export interface SignetStatus {
+	enabled: boolean;
+	endpoint: string;
+	reachable: boolean;
+}
+
+export type AppConfigPatch = Omit<Partial<AppConfig>, "signet"> & {
+	signet?: Partial<SignetSettings>;
 };
 
-export const DEFAULT_PI_PROFILE_SETTINGS: Required<PiProfileSettings> = {
-	browser: true,
-	webAccess: true,
-	signetMemory: true,
-	goals: true,
-	subagents: true,
+export const DEFAULT_SIGNET_SETTINGS: SignetSettings = {
+	enabled: false,
+	address: "127.0.0.1",
+	port: 3850,
 };
 
 export const DEFAULT_CONFIG = {
-	theme: "dark",
-	piProfile: DEFAULT_PI_PROFILE_SETTINGS,
+	signet: DEFAULT_SIGNET_SETTINGS,
 	hiddenModels: [],
 } satisfies AppConfig;
 
@@ -282,7 +241,6 @@ export function isRetriedAttempt(
 
 export type HistoryScope =
 	| { kind: "chat"; sessionId: string }
-	| { kind: "workspace"; workspaceId: string }
 	| { kind: "project"; projectId: string }
 	| { kind: "all" };
 
@@ -291,7 +249,6 @@ export interface PromptHit {
 	timestamp: number;
 	sessionId: string;
 	sessionTitle?: string;
-	workspaceId?: string;
 	projectId?: string;
 	cwd: string;
 	messageIndex?: number;

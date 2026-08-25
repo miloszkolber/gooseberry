@@ -27,7 +27,7 @@ Options:
   -h, --help     Show this help.
 
 Arguments:
-  project-dir    A git repo to open as a project on launch (optional).
+  project-dir    A directory to open as a project on launch (optional).
 
 Env:
   MEWA_CODE_PORT / MEWA_CODE_HOST   Defaults for --port / --host.

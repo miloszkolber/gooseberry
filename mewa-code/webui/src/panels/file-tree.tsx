@@ -1,15 +1,37 @@
 import type { FileNode } from "@mewa-code/contracts";
 import { useRef, useState } from "react";
-import type { TabIntent } from "../store";
+import { type TabIntent, useAppStore } from "../store";
 import { getTransport } from "../transport";
 import { type ResolvedFolderChain, resolveFolderChain } from "./folder-chains";
 import { openFileInTab } from "./open-tabs";
 import { TreeRow } from "./tree-row";
-import { useWorkspaceRead } from "./use-workspace-read";
+import { useProjectRead } from "./use-project-read";
 
 type SetPathsExpanded = (paths: readonly string[], expanded: boolean) => void;
 
-export function FileTree({ workspaceId }: { workspaceId: string }) {
+export function FileTree({ projectAreaId }: { projectAreaId: string }) {
+	const roots = useAppStore(
+		(state) => state.projects.find((project) => project.id === projectAreaId)?.roots ?? [],
+	);
+	if (roots.length === 0)
+		return <p className="px-xs py-xs tr-text-metadata text-text-muted">No roots</p>;
+	return (
+		<div className="flex flex-col">
+			{roots.map((root) => (
+				<section key={root}>
+					{roots.length > 1 ? (
+						<div className="truncate px-xs py-xs tr-text-eyebrow text-text-muted" title={root}>
+							{root.split("/").pop() || root}
+						</div>
+					) : null}
+					<RootTree projectAreaId={projectAreaId} root={root} />
+				</section>
+			))}
+		</div>
+	);
+}
+
+function RootTree({ projectAreaId, root }: { projectAreaId: string; root: string }) {
 	const [nodes, setNodes] = useState<FileNode[] | null>(null);
 	const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -24,9 +46,9 @@ export function FileTree({ workspaceId }: { workspaceId: string }) {
 		});
 	};
 
-	useWorkspaceRead(
-		workspaceId,
-		(id) => getTransport().request("fs.readDir", { workspaceId: id, path: "." }),
+	useProjectRead(
+		projectAreaId,
+		(id) => getTransport().request("fs.readDir", { projectId: id, root, path: "." }),
 		{
 			onResult: (result) => setNodes(result),
 			onFailure: () => setNodes((prev) => prev ?? []),
@@ -44,7 +66,8 @@ export function FileTree({ workspaceId }: { workspaceId: string }) {
 				<FileNodeRow
 					key={node.path}
 					node={node}
-					workspaceId={workspaceId}
+					projectAreaId={projectAreaId}
+					root={root}
 					expandedPaths={expandedPaths}
 					setPathsExpanded={setPathsExpanded}
 				/>
@@ -55,12 +78,14 @@ export function FileTree({ workspaceId }: { workspaceId: string }) {
 
 function FileNodeRow({
 	node,
-	workspaceId,
+	projectAreaId,
+	root,
 	expandedPaths,
 	setPathsExpanded,
 }: {
 	node: FileNode;
-	workspaceId: string;
+	projectAreaId: string;
+	root: string;
 	expandedPaths: ReadonlySet<string>;
 	setPathsExpanded: SetPathsExpanded;
 }) {
@@ -68,11 +93,11 @@ function FileNodeRow({
 	const [directory, setDirectory] = useState<ResolvedFolderChain<FileNode> | null>(null);
 	const pendingExpand = useRef(false);
 
-	const { reload } = useWorkspaceRead(
-		isDir ? workspaceId : null,
+	const { reload } = useProjectRead(
+		isDir ? projectAreaId : null,
 		(id) =>
 			resolveFolderChain(node, (path) =>
-				getTransport().request("fs.readDir", { workspaceId: id, path }),
+				getTransport().request("fs.readDir", { projectId: id, root, path }),
 			),
 		{
 			onResult: (result) => {
@@ -98,7 +123,8 @@ function FileNodeRow({
 		setPathsExpanded(representedPaths, nextExpanded);
 		if (nextExpanded) reload();
 	};
-	const open = (intent: TabIntent) => void openFileInTab(workspaceId, node.path, intent);
+	const open = (intent: TabIntent) =>
+		void openFileInTab(projectAreaId, node.path, intent, undefined, root);
 
 	return (
 		<li>
@@ -116,7 +142,8 @@ function FileNodeRow({
 						<FileNodeRow
 							key={child.path}
 							node={child}
-							workspaceId={workspaceId}
+							projectAreaId={projectAreaId}
+							root={root}
 							expandedPaths={expandedPaths}
 							setPathsExpanded={setPathsExpanded}
 						/>

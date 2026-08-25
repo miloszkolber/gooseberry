@@ -14,6 +14,7 @@ COPY package.json bun.lock ./
 COPY apps/controller/package.json apps/controller/package.json
 COPY webui/package.json webui/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/mewa-remote/package.json packages/mewa-remote/package.json
 COPY packages/pi-mewa-browser/package.json packages/pi-mewa-browser/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY packages/shared/package.json packages/shared/package.json
@@ -43,10 +44,10 @@ COPY package.json bun.lock ./
 COPY apps/controller/package.json apps/controller/package.json
 COPY webui/package.json webui/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/mewa-remote/package.json packages/mewa-remote/package.json
 COPY packages/pi-mewa-browser/package.json packages/pi-mewa-browser/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY packages/shared/package.json packages/shared/package.json
-\
 COPY scripts/prune-runtime-dependencies.sh /tmp/prune-runtime-dependencies.sh
 RUN bun install --frozen-lockfile --production --filter '@mewa-code/server' \
     && sh /tmp/prune-runtime-dependencies.sh packages/server/node_modules /runtime \
