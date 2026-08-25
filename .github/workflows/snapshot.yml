@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - rewrite/mewa-code-foundation
+  pull_request:
+    branches:
+      - rewrite/mewa-code-foundation
 
 permissions:
   contents: read
