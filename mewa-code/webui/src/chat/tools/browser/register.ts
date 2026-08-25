@@ -1,6 +1,6 @@
-import { registerToolRenderer } from "../../toolRegistry";
-import { strArg } from "../toolHelpers";
-import { BrowserCard } from "./BrowserCard";
+import { registerToolRenderer } from "../../tool-registry";
+import { strArg } from "../tool-helpers";
+import { BrowserCard } from "./browser-card";
 
 export function browserSummary(args: Record<string, unknown>): string {
 	const command = strArg(args, "command");

@@ -29,7 +29,8 @@
 		"build:web": "bun --filter @mewa-code/web build",
 		"typecheck": "bun --filter @mewa-code/contracts typecheck && bun --filter @mewa-code/shared typecheck && bun --filter @mewa-code/pi-mewa-browser typecheck && bun --filter @mewa-code/server typecheck && bun --filter @mewa-code/controller typecheck && bun --filter @mewa-code/web typecheck",
 		"test": "bun --filter @mewa-code/controller test && bun --filter @mewa-code/server test && bun --filter @mewa-code/pi-mewa-browser test && bun --filter @mewa-code/web test",
-		"lint": "biome check .",
+		"check:filenames": "bun scripts/check-filenames.ts",
+		"lint": "bun run check:filenames && biome check .",
 		"format": "biome check --write .",
 		"check:deps": "bun scripts/check-catalog.ts",
 		"check:runtime": "bash scripts/check-controller-runtime.test.sh"

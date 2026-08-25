@@ -1,2 +1,2 @@
-export * from "./appStore";
+export * from "./app-store";
 export * from "./selectors";

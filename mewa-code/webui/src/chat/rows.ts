@@ -1,6 +1,6 @@
 import type { UserMessage } from "@mewa-code/contracts";
-import { resolveProminence } from "./toolRegistry";
-import { strArg } from "./tools/toolHelpers";
+import { resolveProminence } from "./tool-registry";
+import { strArg } from "./tools/tool-helpers";
 import type { ChatTurn, CompactionState, ToolResultState } from "./types";
 
 export interface ToolCallData {

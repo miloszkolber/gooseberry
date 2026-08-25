@@ -1,2 +1,2 @@
 export * from "./persistence";
-export * from "./sessionGoals";
+export * from "./session-goals";

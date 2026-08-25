@@ -1,6 +1,6 @@
-import { registerToolRenderer } from "../../toolRegistry";
-import { strArg } from "../toolHelpers";
-import { SubagentCard } from "./SubagentCard";
+import { registerToolRenderer } from "../../tool-registry";
+import { strArg } from "../tool-helpers";
+import { SubagentCard } from "./subagent-card";
 
 export function subagentSummary(args: Record<string, unknown>): string {
 	const task = strArg(args, "task");

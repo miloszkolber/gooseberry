@@ -1,6 +1,6 @@
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
-import { MEWA_CODE_SHIKI_THEME, MEWA_CODE_SHIKI_THEME_NAME } from "./shikiTheme";
+import { MEWA_CODE_SHIKI_THEME, MEWA_CODE_SHIKI_THEME_NAME } from "./shiki-theme";
 
 const CANONICAL = new Set([
 	"typescript",

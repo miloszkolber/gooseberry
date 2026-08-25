@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { type Colors, GENERATED_CSS_PATH, loadColors, renderCss, validate } from "./colors";
-import { writeOrCheck } from "./generatedFiles";
+import { writeOrCheck } from "./generated-files";
 
 const colors: Colors = loadColors();
 

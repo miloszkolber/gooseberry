@@ -1,3 +1,3 @@
 export * from "./boot";
 export * from "./server";
-export * from "./webSocketAuth";
+export * from "./web-socket-auth";

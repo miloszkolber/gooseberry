@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { buildResourceLoader, listSkillCommands } from "./extensions";
-import type { SkillAdmissionContext } from "./skillAdmission";
+import type { SkillAdmissionContext } from "./skill-admission";
 
 function context(trusted: boolean): SkillAdmissionContext {
 	return { trusted, disabled: [], disabledGroups: [], overrides: {} };

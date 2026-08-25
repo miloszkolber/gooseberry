@@ -53,6 +53,13 @@ Do not preserve code because an inherited abstraction or test describes it. Upda
 - Keep source comments for non-obvious hazards; keep product decisions in `docs/`.
 - Keep final Docker images non-root, read-only, multi-stage, and free of source, tests, compilers, caches, and unused native runtimes.
 
+## Source naming
+
+- Source directories and source, test, component, and script filenames use lowercase kebab-case.
+- Conventional lowercase entry and barrel names such as `index.ts`, `main.tsx`, and `vite.config.ts` remain unchanged; suffixes such as `.test.tsx` stay dot-separated.
+- React components, types, and exports may use PascalCase inside files, but filesystem paths remain kebab-case.
+- `bun run check:filenames` enforces this convention across Mewa Code and the browser service.
+
 ## Verification
 
 - Run the narrowest relevant check during development.

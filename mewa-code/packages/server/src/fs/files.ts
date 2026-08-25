@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { FileNode } from "@mewa-code/contracts";
-import { assertMountedDirectory, assertMountedPath } from "../pathAdmission";
+import { assertMountedDirectory, assertMountedPath } from "../path-admission";
 import { loadWorkspaces } from "../persistence";
 
 function assertContained(root: string, candidate: string, message: string): void {

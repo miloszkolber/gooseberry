@@ -1,6 +1,6 @@
 import type { GitDiffScope, Project, WireModel, Workspace } from "@mewa-code/contracts";
 import { isAbsolutePath, normalizePath } from "../lib";
-import type { ClosedChat, EditorTab, RouteChatTarget } from "./appStore";
+import type { ClosedChat, EditorTab, RouteChatTarget } from "./app-store";
 
 interface ConnectionGenerationState {
 	status: string;

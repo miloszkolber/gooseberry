@@ -5,4 +5,4 @@ export {
 	HistoryIndex,
 	makeSnippet,
 	matchesTerms,
-} from "./historyIndex";
+} from "./history-index";

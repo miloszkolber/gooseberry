@@ -1,4 +1,4 @@
-export * from "./diffScope";
+export * from "./diff-scope";
 export * from "./git";
-export * from "./gitExec";
+export * from "./git-exec";
 export * from "./refs";

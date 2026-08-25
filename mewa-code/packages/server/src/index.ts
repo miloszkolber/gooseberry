@@ -4,6 +4,6 @@ export {
 	registerBundledRuntime,
 } from "./agent";
 export * from "./host";
-export * from "./pathAdmission";
+export * from "./path-admission";
 export { dataDir } from "./persistence";
 export * from "./ssh";

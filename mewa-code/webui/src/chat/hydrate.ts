@@ -4,7 +4,7 @@ import type {
 	TranscriptMessage,
 } from "@mewa-code/contracts";
 import { isAskUserAnswersMessage, isRetriedAttempt } from "@mewa-code/contracts";
-import { assistantFailureText } from "./assistantFailure";
+import { assistantFailureText } from "./assistant-failure";
 import type { ChatTurn, ToolResultState } from "./types";
 
 export interface HydratedRuntime {

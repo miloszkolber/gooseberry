@@ -14,8 +14,8 @@ export {
 	REQUEST_IMAGE_BASE64_BUDGET,
 	SESSION_GOAL_MAX_LENGTH,
 } from "./domain";
-export type * from "./piProtocol";
-export { isTranscriptMessageRole } from "./piProtocol";
+export type * from "./pi-protocol";
+export { isTranscriptMessageRole } from "./pi-protocol";
 export {
 	CODE_TOKEN_MAX_LENGTH,
 	CODE_TOKEN_MIN_LENGTH,
@@ -25,5 +25,5 @@ export {
 	isStrongToken,
 	TOKEN_SENTINELS,
 	WS_AUTH_PROTOCOL_PREFIX,
-} from "./wsAuth";
-export * from "./wsProtocol";
+} from "./ws-auth";
+export * from "./ws-protocol";

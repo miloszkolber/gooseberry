@@ -5,9 +5,9 @@ export {
 	resolveLogin,
 	setLoginPublisher,
 	startLogin,
-} from "./providerLogin";
+} from "./provider-login";
 export {
 	buildProviderReport,
 	getProviderStatus,
 	type ProviderStatusSources,
-} from "./providerStatus";
+} from "./provider-status";

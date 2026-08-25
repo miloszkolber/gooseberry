@@ -19,14 +19,14 @@ import {
 	type SkillInvocation,
 	userText,
 } from "@/lib";
-import { ActivityGroup } from "./ActivityGroup";
-import { FileChip } from "./FileChip";
-import { useFold, useSelection } from "./foldState";
-import { Markdown } from "./Markdown";
+import { ActivityGroup } from "./activity-group";
+import { FileChip } from "./file-chip";
+import { useFold, useSelection } from "./fold-state";
+import { Markdown } from "./markdown";
 import type { ChatRow, TurnDividerData } from "./rows";
-import { formatTokens } from "./SessionStatsBar";
-import { ToolCard } from "./ToolCard";
-import { getToolChrome, getToolRenderer } from "./toolRegistry";
+import { formatTokens } from "./session-stats-bar";
+import { ToolCard } from "./tool-card";
+import { getToolChrome, getToolRenderer } from "./tool-registry";
 import type { CompactionState } from "./types";
 
 export function ChatTurnView({

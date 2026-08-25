@@ -37,16 +37,16 @@ import {
 	isSettledTurn,
 	maybeAutoRenameWorkspace,
 	maybeNaiveNameWorkspace,
-} from "./autoRename";
-import { setFsNudgePublisher } from "./fsNudge";
+} from "./auto-rename";
+import { setFsNudgePublisher } from "./fs-nudge";
 import { handleRequest } from "./handlers";
-import { RequestReplayCache } from "./requestReplayCache";
+import { RequestReplayCache } from "./request-replay-cache";
 import {
 	authorizeWebSocketUpgrade,
 	isAuthorizedHttpRequest,
 	readWebSocketAuthConfig,
 	validateAuthTokens,
-} from "./webSocketAuth";
+} from "./web-socket-auth";
 
 export interface CreateServerOptions {
 	port?: number;

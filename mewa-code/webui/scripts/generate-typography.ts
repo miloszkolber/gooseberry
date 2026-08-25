@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { writeOrCheck } from "./generatedFiles";
+import { writeOrCheck } from "./generated-files";
 import {
 	GENERATED_FONTS_PATH,
 	GENERATED_PATH,

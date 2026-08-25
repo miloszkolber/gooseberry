@@ -1,6 +1,6 @@
-import { registerToolRenderer } from "../../toolRegistry";
-import { strArg } from "../toolHelpers";
-import { SignetCard } from "./SignetCard";
+import { registerToolRenderer } from "../../tool-registry";
+import { strArg } from "../tool-helpers";
+import { SignetCard } from "./signet-card";
 
 export function signetSummary(args: Record<string, unknown>): string {
 	return strArg(args, "query") || strArg(args, "content") || "memory";

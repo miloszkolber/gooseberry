@@ -1,10 +1,10 @@
 import "./index.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ErrorBoundary } from "./components/error-boundary";
 import { initNavigation } from "./navigation";
-import { initProjectExpansionPersistence } from "./panels/projectExpansion";
-import { Shell } from "./shell/Shell";
+import { initProjectExpansionPersistence } from "./panels/project-expansion";
+import { Shell } from "./shell/shell";
 import { initTransport } from "./transport";
 
 initTransport();

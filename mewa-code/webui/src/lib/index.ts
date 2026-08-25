@@ -1,2 +1,2 @@
-export * from "./skillInvocation";
+export * from "./skill-invocation";
 export * from "./utils";

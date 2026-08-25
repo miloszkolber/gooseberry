@@ -1,6 +1,6 @@
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
-import { usePiRuntime } from "./agentSessionManager";
-import { type AvailableModelsRuntime, settledAvailableModels } from "./piRuntime";
+import { usePiRuntime } from "./agent-session-manager";
+import { type AvailableModelsRuntime, settledAvailableModels } from "./pi-runtime";
 
 export type ModelTier = "cheap" | "default";
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { Project } from "@mewa-code/contracts";
 import { canonicalPath, git as runGit } from "../git";
-import { assertMountedProject } from "../pathAdmission";
+import { assertMountedProject } from "../path-admission";
 import { loadProjects, loadWorkspaces, saveProjects } from "../persistence";
 
 type ProjectPublisher = (project: Project) => void;

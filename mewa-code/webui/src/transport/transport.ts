@@ -1,7 +1,7 @@
 import type { WsMethodName, WsParams, WsResult, WsServerMessage } from "@mewa-code/contracts";
 import { encodeCodeTokenProtocol, isCodeToken, WS_CHANNELS } from "@mewa-code/contracts";
 import { randomId } from "../lib";
-import { RequestError } from "./requestError";
+import { RequestError } from "./request-error";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 type PushHandler = (data: unknown) => void;

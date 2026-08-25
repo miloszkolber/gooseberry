@@ -1,7 +1,7 @@
-export { LoginDialog } from "./LoginDialog";
+export { LoginDialog } from "./login-dialog";
 export type {
 	LoginInput,
 	LoginInputPrompt,
 	LoginInputSelect,
 	LoginState,
-} from "./loginState";
+} from "./login-state";

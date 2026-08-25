@@ -27,10 +27,10 @@ import {
 	setSkillAdmissionResolver,
 	settleSessionsForShutdown,
 } from "../agent";
-import { getPiRuntime } from "../agent/piRuntime";
-import { setExtUiPublisher } from "../agent/webUiContext";
-import { installCrashLog } from "../host/crashLog";
-import { assertMountedDirectory } from "../pathAdmission";
+import { getPiRuntime } from "../agent/pi-runtime";
+import { setExtUiPublisher } from "../agent/web-ui-context";
+import { installCrashLog } from "../host/crash-log";
+import { assertMountedDirectory } from "../path-admission";
 import { getProjects, openProject } from "../projects";
 import { ensureWorkspaceScratchDir, getWorkspace, listWorkspaces } from "../workspaces";
 

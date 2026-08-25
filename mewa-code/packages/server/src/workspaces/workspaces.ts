@@ -19,7 +19,7 @@ import {
 	resolveDiffRange,
 	tryCurrentBranch,
 } from "../git";
-import { assertMountedDirectory, assertMountedPath } from "../pathAdmission";
+import { assertMountedDirectory, assertMountedPath } from "../path-admission";
 import { loadProjects, loadWorkspaces, saveWorkspaces } from "../persistence";
 import { getProjects, listProjects } from "../projects";
 

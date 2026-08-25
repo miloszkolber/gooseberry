@@ -1,9 +1,9 @@
 import { findFreePort } from "@mewa-code/shared/freePort";
 import { resolveShellEnv } from "@mewa-code/shared/shellEnv";
 import { settleSessionsForShutdown } from "../agent";
-import { installCrashLog } from "./crashLog";
+import { installCrashLog } from "./crash-log";
 import { createServer, type RunningServer } from "./server";
-import { validateAuthTokens } from "./webSocketAuth";
+import { validateAuthTokens } from "./web-socket-auth";
 
 export interface BootHostOptions {
 	port: number;

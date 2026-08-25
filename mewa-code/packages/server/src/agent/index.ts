@@ -1,5 +1,5 @@
-export * from "./agentSessionManager";
-export * from "./askUserQuestion";
+export * from "./agent-session-manager";
+export * from "./ask-user-question";
 export {
 	type BundledExtensionFactory,
 	type BundledExtensions,
@@ -18,18 +18,18 @@ export {
 	type PreparePiRuntimeGenerationResult,
 	preparePiRuntimeGeneration,
 	settledAvailableModels,
-} from "./piRuntime";
+} from "./pi-runtime";
 export {
 	SESSION_GOAL_CONTEXT_PREFIX,
 	SESSION_GOAL_STATUS_KEY,
 	sessionGoalContextMessage,
 	sessionGoalExtension,
-} from "./sessionGoalExtension";
-export * from "./sessionRepair";
-export type { SkillAdmissionContext, SkillDecision, SkillFacts } from "./skillAdmission";
-export { type SshBashExtensionOptions, sshBashExtension } from "./sshBashExtension";
-export type { SubagentHost } from "./subagentExtension";
-export { SubagentParameters, subagentDetails, subagentExtension } from "./subagentExtension";
+} from "./session-goal-extension";
+export * from "./session-repair";
+export type { SkillAdmissionContext, SkillDecision, SkillFacts } from "./skill-admission";
+export { type SshBashExtensionOptions, sshBashExtension } from "./ssh-bash-extension";
+export type { SubagentHost } from "./subagent-extension";
+export { SubagentParameters, subagentDetails, subagentExtension } from "./subagent-extension";
 export type {
 	ChildModelRef,
 	ChildRunSnapshot,
@@ -37,5 +37,5 @@ export type {
 	RunChildSessionInput,
 	SubagentToolChild,
 	SubagentToolDetails,
-} from "./subagentTypes";
-export * from "./webUiContext";
+} from "./subagent-types";
+export * from "./web-ui-context";

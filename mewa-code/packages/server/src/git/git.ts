@@ -9,10 +9,10 @@ import type {
 	GitStatus,
 	Workspace,
 } from "@mewa-code/contracts";
-import { assertMountedDirectory, assertMountedPath } from "../pathAdmission";
+import { assertMountedDirectory, assertMountedPath } from "../path-admission";
 import { loadProjects, loadWorkspaces } from "../persistence";
-import { changedFileArgs, type DiffRange, diffBaseRef, resolveDiffRange } from "./diffScope";
-import { git, gitAsync } from "./gitExec";
+import { changedFileArgs, type DiffRange, diffBaseRef, resolveDiffRange } from "./diff-scope";
+import { git, gitAsync } from "./git-exec";
 
 function workspace(workspaceId: string): Workspace {
 	const ws = loadWorkspaces().find((w) => w.id === workspaceId);

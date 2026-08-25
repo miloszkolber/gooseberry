@@ -74,9 +74,9 @@ import {
 	setWorkspaceSkillOverride,
 	workspaceDiffStats,
 } from "../workspaces";
-import { ackSend } from "./ackSend";
-import { nudgeBaseRefWorkspaces } from "./fsNudge";
-import { buildHistoryScope } from "./historyScope";
+import { ackSend } from "./ack-send";
+import { nudgeBaseRefWorkspaces } from "./fs-nudge";
+import { buildHistoryScope } from "./history-scope";
 
 export interface RequestContext {
 	clientKey: string;

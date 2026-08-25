@@ -26,14 +26,14 @@ import type {
 import { DEFAULT_PI_PROFILE_SETTINGS } from "@mewa-code/contracts";
 import { PiConnector } from "@signetai/connector-pi";
 import { getConfig } from "../settings";
-import { askUserQuestionExtension } from "./askUserQuestion";
-import { oversizedImageGuard } from "./imageGuard";
-import { protectedStateRoots } from "./protectedPaths";
-import { protectedStateGuard } from "./protectedStateGuard";
-import { sessionGoalExtension } from "./sessionGoalExtension";
-import { decideSkill, type SkillAdmissionContext } from "./skillAdmission";
-import { sshBashExtension } from "./sshBashExtension";
-import { type SubagentHost, subagentExtension } from "./subagentExtension";
+import { askUserQuestionExtension } from "./ask-user-question";
+import { oversizedImageGuard } from "./image-guard";
+import { protectedStateRoots } from "./protected-paths";
+import { protectedStateGuard } from "./protected-state-guard";
+import { sessionGoalExtension } from "./session-goal-extension";
+import { decideSkill, type SkillAdmissionContext } from "./skill-admission";
+import { sshBashExtension } from "./ssh-bash-extension";
+import { type SubagentHost, subagentExtension } from "./subagent-extension";
 import { type BundledTrashHelpers, setBundledTrashHelpers } from "./trash";
 
 export type BundledExtensionFactory = ExtensionFactory;
