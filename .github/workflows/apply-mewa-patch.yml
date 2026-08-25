@@ -42,6 +42,30 @@ jobs:
         working-directory: mewa-code
         run: bun install
 
+      - name: Normalize rewritten sources
+        working-directory: mewa-code
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path("packages/server/src/host/handlers.test.ts"): (
+                  'import type { PiProfileDescriptor, Workspace } from "@mewa-code/contracts";',
+                  'import type { PiProfileDescriptor } from "@mewa-code/contracts";',
+              ),
+              Path("webui/src/transport/transport.test.ts"): (
+                  'import { encodeCodeTokenProtocol, WS_CHANNELS } from "@mewa-code/contracts";',
+                  'import { encodeCodeTokenProtocol } from "@mewa-code/contracts";',
+              ),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected import not found in {path}")
+              path.write_text(text.replace(old, new, 1))
+          PY
+          bun run format
+
       - name: Validate controller and Web UI
         working-directory: mewa-code
         run: |
