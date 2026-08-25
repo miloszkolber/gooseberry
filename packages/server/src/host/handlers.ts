@@ -1,21 +1,13 @@
 import type {
-	AppConfig,
+	AppConfigPatch,
 	AskUserQuestionResult,
 	ExtUiResponse,
 	GitDiffScope,
 	HistoryScope,
 	ImageContent,
-	LayoutReplaceParams,
 	LoginReply,
 	QueueLane,
-	ReviewAnchor,
-	ReviewComment,
-	ReviewCommentKind,
-	ReviewCommentStatus,
-	ReviewSendResult,
-	TemplateScope,
 	ThinkingLevel,
-	TodoStatus,
 	WireModel,
 	Workspace,
 } from "@mewa-code/contracts";
@@ -30,21 +22,20 @@ import {
 	ensureSessionAttached,
 	followUpSession,
 	getDefaultModel,
+	getPiProfile,
 	getSessionCommands,
 	getSessionMessages,
 	getSessionStats,
+	getSessionWorkspaceId,
 	hasSession,
 	listAvailableModels,
-	listProjectAliasSkillNames,
 	listSessions,
 	listSkillCatalog,
 	listSkillCommands,
-	notifyExtUi,
 	promptSession,
 	refreshAvailableModels,
 	reloadSessionResources,
 	removeQueuedSession,
-	removeSession,
 	removeWorkspaceSessions,
 	resolveExtUi,
 	setSessionModel,
@@ -52,55 +43,21 @@ import {
 	steerSession,
 } from "../agent";
 import { cancelLogin, getProviderStatus, logoutProvider, resolveLogin, startLogin } from "../auth";
-import { findOpenBranchReview } from "../branch-review";
 import { selectDirectory } from "../dialog";
 import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
-import { readDir, readFile } from "../fs";
+import { readDir, readFile, writeFile } from "../fs";
 import { gitDiffFile, gitStatus, listBranches, listCommits, prefetchBranch } from "../git";
-import { githubAuthStatus, githubRefresh } from "../github";
 import { clampLimit, getHistoryIndex } from "../history";
+import { clearStoredSessionGoal, sessionGoalState, writeStoredSessionGoal } from "../persistence";
 import {
-	getWorkspaceLayout,
-	removeWorkspaceLayout,
-	replaceWorkspaceLayout,
-	validateLayoutSettings,
-} from "../layout";
-import {
-	acknowledgeProjectSkills,
 	closeProject,
-	initProject,
-	inspectProjectPath,
 	listProjects,
 	openProject,
 	setProjectGroupEnabled,
 	setProjectSkillEnabled,
 	setProjectTrust,
 } from "../projects";
-import {
-	addComment,
-	buildSendPackage,
-	clearReview,
-	deleteComment,
-	fileReviewSession,
-	getReviewSnapshot,
-	markCommentsSent,
-	markFileDone,
-	REVIEW_LEVEL_KEY,
-	removeWorkspaceReviews,
-	reviewSessionKey,
-	rollbackSend,
-	sendableComments,
-	updateComment,
-} from "../reviews";
-import { getConfig, updateConfig } from "../settings";
-import { evictSpecIndex, projectHasSpecs, specGraph } from "../spec";
-import {
-	deleteTemplate,
-	getTemplate,
-	listTemplates,
-	saveTemplate,
-	templateDirs,
-} from "../templates";
+import { updateConfig } from "../settings";
 import {
 	attachTerminal,
 	closeTerminalTab,
@@ -109,14 +66,6 @@ import {
 	resizeTerminal,
 	writeTerminal,
 } from "../terminal";
-import {
-	addTodo,
-	countOpenTodos,
-	listTodos,
-	removeSessionTodoWindows,
-	removeTodo,
-	updateTodo,
-} from "../todos";
 import { ensureWatch, stopWatch } from "../watch";
 import {
 	createWorkspace,
@@ -135,7 +84,6 @@ import {
 import { ackSend } from "./ackSend";
 import { nudgeBaseRefWorkspaces } from "./fsNudge";
 import { buildHistoryScope } from "./historyScope";
-import { withReviewLock } from "./reviewLock";
 
 export interface RequestContext {
 	clientKey: string;
@@ -152,75 +100,20 @@ async function archiveTeardown(ws: Workspace): Promise<void> {
 	}
 }
 
-function fireReviewPrompt(
-	workspaceId: string,
-	ids: string[],
-	sessionId: string,
-	pkg: string,
-	send: (sessionId: string, text: string) => Promise<void> = promptSession,
-): void {
-	void ackSend(send(sessionId, pkg))
-		.then(undefined, (err) => {
-			rollbackSend(workspaceId, ids, sessionId);
-			notifyExtUi(
-				sessionId,
-				`Review send failed: ${err instanceof Error ? err.message : String(err)}`,
-				"error",
-			);
-		})
-		.catch((err) => {
-			console.warn(`review send rollback failed: ${err instanceof Error ? err.message : err}`);
-		});
-}
-
-async function sendToFileChat(
-	workspaceId: string,
-	comments: ReviewComment[],
-	opts: { model?: WireModel; thinkingLevel?: ThinkingLevel; sessionId?: string },
-): Promise<ReviewSendResult> {
-	const ids = comments.map((c) => c.id);
-	const pkg = buildSendPackage(workspaceId, comments);
-	const ws = getWorkspace(workspaceId);
-	const first = comments[0];
-	const path = first ? reviewSessionKey(first) : REVIEW_LEVEL_KEY;
-	const existing = opts.sessionId ?? fileReviewSession(workspaceId, path);
-	if (existing && (await ensureSessionAttached(existing, workspaceId, ws.worktreePath))) {
-		markCommentsSent(workspaceId, ids, existing);
-		fireReviewPrompt(workspaceId, ids, existing, pkg, followUpSession);
-		return {
-			sessionId: existing,
-			model: null,
-			thinkingLevel: "medium" as ThinkingLevel,
-			reused: true,
-		};
+async function authorizeSessionGoal(workspaceId: unknown, sessionId: unknown): Promise<void> {
+	if (typeof workspaceId !== "string" || typeof sessionId !== "string") {
+		throw new Error("Malformed session goal request");
 	}
-	if (existing) {
-		console.warn(
-			`review ${workspaceId}: linked chat ${existing} for ${path} is no longer on disk — starting a new review chat`,
-		);
+	const workspace = getWorkspace(workspaceId);
+	const attached = await ensureSessionAttached(sessionId, workspaceId, workspace.worktreePath);
+	if (!attached || getSessionWorkspaceId(sessionId) !== workspaceId) {
+		throw new Error(`Unknown session: ${sessionId}`);
 	}
-	ensureWorkspaceScratchDir(ws);
-	const created = await createSession({
-		cwd: ws.worktreePath,
-		workspaceId,
-		...(opts.model ? { model: opts.model } : {}),
-		...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
-	});
-	markCommentsSent(workspaceId, ids, created.sessionId);
-	fireReviewPrompt(workspaceId, ids, created.sessionId, pkg);
-	return { ...created, reused: false };
 }
 
 const handlers: Record<string, Handler> = {
 	"project.open": (params) => openProject((params as { path: string }).path),
-	"project.inspect": (params) => inspectProjectPath((params as { path: string }).path),
-	"project.init": (params) => initProject((params as { path: string }).path),
 	"project.list": () => listProjects(),
-	"project.hasSpecs": (params) => {
-		const { projectId } = params as { projectId: string };
-		const project = listProjects().find((p) => p.id === projectId);
-		return { hasSpecs: project ? projectHasSpecs(project.path) : false };
-	},
 	"project.close": (params) => {
 		closeProject((params as { id: string }).id);
 		return { ok: true } as const;
@@ -229,8 +122,7 @@ const handlers: Record<string, Handler> = {
 		const p = params as { id: string; trusted: boolean };
 		const project = listProjects().find((candidate) => candidate.id === p.id);
 		if (!project) throw new Error(`Unknown project: ${p.id}`);
-		const acknowledged = p.trusted ? await listProjectAliasSkillNames(project.path) : undefined;
-		return setProjectTrust(p.id, p.trusted, acknowledged);
+		return setProjectTrust(p.id, p.trusted);
 	},
 	"workspace.create": (params) => {
 		const p = params as { projectId: string; name?: string; baseRef?: string };
@@ -246,17 +138,10 @@ const handlers: Record<string, Handler> = {
 		const p = params as { projectId: string; includeDiffStats?: boolean };
 		return listWorkspaces(p.projectId, { includeDiffStats: p.includeDiffStats ?? true });
 	},
-	"workspace.openReview": (params) => {
-		const ws = getWorkspace((params as { workspaceId: string }).workspaceId);
-		return findOpenBranchReview(ws.worktreePath, ws.branch);
-	},
 	"workspace.remove": (params) => {
 		const id = (params as { id: string }).id;
 		const ws = forgetWorkspace(id);
 		if (ws) {
-			removeWorkspaceLayout(ws.id);
-			evictSpecIndex(ws.id);
-			removeWorkspaceReviews(ws.id);
 			stopWatch(ws.id);
 			closeWorkspaceTerminals(ws.id);
 			void archiveTeardown(ws);
@@ -281,8 +166,6 @@ const handlers: Record<string, Handler> = {
 		if (moved) nudgeBaseRefWorkspaces(p.projectId, p.ref);
 		return { ok };
 	},
-	"github.authStatus": () => githubAuthStatus(),
-	"github.refresh": () => githubRefresh(),
 	"dialog.selectDirectory": () => selectDirectory(),
 	"fs.readDir": (params) => {
 		const p = params as { workspaceId: string; path: string };
@@ -294,27 +177,12 @@ const handlers: Record<string, Handler> = {
 		void ensureWatch(p.workspaceId);
 		return readFile(p.workspaceId, p.path);
 	},
-	"spec.graph": (params) => {
-		const p = params as { workspaceId: string };
+	"fs.writeFile": (params) => {
+		const p = params as { workspaceId: string; path: string; content: string };
 		void ensureWatch(p.workspaceId);
-		return specGraph(p.workspaceId);
+		writeFile(p.workspaceId, p.path, p.content);
+		return { ok: true } as const;
 	},
-	"todo.list": (params) => listTodos(params as { workspaceId: string; sessionId: string }),
-	"todo.add": (params) =>
-		addTodo(params as { workspaceId: string; sessionId: string; title: string; note?: string }),
-	"todo.update": (params) =>
-		updateTodo(
-			params as {
-				workspaceId: string;
-				sessionId: string;
-				id: string;
-				status?: TodoStatus;
-				title?: string;
-				note?: string;
-			},
-		),
-	"todo.remove": (params) =>
-		removeTodo(params as { workspaceId: string; sessionId: string; id: string }),
 	"git.status": (params) => {
 		const p = params as { workspaceId: string; scope?: GitDiffScope };
 		void ensureWatch(p.workspaceId);
@@ -360,7 +228,6 @@ const handlers: Record<string, Handler> = {
 		if (!project) throw new Error(`Unknown project: ${projectId}`);
 		return listSkillCommands(project.path, {
 			trusted: project.trusted === true,
-			acknowledged: project.acknowledgedSkills ?? [],
 			disabled: project.disabledSkills ?? [],
 			disabledGroups: project.disabledGroups ?? [],
 			overrides: {},
@@ -372,25 +239,14 @@ const handlers: Record<string, Handler> = {
 		const project = listProjects().find((p) => p.id === ws.projectId);
 		return listSkillCatalog(ws.worktreePath, {
 			trusted: project?.trusted === true,
-			acknowledged: project?.acknowledgedSkills ?? [],
 			disabled: project?.disabledSkills ?? [],
 			disabledGroups: project?.disabledGroups ?? [],
 			overrides: ws.skillOverrides ?? {},
 		});
 	},
-	"project.acknowledgeSkills": (params) => {
-		const p = params as { id: string; names: string[] };
-		return acknowledgeProjectSkills(p.id, p.names);
-	},
 	"project.setSkillEnabled": (params) => {
 		const p = params as { id: string; name: string; enabled: boolean };
 		return setProjectSkillEnabled(p.id, p.name, p.enabled);
-	},
-	"project.aliasSkills": (params) => {
-		const { projectId } = params as { projectId: string };
-		const project = listProjects().find((p) => p.id === projectId);
-		if (!project) throw new Error(`Unknown project: ${projectId}`);
-		return listProjectAliasSkillNames(project.path);
 	},
 	"project.setGroupEnabled": (params) => {
 		const p = params as { id: string; group: string; enabled: boolean };
@@ -402,7 +258,6 @@ const handlers: Record<string, Handler> = {
 		if (!project) throw new Error(`Unknown project: ${projectId}`);
 		return listSkillCatalog(project.path, {
 			trusted: project.trusted === true,
-			acknowledged: project.acknowledgedSkills ?? [],
 			disabled: project.disabledSkills ?? [],
 			disabledGroups: project.disabledGroups ?? [],
 			overrides: {},
@@ -466,14 +321,9 @@ const handlers: Record<string, Handler> = {
 		await abortSession((params as { sessionId: string }).sessionId);
 		return { ok: true } as const;
 	},
-	"session.dispose": (params) => {
-		removeSession((params as { sessionId: string }).sessionId);
-		return { ok: true } as const;
-	},
 	"session.delete": async (params) => {
 		const p = params as { workspaceId: string; sessionId: string };
 		await deleteSession(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
-		removeSessionTodoWindows(p);
 		return { ok: true } as const;
 	},
 	"session.setModel": async (params) => {
@@ -496,17 +346,7 @@ const handlers: Record<string, Handler> = {
 		getSessionCommands((params as { sessionId: string }).sessionId),
 	"session.list": async (params) => {
 		const { workspaceId } = params as { workspaceId: string };
-		const summaries = await listSessions(workspaceId, getWorkspace(workspaceId).worktreePath);
-		return summaries.map((summary) => {
-			try {
-				return {
-					...summary,
-					openTodos: countOpenTodos({ workspaceId, sessionId: summary.sessionId }),
-				};
-			} catch {
-				return summary;
-			}
-		});
+		return listSessions(workspaceId, getWorkspace(workspaceId).worktreePath);
 	},
 	"session.getMessages": (params) => {
 		const p = params as { sessionId: string; workspaceId: string };
@@ -523,6 +363,23 @@ const handlers: Record<string, Handler> = {
 			throw new Error("Malformed ask_user_question result");
 		await ackSend(answerQuestion(p.sessionId, p.toolCallId, p.result));
 		return { ok: true } as const;
+	},
+	"session.goalGet": async (params) => {
+		const p = params as { workspaceId?: unknown; sessionId?: unknown };
+		await authorizeSessionGoal(p.workspaceId, p.sessionId);
+		return sessionGoalState(p.workspaceId as string, p.sessionId as string);
+	},
+	"session.goalSet": async (params) => {
+		const p = params as { workspaceId?: unknown; sessionId?: unknown; goal?: unknown };
+		await authorizeSessionGoal(p.workspaceId, p.sessionId);
+		writeStoredSessionGoal(p.workspaceId as string, p.sessionId as string, p.goal);
+		return sessionGoalState(p.workspaceId as string, p.sessionId as string);
+	},
+	"session.goalClear": async (params) => {
+		const p = params as { workspaceId?: unknown; sessionId?: unknown };
+		await authorizeSessionGoal(p.workspaceId, p.sessionId);
+		clearStoredSessionGoal(p.workspaceId as string, p.sessionId as string);
+		return sessionGoalState(p.workspaceId as string, p.sessionId as string);
 	},
 	"model.list": () => listAvailableModels(),
 	"model.clampThinking": async (params) => {
@@ -553,19 +410,9 @@ const handlers: Record<string, Handler> = {
 		await logoutProvider((params as { providerId: string }).providerId);
 		return { ok: true } as const;
 	},
-	"layout.get": (params) => {
-		const { workspaceId } = params as { workspaceId: string };
-		getWorkspace(workspaceId);
-		return getWorkspaceLayout(workspaceId);
-	},
-	"layout.replace": (params) => {
-		const replacement = params as LayoutReplaceParams;
-		getWorkspace(replacement.workspaceId);
-		return replaceWorkspaceLayout(replacement, getConfig().layout.maxSideGroups);
-	},
+	"settings.profile": () => getPiProfile(),
 	"settings.update": (params) => {
-		const config = (params as { config: Partial<AppConfig> }).config;
-		if (config.layout !== undefined) validateLayoutSettings(config.layout);
+		const config = (params as { config: AppConfigPatch }).config;
 		return updateConfig(config);
 	},
 	"history.search": (params) => {
@@ -579,112 +426,6 @@ const handlers: Record<string, Handler> = {
 			labels,
 			limit: clampLimit(p.limit),
 		});
-	},
-	"review.get": (params) => {
-		const p = params as { workspaceId: string };
-		ensureWatch(p.workspaceId);
-		return getReviewSnapshot(p.workspaceId);
-	},
-	"review.commentAdd": (params) => {
-		const p = params as {
-			workspaceId: string;
-			kind: ReviewCommentKind;
-			anchor: ReviewAnchor | null;
-			body: string;
-			scope?: GitDiffScope;
-		};
-		return withReviewLock(p.workspaceId, async () => addComment(p));
-	},
-	"review.commentUpdate": (params) => {
-		const p = params as {
-			workspaceId: string;
-			id: string;
-			body?: string;
-			status?: ReviewCommentStatus;
-		};
-		return withReviewLock(p.workspaceId, async () => updateComment(p));
-	},
-	"review.commentDelete": (params) => {
-		const p = params as { workspaceId: string; id: string };
-		return withReviewLock(p.workspaceId, async () => {
-			deleteComment(p.workspaceId, p.id);
-			return { ok: true } as const;
-		});
-	},
-	"review.fileDone": (params) => {
-		const p = params as { workspaceId: string; path: string };
-		return withReviewLock(p.workspaceId, async () => {
-			markFileDone(p.workspaceId, p.path);
-			return { ok: true } as const;
-		});
-	},
-	"review.close": (params) => {
-		const p = params as { workspaceId: string };
-		return withReviewLock(p.workspaceId, async () => {
-			clearReview(p.workspaceId);
-			return { ok: true } as const;
-		});
-	},
-	"review.sendComment": (params) => {
-		const p = params as {
-			workspaceId: string;
-			id: string;
-			model?: WireModel;
-			thinkingLevel?: ThinkingLevel;
-			sessionId?: string;
-		};
-		return withReviewLock(p.workspaceId, () =>
-			sendToFileChat(p.workspaceId, sendableComments(p.workspaceId, [p.id]), p),
-		);
-	},
-	"review.sendBatch": (params) => {
-		const p = params as {
-			workspaceId: string;
-			commentIds?: string[];
-			model?: WireModel;
-			thinkingLevel?: ThinkingLevel;
-			sessionId?: string;
-		};
-		return withReviewLock(p.workspaceId, async () => {
-			const comments = sendableComments(p.workspaceId, p.commentIds);
-			const groups = new Map<string, typeof comments>();
-			for (const comment of comments) {
-				const key = reviewSessionKey(comment);
-				groups.set(key, [...(groups.get(key) ?? []), comment]);
-			}
-			const sessions: ReviewSendResult[] = [];
-			for (const group of groups.values()) {
-				sessions.push(await sendToFileChat(p.workspaceId, group, p));
-			}
-			if (sessions.length === 0) throw new Error("No draft comments to send.");
-			return { sessions };
-		});
-	},
-	"template.list": (params) => {
-		const p = params as { workspaceId?: string };
-		const dirs = templateDirs(p.workspaceId ? getWorkspace(p.workspaceId).worktreePath : undefined);
-		return { templates: listTemplates(dirs) };
-	},
-	"template.get": (params) => {
-		const p = params as { workspaceId?: string; name: string; scope?: TemplateScope };
-		const dirs = templateDirs(p.workspaceId ? getWorkspace(p.workspaceId).worktreePath : undefined);
-		return getTemplate(dirs, p.name, p.scope);
-	},
-	"template.save": (params) => {
-		const p = params as {
-			workspaceId?: string;
-			scope: TemplateScope;
-			name: string;
-			content: string;
-		};
-		const dirs = templateDirs(p.workspaceId ? getWorkspace(p.workspaceId).worktreePath : undefined);
-		return saveTemplate(dirs, p.scope, p.name, p.content);
-	},
-	"template.delete": (params) => {
-		const p = params as { workspaceId?: string; scope: TemplateScope; name: string };
-		const dirs = templateDirs(p.workspaceId ? getWorkspace(p.workspaceId).worktreePath : undefined);
-		deleteTemplate(dirs, p.scope, p.name);
-		return { ok: true } as const;
 	},
 };
 

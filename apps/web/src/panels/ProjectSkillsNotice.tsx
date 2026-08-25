@@ -1,4 +1,4 @@
-import type { Project } from "@mewa-code/contracts";
+import type { Project, SkillCatalogEntry } from "@mewa-code/contracts";
 import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -7,50 +7,51 @@ import { errorText, getTransport } from "@/transport";
 
 export function ProjectSkillsNotice({ projectId }: { projectId: string }) {
 	const project = useAppStore((s) => s.projects.find((p) => p.id === projectId));
-	const [aliasSkills, setAliasSkills] = useState<string[] | null>(null);
+	const [skills, setSkills] = useState<SkillCatalogEntry[] | null>(null);
 	const [busy, setBusy] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
-		setAliasSkills(null);
+		setSkills(null);
 		getTransport()
-			.request("project.aliasSkills", { projectId })
-			.then((names) => {
-				if (!cancelled) setAliasSkills(names);
+			.request("project.skills", { projectId })
+			.then((entries) => {
+				if (!cancelled) setSkills(entries.filter((entry) => entry.gated));
 			})
 			.catch(() => {
-				if (!cancelled) setAliasSkills([]);
+				if (!cancelled) setSkills([]);
 			});
 		return () => {
 			cancelled = true;
 		};
 	}, [projectId]);
 
-	if (!project || !aliasSkills || aliasSkills.length === 0) return null;
+	if (!project || !skills || skills.length === 0) return null;
 
 	const trusted = project.trusted === true;
-	const acknowledged = new Set(project.acknowledgedSkills ?? []);
-	const pending = trusted ? aliasSkills.filter((name) => !acknowledged.has(name)) : [];
-	const count = aliasSkills.length;
+	const untrusted = skills.filter((skill) => skill.decision === "untrusted");
+	const count = skills.length;
 	const plural = (n: number) => (n === 1 ? "" : "s");
 
 	const applyProject = (updated: Project) => {
 		useAppStore.getState().applyProjectUpdated(updated);
 	};
 
-	const run = async (request: () => Promise<Project>, failure: string) => {
+	const trustProject = async () => {
 		if (busy) return;
 		setBusy(true);
 		try {
-			applyProject(await request());
+			applyProject(
+				await getTransport().request("project.setTrust", { id: projectId, trusted: true }),
+			);
 		} catch (err) {
-			toast.error(errorText(err), failure);
+			toast.error(errorText(err), "Couldn't trust project");
 		} finally {
 			setBusy(false);
 		}
 	};
 
-	if (trusted && pending.length === 0) {
+	if (trusted && untrusted.length === 0) {
 		return (
 			<p
 				data-testid="project-skills-notice"
@@ -63,37 +64,23 @@ export function ProjectSkillsNotice({ projectId }: { projectId: string }) {
 		);
 	}
 
-	const isPending = trusted && pending.length > 0;
 	return (
 		<div
 			data-testid="project-skills-notice"
-			data-state={isPending ? "pending" : "untrusted"}
+			data-state="untrusted"
 			className="mt-lg flex w-full max-w-[560px] items-center gap-sm rounded-[var(--radius-sm)] border border-border-default border-l-[3px] border-l-feedback-warning bg-feedback-warning-subtle px-md py-sm text-left"
 		>
 			<TriangleAlert className="size-4 shrink-0 text-feedback-warning" />
 			<span className="min-w-0 flex-1 tr-text-ui text-text-default">
-				{isPending
-					? `${pending.length} new skill${plural(pending.length)} appeared since you trusted this project.`
-					: `This project ships ${count} skill${plural(count)} — off until you trust it.`}
+				This project ships {count} project skill{plural(count)} — off until you trust it.
 			</span>
 			<Button
 				size="sm"
-				data-testid={isPending ? "project-ack-button" : "project-trust-button"}
+				data-testid="project-trust-button"
 				disabled={busy}
-				onClick={() =>
-					void run(
-						isPending
-							? () =>
-									getTransport().request("project.acknowledgeSkills", {
-										id: projectId,
-										names: pending,
-									})
-							: () => getTransport().request("project.setTrust", { id: projectId, trusted: true }),
-						isPending ? "Couldn't confirm skills" : "Couldn't trust project",
-					)
-				}
+				onClick={() => void trustProject()}
 			>
-				{isPending ? "Review & enable" : "Trust project"}
+				Trust project
 			</Button>
 		</div>
 	);

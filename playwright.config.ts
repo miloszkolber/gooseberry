@@ -35,9 +35,6 @@ const hostCommand =
 		: `${JSON.stringify(bunExecutable)} run build:web && ${JSON.stringify(bunExecutable)} packages/server/src/dev.ts`;
 export default defineConfig({
 	testDir: "./e2e",
-	// The headless workflow-test suite has its own config (playwright.workflows.config.ts) — no browser,
-	// no webServer; `bun run test:workflows`. Never picked up by the browser suites.
-	testIgnore: "workflows/**",
 	// One worker owns one stateful host. Shard lanes stay serial internally; fullyParallel only lets
 	// Playwright distribute individual tests (rather than uneven whole files) across separate processes.
 	fullyParallel: isShardLane,

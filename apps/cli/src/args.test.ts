@@ -1,21 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_HOST, DEFAULT_PORT, parseArgs, parseSubcommand } from "./args";
-
-describe("parseSubcommand", () => {
-	test("only a leading, exact subcommand counts", () => {
-		expect(parseSubcommand(["update"])).toBe("update");
-		expect(parseSubcommand(["uninstall", "--yes"])).toBe("uninstall");
-		expect(parseSubcommand([])).toBeUndefined();
-		expect(parseSubcommand(["--no-open"])).toBeUndefined();
-		expect(parseSubcommand(["./update"])).toBeUndefined();
-		expect(parseSubcommand(["--port", "80", "update"])).toBeUndefined();
-	});
-
-	test("a launch is not a subcommand — the host boot path must stay reachable", () => {
-		expect(parseSubcommand(["/home/u/code/repo"])).toBeUndefined();
-		expect(parseSubcommand(["--version"])).toBeUndefined();
-	});
-});
+import { DEFAULT_HOST, DEFAULT_PORT, parseArgs } from "./args";
 
 describe("parseArgs", () => {
 	test("defaults when no args or env", () => {

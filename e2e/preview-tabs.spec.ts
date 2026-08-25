@@ -184,31 +184,3 @@ test("a newer tab click cancels an older preview-tab settle timer", async ({ pag
 	await expect(notes).toHaveAttribute("data-active", "true");
 	await expect(readme).toHaveAttribute("data-preview", "true");
 });
-
-test("the Specs panel shares the one slot, and closing the preview tab releases it", async ({
-	page,
-}) => {
-	await openWorkspaceFiles(page);
-	const tabs = page.getByTestId("editor-tab");
-
-	await page.getByTestId("file-node").filter({ hasText: "README.md" }).dblclick();
-	await page.getByTestId("file-node").filter({ hasText: "notes.txt" }).click();
-	await expect(tabs).toHaveCount(2);
-	await expect(tabs.nth(1)).toContainText("notes.txt");
-
-	await page.getByTestId("tab-specs").click();
-	await page.locator('[data-testid="spec-node"][data-spec-id="sample-root"]').click();
-	await expect(tabs).toHaveCount(2);
-	await expect(tabs.first()).toContainText("README.md");
-	await expect(tabs.nth(1)).toContainText("SPEC.md");
-	await expect(tabs.nth(1)).toHaveAttribute("data-preview", "true");
-
-	await tabs.nth(1).hover();
-	await tabs.nth(1).getByTestId("editor-tab-close").click();
-	await expect(tabs).toHaveCount(1);
-	await page.getByTestId("tab-files").click();
-	await page.getByTestId("file-node").filter({ hasText: "notes.txt" }).click();
-	await expect(tabs).toHaveCount(2);
-	await expect(tabs.nth(1)).toContainText("notes.txt");
-	await expect(tabs.nth(1)).toHaveAttribute("data-preview", "true");
-});

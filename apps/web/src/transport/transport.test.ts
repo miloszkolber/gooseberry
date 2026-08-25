@@ -138,6 +138,34 @@ describe("WsTransport reconnect delivery", () => {
 });
 
 describe("WsTransport response receipts", () => {
+	test("keeps the curated Pi profile behind the typed settings boundary", async () => {
+		const transport = new WsTransport({ url: "ws://localhost:24242/ws" });
+		transport.connect();
+		const socket = TestWebSocket.instances[0];
+		socket?.open();
+
+		const result = transport.request("settings.profile", {});
+		const request = requestsIn(socket?.sent ?? []).at(-1);
+		if (!request?.id) throw new Error("settings.profile request was not sent");
+		expect(request.method).toBe("settings.profile");
+		const profile = {
+			id: "mewa",
+			label: "Mewa",
+			capabilities: [
+				{
+					id: "protectedStateGuard",
+					label: "Protected-state guard",
+					description: "required",
+					enabled: true,
+					available: true,
+					required: true,
+				},
+			],
+		};
+		socket?.message(JSON.stringify({ id: request.id, ok: true, result: profile }));
+		expect(await result).toEqual(profile);
+	});
+
 	test("acknowledges each response, batching a burst into one frame", async () => {
 		const transport = new WsTransport({ url: "ws://localhost:24242/ws" });
 		transport.connect();

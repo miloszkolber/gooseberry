@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, expect, jest, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -10,6 +18,7 @@ import {
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSettlement, ExtUiRequest } from "@mewa-code/contracts";
+import { readStoredSessionGoal, writeStoredSessionGoal } from "../persistence";
 import {
 	buildSessionSettings,
 	clampThinkingForModel,
@@ -473,7 +482,7 @@ test("listSessions reports a workspace's live sessions; getSessionMessages retur
 	removeSession(s.sessionId);
 });
 
-test("listSessions ignores a live session's transient physical rewrite but stays strict for detached files", async () => {
+test("listSessions ignores a live session's transient physical rewrite after it detaches", async () => {
 	const cwd = tmpCwd("trpi-live-rewrite-");
 	const liveManager = SessionManager.create(cwd);
 	setSessionManagerFactory(() => liveManager);
@@ -492,8 +501,50 @@ test("listSessions ignores a live session's transient physical rewrite but stays
 		);
 
 		removeSession(s.sessionId);
-		await expect(listSessions("ws-live-rewrite", cwd)).rejects.toThrow("unreadable or malformed");
+		expect(await listSessions("ws-live-rewrite", cwd)).toEqual([]);
 	} finally {
+		setSessionManagerFactory(() => SessionManager.inMemory());
+	}
+});
+
+test("session catalog skips one malformed detached transcript while keeping valid sessions resumable", async () => {
+	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	let malformedPath: string | undefined;
+	try {
+		fauxA.setResponses([
+			fauxAssistantMessage("CATALOG_VALID"),
+			fauxAssistantMessage("CATALOG_MALFORMED"),
+		]);
+		const cwd = tmpCwd("trpi-catalog-tolerant-");
+		const valid = await createSession({
+			cwd,
+			workspaceId: "ws-catalog",
+			model: toWireModel(fauxA.getModel()),
+		});
+		await promptSession(valid.sessionId, "keep this session");
+		const malformed = await createSession({
+			cwd,
+			workspaceId: "ws-catalog",
+			model: toWireModel(fauxA.getModel()),
+		});
+		await promptSession(malformed.sessionId, "corrupt this session");
+		const infos = await SessionManager.list(cwd);
+		const malformedInfo = infos.find((info) => info.id === malformed.sessionId);
+		if (!malformedInfo) throw new Error("expected the malformed session transcript to exist");
+		malformedPath = malformedInfo.path;
+		removeSession(valid.sessionId);
+		removeSession(malformed.sessionId);
+		writeFileSync(malformedInfo.path, "not a pi transcript\n");
+
+		expect((await listSessions("ws-catalog", cwd)).map((row) => row.sessionId)).toEqual([
+			valid.sessionId,
+		]);
+		const resumed = await getSessionMessages(valid.sessionId, "ws-catalog", cwd);
+		expect(resumed.summary.live).toBe(true);
+		expect(resumed.messages.some((message) => message.role === "user")).toBe(true);
+		removeSession(valid.sessionId);
+	} finally {
+		if (malformedPath) rmSync(malformedPath, { force: true });
 		setSessionManagerFactory(() => SessionManager.inMemory());
 	}
 });
@@ -628,7 +679,7 @@ test("a malformed detached transcript is never treated as authoritative absence"
 		removeSession(session.sessionId);
 		writeFileSync(info.path, "not a pi transcript\n");
 
-		await expect(listSessions("ws-delete-corrupt", cwd)).rejects.toThrow("unreadable or malformed");
+		expect(await listSessions("ws-delete-corrupt", cwd)).toEqual([]);
 		await expect(deleteSession(session.sessionId, "ws-delete-corrupt", cwd)).rejects.toThrow(
 			"unreadable or malformed",
 		);
@@ -644,6 +695,73 @@ test("a malformed detached transcript is never treated as authoritative absence"
 		setSessionDeletedPublisher(() => {});
 		setTrashImplementationForTests(undefined);
 		setSessionManagerFactory(() => SessionManager.inMemory());
+	}
+});
+
+test("deleteSession clears its extension goal only after transcript deletion succeeds", async () => {
+	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	const previousDataDir = process.env.MEWA_CODE_DATA_DIR;
+	const goalRoot = tmpCwd("trpi-delete-goal-");
+	process.env.MEWA_CODE_DATA_DIR = goalRoot;
+	setTrashImplementationForTests(async (input) => {
+		const paths = typeof input === "string" ? [input] : input;
+		for (const path of paths) rmSync(path, { force: true });
+	});
+	let sessionId: string | undefined;
+	try {
+		const cwd = tmpCwd("trpi-delete-goal-cwd-");
+		const session = await createSession({
+			cwd,
+			workspaceId: "ws-delete-goal",
+			model: toWireModel(fauxA.getModel()),
+		});
+		sessionId = session.sessionId;
+		await promptSession(session.sessionId, "persist goal deletion");
+		writeStoredSessionGoal("ws-delete-goal", session.sessionId, "remove after delete");
+
+		await deleteSession(session.sessionId, "ws-delete-goal", cwd);
+		expect(readStoredSessionGoal("ws-delete-goal", session.sessionId)).toBeNull();
+	} finally {
+		if (sessionId && hasSession(sessionId)) removeSession(sessionId);
+		setTrashImplementationForTests(undefined);
+		setSessionManagerFactory(() => SessionManager.inMemory());
+		if (previousDataDir === undefined) delete process.env.MEWA_CODE_DATA_DIR;
+		else process.env.MEWA_CODE_DATA_DIR = previousDataDir;
+	}
+});
+
+test("deleteSession preserves its extension goal when transcript deletion fails", async () => {
+	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	const previousDataDir = process.env.MEWA_CODE_DATA_DIR;
+	const goalRoot = tmpCwd("trpi-delete-goal-failure-");
+	process.env.MEWA_CODE_DATA_DIR = goalRoot;
+	setTrashImplementationForTests(async () => {
+		throw new Error("recycle bin unavailable");
+	});
+	let sessionId: string | undefined;
+	try {
+		const cwd = tmpCwd("trpi-delete-goal-failure-cwd-");
+		const session = await createSession({
+			cwd,
+			workspaceId: "ws-delete-goal-failure",
+			model: toWireModel(fauxA.getModel()),
+		});
+		sessionId = session.sessionId;
+		await promptSession(session.sessionId, "preserve goal deletion");
+		writeStoredSessionGoal("ws-delete-goal-failure", session.sessionId, "keep after failure");
+
+		await expect(deleteSession(session.sessionId, "ws-delete-goal-failure", cwd)).rejects.toThrow(
+			"recycle bin unavailable",
+		);
+		expect(readStoredSessionGoal("ws-delete-goal-failure", session.sessionId)?.goal).toBe(
+			"keep after failure",
+		);
+	} finally {
+		if (sessionId && hasSession(sessionId)) removeSession(sessionId);
+		setTrashImplementationForTests(undefined);
+		setSessionManagerFactory(() => SessionManager.inMemory());
+		if (previousDataDir === undefined) delete process.env.MEWA_CODE_DATA_DIR;
+		else process.env.MEWA_CODE_DATA_DIR = previousDataDir;
 	}
 });
 
@@ -962,6 +1080,83 @@ test("removeWorkspaceSessions: archives a workspace's live sessions + purges the
 		removeSession(survivor.sessionId);
 	} finally {
 		setSessionManagerFactory(() => SessionManager.inMemory());
+	}
+});
+
+test("removeWorkspaceSessions clears every extension goal only after the workspace purge succeeds", async () => {
+	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	const previousDataDir = process.env.MEWA_CODE_DATA_DIR;
+	const goalRoot = tmpCwd("trpi-workspace-goals-");
+	process.env.MEWA_CODE_DATA_DIR = goalRoot;
+	let sessionId: string | undefined;
+	try {
+		fauxA.setResponses([fauxAssistantMessage("WORKSPACE_GOAL_PURGE")]);
+		const cwd = tmpCwd("trpi-workspace-goals-cwd-");
+		const session = await createSession({
+			cwd,
+			workspaceId: "ws-workspace-goals",
+			model: toWireModel(fauxA.getModel()),
+		});
+		sessionId = session.sessionId;
+		await promptSession(session.sessionId, "purge workspace goals");
+		const info = (await SessionManager.list(cwd)).find((item) => item.id === session.sessionId);
+		if (!info) throw new Error("expected the workspace transcript to exist");
+		writeStoredSessionGoal("ws-workspace-goals", session.sessionId, "remove with workspace");
+		writeStoredSessionGoal("ws-workspace-goals", "detached-goal", "remove detached goal");
+
+		await removeWorkspaceSessions("ws-workspace-goals", cwd);
+
+		expect(existsSync(info.path)).toBe(false);
+		expect(readStoredSessionGoal("ws-workspace-goals", session.sessionId)).toBeNull();
+		expect(readStoredSessionGoal("ws-workspace-goals", "detached-goal")).toBeNull();
+	} finally {
+		if (sessionId && hasSession(sessionId)) removeSession(sessionId);
+		setSessionManagerFactory(() => SessionManager.inMemory());
+		if (previousDataDir === undefined) delete process.env.MEWA_CODE_DATA_DIR;
+		else process.env.MEWA_CODE_DATA_DIR = previousDataDir;
+	}
+});
+
+test("removeWorkspaceSessions preserves extension goals when transcript purge fails", async () => {
+	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	const previousDataDir = process.env.MEWA_CODE_DATA_DIR;
+	const goalRoot = tmpCwd("trpi-workspace-goals-failure-");
+	process.env.MEWA_CODE_DATA_DIR = goalRoot;
+	let sessionId: string | undefined;
+	let sessionDirectory: string | undefined;
+	try {
+		fauxA.setResponses([fauxAssistantMessage("WORKSPACE_GOAL_FAILURE")]);
+		const cwd = tmpCwd("trpi-workspace-goals-failure-cwd-");
+		const session = await createSession({
+			cwd,
+			workspaceId: "ws-workspace-goals-failure",
+			model: toWireModel(fauxA.getModel()),
+		});
+		sessionId = session.sessionId;
+		await promptSession(session.sessionId, "preserve workspace goal");
+		const info = (await SessionManager.list(cwd)).find((item) => item.id === session.sessionId);
+		if (!info) throw new Error("expected the workspace transcript to exist");
+		sessionDirectory = dirname(info.path);
+		writeStoredSessionGoal(
+			"ws-workspace-goals-failure",
+			session.sessionId,
+			"keep after workspace failure",
+		);
+		chmodSync(sessionDirectory, 0o555);
+		try {
+			await expect(removeWorkspaceSessions("ws-workspace-goals-failure", cwd)).rejects.toThrow();
+		} finally {
+			chmodSync(sessionDirectory, 0o755);
+		}
+		expect(readStoredSessionGoal("ws-workspace-goals-failure", session.sessionId)?.goal).toBe(
+			"keep after workspace failure",
+		);
+	} finally {
+		if (sessionDirectory) chmodSync(sessionDirectory, 0o755);
+		if (sessionId && hasSession(sessionId)) removeSession(sessionId);
+		setSessionManagerFactory(() => SessionManager.inMemory());
+		if (previousDataDir === undefined) delete process.env.MEWA_CODE_DATA_DIR;
+		else process.env.MEWA_CODE_DATA_DIR = previousDataDir;
 	}
 });
 

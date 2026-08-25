@@ -3,46 +3,41 @@ import { decideSkill, isSkillLoaded, type SkillAdmissionContext } from "./skillA
 
 const EMPTY: SkillAdmissionContext = {
 	trusted: false,
-	acknowledged: [],
 	disabled: [],
 	disabledGroups: [],
 	overrides: {},
 };
-const alias = (name: string) => ({ name, isProjectAlias: true, group: "project", isPlugin: false });
+const projectSkill = (name: string, group = "project") => ({
+	name,
+	isProjectSkill: true,
+	group,
+	isPlugin: false,
+});
 const own = (name: string, group = "personal") => ({
 	name,
-	isProjectAlias: false,
+	isProjectSkill: false,
 	group,
 	isPlugin: false,
 });
 const pluginSkill = (name: string, plugin: string) => ({
 	name,
-	isProjectAlias: false,
+	isProjectSkill: false,
 	group: plugin,
 	isPlugin: true,
 });
 
-describe("decideSkill — trust gate (project-scoped aliases)", () => {
-	it("withholds an alias until the project is trusted", () => {
-		expect(decideSkill(alias("deploy"), EMPTY)).toBe("untrusted");
+describe("decideSkill — native project trust", () => {
+	it("withholds project skills until the project is trusted", () => {
+		expect(decideSkill(projectSkill("deploy"), EMPTY)).toBe("untrusted");
+		expect(decideSkill(projectSkill("deploy"), { ...EMPTY, trusted: true })).toBe("load");
 	});
 
-	it("flags a trusted-but-unacknowledged alias as pending-ack (appeared after the grant)", () => {
-		expect(decideSkill(alias("deploy"), { ...EMPTY, trusted: true })).toBe("pending-ack");
-	});
-
-	it("loads an acknowledged alias under a trusted project", () => {
-		expect(
-			decideSkill(alias("deploy"), { ...EMPTY, trusted: true, acknowledged: ["deploy"] }),
-		).toBe("load");
-	});
-
-	it("never gates personal/bundled/pi-native skills on trust", () => {
+	it("never gates personal or Pi-native skills on project trust", () => {
 		expect(decideSkill(own("brainstorming"), EMPTY)).toBe("load");
 	});
 });
 
-describe("decideSkill — enable/disable (workspace override over project baseline)", () => {
+describe("decideSkill — enable/disable", () => {
 	it("project baseline disables a skill", () => {
 		expect(decideSkill(own("noisy"), { ...EMPTY, disabled: ["noisy"] })).toBe("disabled");
 	});
@@ -56,41 +51,18 @@ describe("decideSkill — enable/disable (workspace override over project baseli
 			"load",
 		);
 	});
+});
 
-	it("the workspace override wins over the project baseline both ways", () => {
-		expect(decideSkill(own("x"), { ...EMPTY, disabled: ["x"], overrides: { x: "off" } })).toBe(
-			"disabled",
+describe("decideSkill — trust is checked before toggles", () => {
+	it("an 'on' override cannot un-gate an untrusted project skill", () => {
+		expect(decideSkill(projectSkill("evil"), { ...EMPTY, overrides: { evil: "on" } })).toBe(
+			"untrusted",
 		);
-		expect(decideSkill(own("y"), { ...EMPTY, overrides: { y: "off" } })).toBe("disabled");
 	});
 });
 
-describe("decideSkill — the trust gate is checked before the toggle layer (safety)", () => {
-	it("an 'on' override can NOT un-gate an untrusted alias", () => {
-		expect(decideSkill(alias("evil"), { ...EMPTY, overrides: { evil: "on" } })).toBe("untrusted");
-	});
-
-	it("an 'on' override can NOT un-gate a trusted-but-unacknowledged alias", () => {
-		expect(decideSkill(alias("evil"), { ...EMPTY, trusted: true, overrides: { evil: "on" } })).toBe(
-			"pending-ack",
-		);
-	});
-
-	it("an acknowledged alias can still be turned off by a workspace override", () => {
-		expect(
-			decideSkill(alias("deploy"), {
-				trusted: true,
-				acknowledged: ["deploy"],
-				disabled: [],
-				disabledGroups: [],
-				overrides: { deploy: "off" },
-			}),
-		).toBe("disabled");
-	});
-});
-
-describe("decideSkill — group / source disable (per-project baseline)", () => {
-	it("disables every skill in a disabled group (a plugin, or a source tier)", () => {
+describe("decideSkill — group / source disable", () => {
+	it("disables every skill in a disabled group", () => {
 		expect(
 			decideSkill(pluginSkill("x", "superpowers"), { ...EMPTY, disabledGroups: ["superpowers"] }),
 		).toBe("disabled");
@@ -99,10 +71,9 @@ describe("decideSkill — group / source disable (per-project baseline)", () => 
 		);
 	});
 
-	it("the @plugins super-toggle disables all plugin skills but not personal/bundled", () => {
+	it("the @plugins super-toggle disables plugin skills but not personal skills", () => {
 		const ctx = { ...EMPTY, disabledGroups: ["@plugins"] };
 		expect(decideSkill(pluginSkill("x", "superpowers"), ctx)).toBe("disabled");
-		expect(decideSkill(pluginSkill("y", "chrome-devtools-mcp"), ctx)).toBe("disabled");
 		expect(decideSkill(own("z", "personal"), ctx)).toBe("load");
 	});
 
@@ -115,15 +86,11 @@ describe("decideSkill — group / source disable (per-project baseline)", () => 
 			}),
 		).toBe("load");
 	});
-
-	it("a disabled group still can't un-gate an untrusted project alias (trust checked first)", () => {
-		expect(decideSkill(alias("a"), { ...EMPTY, disabledGroups: ["project"] })).toBe("untrusted");
-	});
 });
 
 describe("isSkillLoaded", () => {
 	it("is true only for a 'load' verdict", () => {
 		expect(isSkillLoaded(own("a"), EMPTY)).toBe(true);
-		expect(isSkillLoaded(alias("a"), EMPTY)).toBe(false);
+		expect(isSkillLoaded(projectSkill("a"), EMPTY)).toBe(false);
 	});
 });

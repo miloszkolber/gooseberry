@@ -1,4 +1,10 @@
-import type { AppConfig } from "@mewa-code/contracts";
+import {
+	type AppConfig,
+	type AppConfigPatch,
+	DEFAULT_CONFIG,
+	DEFAULT_PI_PROFILE_SETTINGS,
+	type PiProfileSettings,
+} from "@mewa-code/contracts";
 import { loadConfig, saveConfig } from "../persistence";
 
 type SettingsPublisher = (config: AppConfig) => void;
@@ -11,15 +17,51 @@ export function setSettingsPublisher(fn: SettingsPublisher | null): void {
 
 let cached: AppConfig | null = null;
 
+function normalizeProfileSettings(value: unknown): PiProfileSettings {
+	const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	const read = (key: keyof PiProfileSettings): boolean | undefined => {
+		const candidate = Reflect.get(raw, key);
+		return typeof candidate === "boolean" ? candidate : undefined;
+	};
+	return {
+		browser: read("browser") ?? DEFAULT_PI_PROFILE_SETTINGS.browser,
+		webAccess: read("webAccess") ?? DEFAULT_PI_PROFILE_SETTINGS.webAccess,
+		signetMemory: read("signetMemory") ?? DEFAULT_PI_PROFILE_SETTINGS.signetMemory,
+		goals: read("goals") ?? DEFAULT_PI_PROFILE_SETTINGS.goals,
+		subagents: read("subagents") ?? DEFAULT_PI_PROFILE_SETTINGS.subagents,
+	};
+}
+
+function normalizeConfig(value: AppConfig): AppConfig {
+	return {
+		...value,
+		theme: typeof value.theme === "string" ? value.theme : DEFAULT_CONFIG.theme,
+		terminalReplayKb:
+			typeof value.terminalReplayKb === "number" && Number.isFinite(value.terminalReplayKb)
+				? value.terminalReplayKb
+				: DEFAULT_CONFIG.terminalReplayKb,
+		piProfile: normalizeProfileSettings(value.piProfile),
+	};
+}
+
 export function getConfig(): AppConfig {
-	cached ??= loadConfig();
+	cached ??= normalizeConfig(loadConfig());
 	return cached;
 }
 
-export function updateConfig(partial: Partial<AppConfig>): AppConfig {
-	const next: AppConfig = { ...getConfig(), ...partial };
-	cached = next;
+export function updateConfig(partial: AppConfigPatch): AppConfig {
+	const current = getConfig();
+	const currentProfile = current.piProfile ?? DEFAULT_PI_PROFILE_SETTINGS;
+	const next: AppConfig = normalizeConfig({
+		...current,
+		...partial,
+		piProfile: {
+			...currentProfile,
+			...(partial.piProfile ?? {}),
+		},
+	});
 	saveConfig(next);
+	cached = next;
 	publishSettings?.(next);
 	return next;
 }

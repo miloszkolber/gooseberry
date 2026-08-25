@@ -65,6 +65,7 @@ export function NewWorkspaceDialog({
 	projectId,
 	initialPrompt,
 	promptNote,
+	initialTarget = "default",
 	onOpenChange,
 	onCreated,
 }: {
@@ -72,17 +73,18 @@ export function NewWorkspaceDialog({
 	projectId: string;
 	initialPrompt?: string;
 	promptNote?: string;
+	initialTarget?: WorkspaceTarget;
 	onOpenChange: (open: boolean) => void;
 	onCreated: (workspace: Workspace) => void;
 }) {
 	const projects = useAppStore((s) => s.projects);
 
 	const [selectedProjectId, setSelectedProjectId] = useState(projectId);
-	const [target, setTarget] = useState<WorkspaceTarget>("worktree");
+	const [target, setTarget] = useState<WorkspaceTarget>(initialTarget);
 	const [baseRef, setBaseRef] = useState<string>("");
 	const [prompt, setPrompt] = useState("");
 	const [skillCommands, setSkillCommands] = useState<SlashCommandInfo[]>([]);
-	const [aliasSkills, setAliasSkills] = useState<string[]>([]);
+	const [projectSkillCount, setProjectSkillCount] = useState(0);
 	const [model, setModel] = useState<WireModel | null>(null);
 	const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("medium");
 	const [creating, setCreating] = useState(false);
@@ -116,10 +118,10 @@ export function NewWorkspaceDialog({
 		if (!open) return;
 		setSelectedProjectId(projectId);
 		setPrompt(initialPrompt ?? "");
-		setTarget("worktree");
+		setTarget(initialTarget);
 		setCreating(false);
 		hostDefaultAsked.current = false;
-	}, [open, projectId, initialPrompt]);
+	}, [open, projectId, initialPrompt, initialTarget]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -145,11 +147,11 @@ export function NewWorkspaceDialog({
 	useEffect(() => {
 		if (!open) return;
 		let cancelled = false;
-		setAliasSkills([]);
+		setProjectSkillCount(0);
 		getTransport()
-			.request("project.aliasSkills", { projectId: selectedProjectId })
-			.then((names) => {
-				if (!cancelled) setAliasSkills(names);
+			.request("project.skills", { projectId: selectedProjectId })
+			.then((entries) => {
+				if (!cancelled) setProjectSkillCount(entries.filter((entry) => entry.gated).length);
 			})
 			.catch(() => {});
 		return () => {
@@ -347,20 +349,20 @@ export function NewWorkspaceDialog({
 				>
 					<legend className="sr-only">Where the work runs</legend>
 					<TargetOption
-						icon={GitBranch}
-						label="Isolated workspace"
-						name={targetGroupName}
-						active={isolated}
-						testid="ws-target-worktree"
-						onSelect={() => setTarget("worktree")}
-					/>
-					<TargetOption
 						icon={House}
 						label="Project folder"
 						name={targetGroupName}
 						active={!isolated}
 						testid="ws-target-default"
 						onSelect={() => setTarget("default")}
+					/>
+					<TargetOption
+						icon={GitBranch}
+						label="Isolated workspace"
+						name={targetGroupName}
+						active={isolated}
+						testid="ws-target-worktree"
+						onSelect={() => setTarget("worktree")}
 					/>
 				</fieldset>
 
@@ -391,15 +393,15 @@ export function NewWorkspaceDialog({
 					/>
 				</div>
 
-				{selectedProject && selectedProject.trusted !== true && aliasSkills.length > 0 ? (
+				{selectedProject && selectedProject.trusted !== true && projectSkillCount > 0 ? (
 					<div
 						data-testid="ws-trust-notice"
 						className="flex w-full items-center gap-sm rounded-[var(--radius-sm)] border border-border-default border-l-[3px] border-l-feedback-warning bg-feedback-warning-subtle px-md py-sm text-left"
 					>
 						<TriangleAlert className="size-4 shrink-0 text-feedback-warning" />
 						<span className="min-w-0 flex-1 tr-text-ui text-text-default">
-							This project ships {aliasSkills.length} skill{aliasSkills.length === 1 ? "" : "s"} —
-							off until you trust it. Your personal and Mewa Code's built-in skills are unaffected.
+							This project ships {projectSkillCount} skill{projectSkillCount === 1 ? "" : "s"} — off
+							until you trust it. Your personal and Mewa Code's built-in skills are unaffected.
 						</span>
 						<Button
 							size="sm"

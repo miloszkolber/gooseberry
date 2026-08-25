@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Workspace, WorkspaceWatchReadyResult } from "@mewa-code/contracts";
+import type {
+	PiProfileDescriptor,
+	Workspace,
+	WorkspaceWatchReadyResult,
+} from "@mewa-code/contracts";
+import { resetConfigCache } from "../settings";
 import { stopAllWatches } from "../watch";
 import { handleRequest } from "./handlers";
 
@@ -20,6 +25,7 @@ function git(cwd: string, ...args: string[]): void {
 beforeEach(() => {
 	dataDir = mkdtempSync(join(tmpdir(), "trpi-handlers-test-"));
 	process.env.MEWA_CODE_DATA_DIR = dataDir;
+	resetConfigCache();
 	repo = join(dataDir, "repo");
 	mkdirSync(repo);
 	git(repo, "init", "-b", "main");
@@ -39,6 +45,7 @@ afterEach(() => {
 	rmSync(dataDir, { recursive: true, force: true });
 	if (savedDataDir === undefined) delete process.env.MEWA_CODE_DATA_DIR;
 	else process.env.MEWA_CODE_DATA_DIR = savedDataDir;
+	resetConfigCache();
 });
 
 test("workspace.watchReady waits for startup once, then reports an already-ready watcher", async () => {
@@ -73,4 +80,94 @@ test("workspace.remove rejects the Default at the handler level, before any tear
 	const after = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
 	expect(after.filter((w) => w.kind === "default")).toHaveLength(1);
 	expect(after[0]?.id).toBe(def.id);
+});
+
+test("session goal handlers require a known workspace session pair", async () => {
+	const rows = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
+	const workspace = rows[0];
+	if (!workspace) throw new Error("expected a workspace");
+
+	await expect(
+		handleRequest(
+			"session.goalGet",
+			{ workspaceId: workspace.id, sessionId: "not-a-session" },
+			CTX,
+		),
+	).rejects.toThrow("Unknown session");
+	await expect(
+		handleRequest(
+			"session.goalGet",
+			{ workspaceId: "not-a-workspace", sessionId: "not-a-session" },
+			CTX,
+		),
+	).rejects.toThrow("Unknown workspace");
+});
+
+test("settings.profile exposes the curated state without exposing configuration secrets", async () => {
+	const initial = (await handleRequest("settings.profile", {}, CTX)) as PiProfileDescriptor;
+	expect(initial.id).toBe("mewa");
+	expect(initial.capabilities.map((capability) => capability.id)).toEqual([
+		"browser",
+		"webAccess",
+		"signetMemory",
+		"goals",
+		"subagents",
+		"protectedStateGuard",
+	]);
+	const signet = initial.capabilities.find((capability) => capability.id === "signetMemory");
+	expect(signet).toMatchObject({ available: false, enabled: false });
+	expect(JSON.stringify(initial)).not.toContain("SIGNET_DAEMON_URL");
+
+	await handleRequest("settings.update", { config: { piProfile: { browser: false } } }, CTX);
+	const updated = (await handleRequest("settings.profile", {}, CTX)) as PiProfileDescriptor;
+	expect(updated.capabilities.find((capability) => capability.id === "browser")).toMatchObject({
+		available: true,
+		enabled: false,
+	});
+	expect(
+		updated.capabilities.find((capability) => capability.id === "protectedStateGuard"),
+	).toMatchObject({
+		available: true,
+		enabled: true,
+		required: true,
+	});
+});
+
+test("fs.writeFile saves a file through the retained host boundary", async () => {
+	const rows = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
+	const workspace = rows[0];
+	if (!workspace) throw new Error("expected a workspace");
+
+	await expect(
+		handleRequest(
+			"fs.writeFile",
+			{ workspaceId: workspace.id, path: "README.md", content: "# updated\n" },
+			CTX,
+		),
+	).resolves.toEqual({ ok: true });
+	expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("# updated\n");
+});
+
+test("fs.writeFile rejects escaping and symlink paths", async () => {
+	const rows = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
+	const workspace = rows[0];
+	if (!workspace) throw new Error("expected a workspace");
+	const outside = join(dataDir, "outside");
+	mkdirSync(outside);
+	symlinkSync(outside, join(repo, "link"), "dir");
+
+	await expect(
+		handleRequest(
+			"fs.writeFile",
+			{ workspaceId: workspace.id, path: "../outside/escape.txt", content: "nope" },
+			CTX,
+		),
+	).rejects.toThrow("Path escapes the worktree");
+	await expect(
+		handleRequest(
+			"fs.writeFile",
+			{ workspaceId: workspace.id, path: "link/escape.txt", content: "nope" },
+			CTX,
+		),
+	).rejects.toThrow("Path escapes the worktree");
 });

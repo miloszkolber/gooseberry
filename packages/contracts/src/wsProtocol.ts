@@ -1,5 +1,6 @@
 import type {
 	AppConfig,
+	AppConfigPatch,
 	BranchList,
 	DiffStats,
 	EditorInfo,
@@ -7,31 +8,15 @@ import type {
 	FileNode,
 	GitCommit,
 	GitDiffScope,
-	GithubAuthStatus,
 	GitStatus,
 	HistoryScope,
 	HistorySearchResult,
-	LayoutReplaceParams,
-	LayoutReplaceResult,
 	LoginReply,
-	OpenBranchReview,
+	PiProfileDescriptor,
 	Project,
-	ProjectPathStatus,
 	ProviderStatusReport,
-	ReviewAnchor,
-	ReviewComment,
-	ReviewCommentKind,
-	ReviewCommentStatus,
-	ReviewSnapshot,
-	SpecGraphSnapshot,
-	Template,
-	TemplateInfo,
-	TemplateScope,
-	TodoItem,
-	TodoPlan,
-	TodoStatus,
+	SessionGoal,
 	Workspace,
-	WorkspaceLayoutSnapshot,
 } from "./domain";
 import type {
 	AskUserAnswersDetails,
@@ -78,7 +63,7 @@ export interface TerminalTabsPush {
 	tabs: TerminalTabInfo[];
 }
 
-export const PROTOCOL_VERSION = 48;
+export const PROTOCOL_VERSION = 49;
 
 export interface ServerWelcome {
 	protocolVersion: number;
@@ -102,20 +87,14 @@ export const WS_METHODS = {
 	projectOpen: "project.open",
 	projectList: "project.list",
 	projectClose: "project.close",
-	projectInspect: "project.inspect",
-	projectInit: "project.init",
-	projectHasSpecs: "project.hasSpecs",
 	projectSetTrust: "project.setTrust",
-	projectAcknowledgeSkills: "project.acknowledgeSkills",
 	projectSetSkillEnabled: "project.setSkillEnabled",
-	projectAliasSkills: "project.aliasSkills",
 	projectSetGroupEnabled: "project.setGroupEnabled",
 	projectSkills: "project.skills",
 	workspaceCreate: "workspace.create",
 	workspaceListExisting: "workspace.listExisting",
 	workspaceOpenExisting: "workspace.openExisting",
 	workspaceList: "workspace.list",
-	workspaceOpenReview: "workspace.openReview",
 	workspaceRemove: "workspace.remove",
 	workspaceDiffStats: "workspace.diffStats",
 	workspaceSetSkillOverride: "workspace.setSkillOverride",
@@ -126,15 +105,9 @@ export const WS_METHODS = {
 	editorList: "editor.list",
 	gitListBranches: "git.listBranches",
 	gitPrefetch: "git.prefetch",
-	githubAuthStatus: "github.authStatus",
-	githubRefresh: "github.refresh",
 	fsReadDir: "fs.readDir",
 	fsReadFile: "fs.readFile",
-	specGraph: "spec.graph",
-	todoList: "todo.list",
-	todoAdd: "todo.add",
-	todoUpdate: "todo.update",
-	todoRemove: "todo.remove",
+	fsWriteFile: "fs.writeFile",
 	gitStatus: "git.status",
 	gitDiffFile: "git.diffFile",
 	gitListCommits: "git.listCommits",
@@ -153,7 +126,6 @@ export const WS_METHODS = {
 	sessionClearQueue: "session.clearQueue",
 	sessionRemoveQueued: "session.removeQueued",
 	sessionAbort: "session.abort",
-	sessionDispose: "session.dispose",
 	sessionDelete: "session.delete",
 	sessionSetModel: "session.setModel",
 	sessionSetThinkingLevel: "session.setThinkingLevel",
@@ -163,6 +135,9 @@ export const WS_METHODS = {
 	sessionReloadResources: "session.reloadResources",
 	sessionExtUiReply: "session.extUiReply",
 	sessionAnswerQuestion: "session.answerQuestion",
+	sessionGoalGet: "session.goalGet",
+	sessionGoalSet: "session.goalSet",
+	sessionGoalClear: "session.goalClear",
 	sessionList: "session.list",
 	sessionGetMessages: "session.getMessages",
 	modelList: "model.list",
@@ -174,22 +149,9 @@ export const WS_METHODS = {
 	providerLoginReply: "provider.loginReply",
 	providerLoginCancel: "provider.loginCancel",
 	providerLogout: "provider.logout",
-	layoutGet: "layout.get",
-	layoutReplace: "layout.replace",
+	settingsProfile: "settings.profile",
 	settingsUpdate: "settings.update",
 	historySearch: "history.search",
-	reviewGet: "review.get",
-	reviewCommentAdd: "review.commentAdd",
-	reviewCommentUpdate: "review.commentUpdate",
-	reviewCommentDelete: "review.commentDelete",
-	reviewFileDone: "review.fileDone",
-	reviewSendComment: "review.sendComment",
-	reviewSendBatch: "review.sendBatch",
-	reviewClose: "review.close",
-	templateList: "template.list",
-	templateGet: "template.get",
-	templateSave: "template.save",
-	templateDelete: "template.delete",
 } as const;
 
 export const WS_CHANNELS = {
@@ -208,8 +170,6 @@ export const WS_CHANNELS = {
 	workspaceRemoved: "workspace.removed",
 	workspaceFsChanged: "workspace.fsChanged",
 	settingsChanged: "settings.changed",
-	layoutChanged: "layout.changed",
-	reviewChanged: "review.changed",
 } as const;
 
 export type WsMethod = (typeof WS_METHODS)[keyof typeof WS_METHODS];
@@ -239,13 +199,6 @@ export interface Ack {
 	ok: true;
 }
 
-export interface ReviewSendResult {
-	sessionId: string;
-	model: WireModel | null;
-	thinkingLevel: ThinkingLevel;
-	reused: boolean;
-}
-
 export interface WorkspaceWatchReadyResult {
 	startupNudge: boolean;
 }
@@ -254,16 +207,11 @@ export interface WsMethodMap {
 	"project.open": { params: { path: string }; result: Project };
 	"project.list": { params: Record<string, never>; result: Project[] };
 	"project.close": { params: { id: string }; result: Ack };
-	"project.inspect": { params: { path: string }; result: ProjectPathStatus };
-	"project.init": { params: { path: string }; result: Project };
-	"project.hasSpecs": { params: { projectId: string }; result: { hasSpecs: boolean } };
 	"project.setTrust": { params: { id: string; trusted: boolean }; result: Project };
-	"project.acknowledgeSkills": { params: { id: string; names: string[] }; result: Project };
 	"project.setSkillEnabled": {
 		params: { id: string; name: string; enabled: boolean };
 		result: Project;
 	};
-	"project.aliasSkills": { params: { projectId: string }; result: string[] };
 	"project.setGroupEnabled": {
 		params: { id: string; group: string; enabled: boolean };
 		result: Project;
@@ -285,10 +233,6 @@ export interface WsMethodMap {
 		params: { projectId: string; includeDiffStats?: boolean };
 		result: Workspace[];
 	};
-	"workspace.openReview": {
-		params: { workspaceId: string };
-		result: OpenBranchReview | null;
-	};
 	"workspace.remove": { params: { id: string }; result: Ack };
 	"workspace.diffStats": { params: { id: string }; result: DiffStats };
 	"workspace.setSkillOverride": {
@@ -305,31 +249,12 @@ export interface WsMethodMap {
 	"editor.list": { params: Record<string, never>; result: EditorInfo[] };
 	"git.listBranches": { params: { projectId: string }; result: BranchList };
 	"git.prefetch": { params: { projectId: string; ref: string }; result: { ok: boolean } };
-	"github.authStatus": { params: Record<string, never>; result: GithubAuthStatus };
-	"github.refresh": { params: Record<string, never>; result: GithubAuthStatus };
 	"fs.readDir": { params: { workspaceId: string; path: string }; result: FileNode[] };
 	"fs.readFile": { params: { workspaceId: string; path: string }; result: { content: string } };
-	"spec.graph": { params: { workspaceId: string }; result: SpecGraphSnapshot };
-	"todo.list": {
-		params: { workspaceId: string; sessionId: string };
-		result: TodoPlan;
+	"fs.writeFile": {
+		params: { workspaceId: string; path: string; content: string };
+		result: Ack;
 	};
-	"todo.add": {
-		params: { workspaceId: string; sessionId: string; title: string; note?: string };
-		result: TodoItem;
-	};
-	"todo.update": {
-		params: {
-			workspaceId: string;
-			sessionId: string;
-			id: string;
-			status?: TodoStatus;
-			title?: string;
-			note?: string;
-		};
-		result: TodoItem;
-	};
-	"todo.remove": { params: { workspaceId: string; sessionId: string; id: string }; result: Ack };
 	"git.status": { params: { workspaceId: string; scope?: GitDiffScope }; result: GitStatus };
 	"git.diffFile": {
 		params: { workspaceId: string; path: string; scope?: GitDiffScope };
@@ -375,7 +300,6 @@ export interface WsMethodMap {
 		result: RemovedQueuedMessage;
 	};
 	"session.abort": { params: { sessionId: string }; result: Ack };
-	"session.dispose": { params: { sessionId: string }; result: Ack };
 	"session.delete": { params: { workspaceId: string; sessionId: string }; result: Ack };
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
@@ -387,6 +311,18 @@ export interface WsMethodMap {
 	"session.answerQuestion": {
 		params: { sessionId: string; toolCallId: string; result: AskUserQuestionResult };
 		result: Ack;
+	};
+	"session.goalGet": {
+		params: { workspaceId: string; sessionId: string };
+		result: SessionGoal;
+	};
+	"session.goalSet": {
+		params: { workspaceId: string; sessionId: string; goal: string };
+		result: SessionGoal;
+	};
+	"session.goalClear": {
+		params: { workspaceId: string; sessionId: string };
+		result: SessionGoal;
 	};
 	"session.list": { params: { workspaceId: string }; result: SessionSummary[] };
 	"session.getMessages": {
@@ -411,74 +347,11 @@ export interface WsMethodMap {
 	"provider.loginReply": { params: LoginReply; result: Ack };
 	"provider.loginCancel": { params: { loginId: string }; result: Ack };
 	"provider.logout": { params: { providerId: string }; result: Ack };
-	"layout.get": {
-		params: { workspaceId: string };
-		result: WorkspaceLayoutSnapshot | null;
-	};
-	"layout.replace": { params: LayoutReplaceParams; result: LayoutReplaceResult };
-	"settings.update": { params: { config: Partial<AppConfig> }; result: AppConfig };
+	"settings.profile": { params: Record<string, never>; result: PiProfileDescriptor };
+	"settings.update": { params: { config: AppConfigPatch }; result: AppConfig };
 	"history.search": {
 		params: { query: string; scope: HistoryScope; limit?: number };
 		result: HistorySearchResult;
-	};
-	"review.get": { params: { workspaceId: string }; result: ReviewSnapshot };
-	"review.commentAdd": {
-		params: {
-			workspaceId: string;
-			kind: ReviewCommentKind;
-			anchor: ReviewAnchor | null;
-			body: string;
-			scope?: GitDiffScope;
-		};
-		result: ReviewComment;
-	};
-	"review.commentUpdate": {
-		params: { workspaceId: string; id: string; body?: string; status?: ReviewCommentStatus };
-		result: ReviewComment;
-	};
-	"review.sendComment": {
-		params: {
-			workspaceId: string;
-			id: string;
-			sessionId?: string;
-			model?: WireModel;
-			thinkingLevel?: ThinkingLevel;
-		};
-		result: ReviewSendResult;
-	};
-	"review.sendBatch": {
-		params: {
-			workspaceId: string;
-			commentIds?: string[];
-			sessionId?: string;
-			model?: WireModel;
-			thinkingLevel?: ThinkingLevel;
-		};
-		result: { sessions: ReviewSendResult[] };
-	};
-	"review.commentDelete": { params: { workspaceId: string; id: string }; result: Ack };
-	"review.fileDone": { params: { workspaceId: string; path: string }; result: Ack };
-	"review.close": { params: { workspaceId: string }; result: Ack };
-	"template.list": {
-		params: { workspaceId?: string };
-		result: { templates: TemplateInfo[] };
-	};
-	"template.get": {
-		params: { workspaceId?: string; name: string; scope?: TemplateScope };
-		result: Template;
-	};
-	"template.save": {
-		params: {
-			workspaceId?: string;
-			scope: TemplateScope;
-			name: string;
-			content: string;
-		};
-		result: Template;
-	};
-	"template.delete": {
-		params: { workspaceId?: string; scope: TemplateScope; name: string };
-		result: Ack;
 	};
 }
 

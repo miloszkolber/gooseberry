@@ -4,7 +4,6 @@ export type { SkillDecision };
 
 export interface SkillAdmissionContext {
 	trusted: boolean;
-	acknowledged: readonly string[];
 	disabled: readonly string[];
 	disabledGroups: readonly string[];
 	overrides: Readonly<Record<string, "on" | "off">>;
@@ -12,15 +11,14 @@ export interface SkillAdmissionContext {
 
 export interface SkillFacts {
 	name: string;
-	isProjectAlias: boolean;
+	isProjectSkill: boolean;
 	group: string;
 	isPlugin: boolean;
 }
 
 export function decideSkill(skill: SkillFacts, ctx: SkillAdmissionContext): SkillDecision {
-	if (skill.isProjectAlias) {
+	if (skill.isProjectSkill) {
 		if (!ctx.trusted) return "untrusted";
-		if (!ctx.acknowledged.includes(skill.name)) return "pending-ack";
 	}
 	const override = ctx.overrides[skill.name];
 	if (override === "off") return "disabled";

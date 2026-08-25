@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { TodoStore } from "pi-todos/core";
 import {
 	defaultWorkspaceRow,
 	enterDefaultWorkspace,
@@ -19,58 +18,8 @@ function setMtime(path: string, ms: number): void {
 	utimesSync(path, new Date(ms), new Date(ms));
 }
 
-function seedOpenTodo(sessionId: string, title: string): void {
-	const contextDir = join(repoCwd(), ".mewa-code", "context");
-	mkdirSync(contextDir, { recursive: true });
-	writeFileSync(join(contextDir, ".gitignore"), "*\n");
-	new TodoStore(repoCwd(), sessionId).add({ title });
-}
-
 test.afterEach(() => {
 	rmSync(join(E2E_FIXTURE_REPO, ".mewa-code"), { recursive: true, force: true });
-});
-
-test("a disk chat with unfinished TODOs auto-opens (scrolled to its latest message); the rest go to history", async ({
-	page,
-}) => {
-	await openFixtureProject(page);
-
-	const todoChat = seedWorkspaceSession(repoCwd(), {
-		name: "the migration chat",
-		messages: [
-			{ role: "user", text: "start the migration", timestamp: BASE_TS },
-			...Array.from({ length: 30 }, (_, i) => ({
-				role: "assistant" as const,
-				text: `migration step ${i + 1} done`,
-				timestamp: BASE_TS + 1_000 + i,
-			})),
-			{
-				role: "assistant",
-				text: "stopped before the final verification pass",
-				timestamp: BASE_TS + 60_000,
-			},
-		],
-	});
-	setMtime(todoChat.path, BASE_TS);
-	seedOpenTodo(todoChat.id, "run the final verification pass");
-
-	const doneChat = seedWorkspaceSession(repoCwd(), {
-		name: "release notes chat",
-		messages: [{ role: "user", text: "ship the release notes", timestamp: BASE_TS + 100_000 }],
-	});
-	setMtime(doneChat.path, BASE_TS + 100_000);
-
-	await enterDefaultWorkspace(page);
-
-	const chatTabs = page.locator('[data-testid="editor-tab"][data-kind="chat"]');
-	await expect(chatTabs).toHaveCount(1);
-	await expect(page.getByTestId("workspace-ready")).toHaveCount(0);
-	await expect(page.getByText("stopped before the final verification pass")).toBeVisible();
-
-	await page.getByTestId("chat-history").click();
-	await expect(
-		page.getByTestId("closed-chat-item").filter({ hasText: "release notes chat" }),
-	).toHaveCount(1);
 });
 
 test("a closed chat can be moved to trash from history", async ({ page }) => {

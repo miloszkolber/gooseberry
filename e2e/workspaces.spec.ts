@@ -204,7 +204,7 @@ test("creates, removes, and re-creates worktree workspaces (no branch collision)
 	await expect(items).toHaveCount(0);
 
 	await expect(page.getByTestId("welcome")).toBeVisible();
-	await expect(page.getByTestId("center-tabs")).toHaveCount(0);
+	await expect(page.getByTestId("workspace-workbench")).toHaveCount(0);
 	await expect
 		.poll(
 			() =>

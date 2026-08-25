@@ -1,17 +1,12 @@
 import { messagesToRuntime } from "../chat/hydrate";
-import {
-	type CenterNavigationStamp,
-	type LayoutOpenOptions,
-	layoutOpenOptionsForNavigation,
-	toast,
-	useAppStore,
-} from "../store";
+import { chatTabId, toast, useAppStore } from "../store";
 import { errorText, getSessionMessagesWithSkillBaseline } from "../transport";
 
+/** Open a session in the fixed editor strip. The legacy navigation argument is ignored. */
 export async function openChatInTab(
 	workspaceId: string,
 	sessionId: string,
-	requestedNavigation?: CenterNavigationStamp | null,
+	_requestedNavigation?: unknown,
 	background = false,
 ): Promise<void> {
 	const initial = useAppStore.getState();
@@ -23,24 +18,27 @@ export async function openChatInTab(
 	) {
 		return;
 	}
-	const navigation =
-		requestedNavigation === undefined
-			? useAppStore.getState().beginCenterNavigation(workspaceId)
-			: requestedNavigation;
+	const options = background ? { activate: false } : undefined;
 	const store = useAppStore.getState();
-	const routedOptions = layoutOpenOptionsForNavigation(store, workspaceId, navigation);
-	const options: LayoutOpenOptions = background
-		? { ...routedOptions, activate: false }
-		: routedOptions;
 	const tab = (store.tabsByWorkspace[workspaceId] ?? []).find(
 		(t) => t.kind === "chat" && t.sessionId === sessionId,
 	);
 	if (tab) {
-		store.openTab(tab, "keep", true, options);
+		store.openTab(tab, "keep", options);
 		return;
 	}
 	if (store.sessions[sessionId]) {
-		store.reopenChat(workspaceId, sessionId, options);
+		store.openTab(
+			{
+				kind: "chat",
+				id: chatTabId(workspaceId, sessionId),
+				workspaceId,
+				name: "Chat",
+				sessionId,
+			},
+			"keep",
+			options,
+		);
 		return;
 	}
 	try {
@@ -55,18 +53,14 @@ export async function openChatInTab(
 			!current.removedWorkspaceIds[workspaceId] &&
 			!current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
 		) {
-			return openChatInTab(workspaceId, sessionId, navigation, background);
+			return openChatInTab(workspaceId, sessionId, undefined, background);
 		}
-		const routed = layoutOpenOptionsForNavigation(current, workspaceId, navigation);
-		const effectiveOptions: LayoutOpenOptions = background
-			? { ...routed, activate: false }
-			: routed;
 		current.hydrateSession(
 			summary,
 			messagesToRuntime(messages, summary.lastSettlement),
-			true,
+			!background,
 			summary.live ? undefined : syncedTick,
-			effectiveOptions,
+			options,
 		);
 		const settled = useAppStore.getState();
 		const installed =
@@ -76,7 +70,7 @@ export async function openChatInTab(
 			);
 		if (
 			!installed &&
-			effectiveOptions.activate !== false &&
+			!background &&
 			!settled.removedWorkspaceIds[workspaceId] &&
 			!settled.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
 		) {
@@ -86,7 +80,6 @@ export async function openChatInTab(
 		const current = useAppStore.getState();
 		if (
 			!background &&
-			layoutOpenOptionsForNavigation(current, workspaceId, navigation).activate !== false &&
 			!current.removedWorkspaceIds[workspaceId] &&
 			!current.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
 		) {

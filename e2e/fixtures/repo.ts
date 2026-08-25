@@ -45,32 +45,13 @@ export function seedFixtureRepo(): void {
 			"",
 		].join("\n"),
 	);
-	writeFileSync(
-		join(E2E_FIXTURE_REPO, "DIAGRAM.md"),
-		[
-			"# Diagram demo",
-			"",
-			"```mermaid",
-			"flowchart TD; Start --> Finish",
-			"```",
-			"",
-			"```mermaid",
-			"flowchart TD; Start --> --> broken",
-			"```",
-			"",
-			"```bash",
-			"echo plain-fence-stays-code",
-			"```",
-			"",
-		].join("\n"),
-	);
 	writeFileSync(join(E2E_FIXTURE_REPO, "LARGE.md"), largeRepetitiveMarkdown());
 	writeFileSync(
 		join(E2E_FIXTURE_REPO, "LINKS.md"),
 		[
 			"# Link demo",
 			"",
-			"Jump to [Section two](#section-two), open [the spec](SPEC.md), and see the logo:",
+			"Jump to [Section two](#section-two), open [the README](README.md), and see the logo:",
 			"",
 			"![logo](logo.png)",
 			"",
@@ -86,15 +67,6 @@ export function seedFixtureRepo(): void {
 			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMCAoGB9x0AAAAASUVORK5CYII=",
 			"base64",
 		),
-	);
-	writeFileSync(
-		join(E2E_FIXTURE_REPO, "SPEC.md"),
-		"---\nid: sample-root\ntype: goal-and-requirements\ntitle: Sample Project\n---\n\n## Goal\n\nA throwaway fixture project for the mewa-code e2e suite. It carries the token SPECGRAPHPROBE so spec_grep has a deterministic match to find.\n",
-	);
-	mkdirSync(join(E2E_FIXTURE_REPO, "module-a"), { recursive: true });
-	writeFileSync(
-		join(E2E_FIXTURE_REPO, "module-a", "SPEC.md"),
-		"---\nid: sample-module\ntype: module-design\nstatus: active\ntitle: Sample Module\nparent: sample-root\n---\n\n## Responsibility\n\nA fixture module spec, child of sample-root.\n",
 	);
 	const skillDir = join(E2E_FIXTURE_REPO, ".claude", "skills", "e2e-portable");
 	mkdirSync(skillDir, { recursive: true });

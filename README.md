@@ -2,7 +2,7 @@
 
 Mewa Code is a focused web interface for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent. It organizes local Git repositories, optional worktrees, persistent Pi sessions, files, terminals, and local changes. Pi ships with a visible Mewa profile integrating browser QA, web search, memory, goals, and subagents while remaining authoritative for models, credentials, prompts, tools, extensions, compaction, retry, usage, cost, and canonical JSONL history.
 
-The canonical product scope is [`docs/product-baseline.md`](docs/product-baseline.md). The current branch is an oversized ThinkRail-derived foundation. Its workbench, review, spec, workflow, website, release, and compatibility systems are implementation inventory to reduce or remove. The old isolated `mewa-browser` service is not present yet and must be restored.
+The canonical product scope is [`docs/product-baseline.md`](docs/product-baseline.md). Legacy review, spec, workflow, website, release, visualization, todo, template, and GitHub systems have been removed from this focused foundation. The isolated `mewa-browser` service is restored under `mewa-browser/` and exposed to Pi through the focused browser extension package.
 
 This branch is the source foundation for the new product. It does not publish binaries or installers yet. Runtime prerequisites include `git` on PATH. Agent-backed runs require an authenticated Pi provider, which may be configured through supported Pi-backed UI actions. Mewa Code never requires a standalone `pi` executable.
 
@@ -23,7 +23,7 @@ bun install
 bun run dev
 ```
 
-Run the current imported launcher with `bun run --filter @mewa-code/cli dev`. Binary packaging exists in the foundation but is not part of the simplification baseline.
+Run the local launcher with `bun run --filter @mewa-code/cli dev`.
 
 ## Architecture
 
@@ -40,12 +40,10 @@ apps/
   cli/        current entrypoint: boot host and open browser
   web/        browser UI client
   desktop/    inherited deferred launcher, not baseline scope
-  website/    inherited unpublished preview, removal candidate
 packages/
   server/     createServer(): Bun.serve + AgentSessionManager
   contracts/  the wire, types-only
   shared/     server-side helpers
-  spec-graph/ inherited extension, not baseline scope
 ```
 
 ## Development checks
@@ -57,8 +55,7 @@ Run the narrowest check or focused test for the code being changed. Use reposito
 Mewa Code does not include product analytics, PostHog, Google Tag Manager, tracking pixels, or hidden
 telemetry. Local credentials, files, transcripts, and Pi's canonical session files remain on the host unless
 an explicit feature or configured extension sends them elsewhere. Requests to the selected model provider
-transmit prompts and supplied context according to that provider's terms. The unpublished website preview
-is static and does not load tracking SDKs.
+transmit prompts and supplied context according to that provider's terms.
 
 ## Contributing
 

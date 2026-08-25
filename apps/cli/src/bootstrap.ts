@@ -2,8 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { bootHost } from "@mewa-code/server";
 import { printStartupMark } from "@mewa-code/shared/startupMark";
-import { type CliOptions, parseArgs, parseSubcommand, USAGE } from "./args";
-import { runUninstall } from "./uninstall";
+import { type CliOptions, parseArgs, USAGE } from "./args";
 import { version } from "./version";
 
 const DEFAULT_STATIC_DIR = resolve(import.meta.dir, "../../web/dist");
@@ -22,16 +21,6 @@ function openBrowser(url: string): void {
 
 async function bootstrap(): Promise<void> {
 	const argv = Bun.argv.slice(2);
-	const subcommand = parseSubcommand(argv);
-	if (subcommand) {
-		if (subcommand === "update") {
-			console.error(
-				"Self-update is unavailable in the Mewa Code source foundation. Build the current source tree instead.",
-			);
-			process.exit(1);
-		}
-		process.exit(await runUninstall(argv.slice(1), process.env));
-	}
 
 	let options: CliOptions;
 	try {

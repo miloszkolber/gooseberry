@@ -96,6 +96,50 @@ test("serves the SPA from staticDir with index.html fallback", async () => {
 	expect(await deep.text()).toContain("<title>spa</title>");
 });
 
+test("proxies bounded browser artifacts without exposing the browser token", async () => {
+	const seen: { authorization: string | undefined; pathname: string | undefined } = {
+		authorization: undefined,
+		pathname: undefined,
+	};
+	const browser = Bun.serve({
+		port: 0,
+		hostname: "localhost",
+		fetch(request) {
+			seen.authorization = request.headers.get("authorization") ?? undefined;
+			seen.pathname = new URL(request.url).pathname;
+			return new Response(new Uint8Array([137, 80, 78, 71]), {
+				status: 200,
+				headers: { "content-type": "image/png", "content-length": "4" },
+			});
+		},
+	});
+	const priorUrl = process.env.MEWA_BROWSER_URL;
+	const priorToken = process.env.MEWA_BROWSER_TOKEN;
+	process.env.MEWA_BROWSER_URL = `http://localhost:${browser.port}`;
+	process.env.MEWA_BROWSER_TOKEN = "proxy-secret";
+	try {
+		const host = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
+		const artifact = await fetch(`http://localhost:${host.port}/v1/artifacts/qa/screen.png`);
+		expect(artifact.status).toBe(200);
+		expect(artifact.headers.get("content-type")).toBe("image/png");
+		expect(artifact.headers.get("authorization")).toBeNull();
+		expect(new Uint8Array(await artifact.arrayBuffer())).toEqual(new Uint8Array([137, 80, 78, 71]));
+		expect(seen).toEqual({
+			authorization: "Bearer proxy-secret",
+			pathname: "/v1/artifacts/qa/screen.png",
+		});
+
+		const invalid = await fetch(`http://localhost:${host.port}/v1/artifacts/qa/screen.txt`);
+		expect(invalid.status).toBe(404);
+	} finally {
+		browser.stop(true);
+		if (priorUrl === undefined) delete process.env.MEWA_BROWSER_URL;
+		else process.env.MEWA_BROWSER_URL = priorUrl;
+		if (priorToken === undefined) delete process.env.MEWA_BROWSER_TOKEN;
+		else process.env.MEWA_BROWSER_TOKEN = priorToken;
+	}
+});
+
 test("stop() releases the port", async () => {
 	const b = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
 	expect(await isPortFree(b.port)).toBe(false);

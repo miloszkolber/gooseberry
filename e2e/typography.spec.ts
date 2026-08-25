@@ -176,7 +176,7 @@ test("typography survives a narrow mobile viewport without clipping or overflow"
 	await page.setViewportSize({ width: 390, height: 780 });
 	await openFixtureProject(page);
 	await createWorkspaceViaDialog(page);
-	await expect(page.getByTestId("center-tabs")).toBeVisible();
+	await expect(page.getByTestId("workspace-workbench")).toBeVisible();
 	const problems = await page.evaluate(() => {
 		const out: string[] = [];
 		for (const el of Array.from(document.querySelectorAll("*"))) {

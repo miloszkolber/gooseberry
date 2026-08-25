@@ -1,6 +1,5 @@
-import type { Workspace, WorkspaceLayoutDocument } from "@mewa-code/contracts";
+import type { Workspace } from "@mewa-code/contracts";
 import {
-	selectAttentionCenterTab,
 	selectCurrentRouteChatTarget,
 	selectWorkspaceById,
 	selectWorkspaceNavTick,
@@ -18,19 +17,16 @@ export function deriveLocation(state: {
 	activeWorkspaceId: string | null;
 	selectedProjectId: string | null;
 	workspaces: Record<string, Workspace[]>;
-	layoutDocumentsByWorkspace: Parameters<
-		typeof selectAttentionCenterTab
-	>[0]["layoutDocumentsByWorkspace"];
-	layoutAttentionByWorkspace: Parameters<
-		typeof selectAttentionCenterTab
-	>[0]["layoutAttentionByWorkspace"];
+	tabsByWorkspace: Record<string, { id: string; kind: string; sessionId?: string }[]>;
+	activeTabByWorkspace: Record<string, string | null>;
 }): NavigationLocation | null {
 	const workspaceId = state.activeWorkspaceId;
 	if (workspaceId) {
 		const workspace = selectWorkspaceById(state, workspaceId);
 		if (!workspace) return null;
-		const active = selectAttentionCenterTab(state, workspaceId);
-		if (active?.kind === "chat") {
+		const activeId = state.activeTabByWorkspace[workspaceId];
+		const active = (state.tabsByWorkspace[workspaceId] ?? []).find((tab) => tab.id === activeId);
+		if (active?.kind === "chat" && active.sessionId) {
 			return {
 				kind: "chat",
 				projectId: workspace.projectId,
@@ -48,38 +44,6 @@ interface NavigationIntentState {
 	selectedProjectId: string | null;
 	activeWorkspaceId: string | null;
 	navTickByWorkspace: Record<string, number>;
-	layoutDocumentsByWorkspace: Record<string, WorkspaceLayoutDocument>;
-	layoutAttentionByWorkspace: Record<
-		string,
-		{
-			selectedByGroup: Record<string, string>;
-			lastFocusedCenterGroupId: string;
-			navigationClockByGroup: Record<string, number>;
-		}
-	>;
-}
-
-function centerPlacesTab(node: WorkspaceLayoutDocument["center"], tabId: string): boolean {
-	if (node.kind === "split") {
-		return centerPlacesTab(node.children[0], tabId) || centerPlacesTab(node.children[1], tabId);
-	}
-	return node.tabs.some((tab) => tab.id === tabId);
-}
-
-function isSelectedCenterTabRemovalEdge(
-	state: NavigationIntentState,
-	previous: NavigationIntentState,
-): boolean {
-	const workspaceId = state.activeWorkspaceId;
-	if (!workspaceId || previous.activeWorkspaceId !== workspaceId) return false;
-	const before = previous.layoutDocumentsByWorkspace[workspaceId];
-	const after = state.layoutDocumentsByWorkspace[workspaceId];
-	if (!before || !after || before === after) return false;
-	const attention = previous.layoutAttentionByWorkspace[workspaceId];
-	if (!attention) return false;
-	const selectedId = attention.selectedByGroup[attention.lastFocusedCenterGroupId];
-	if (selectedId === undefined) return false;
-	return centerPlacesTab(before.center, selectedId) && !centerPlacesTab(after.center, selectedId);
 }
 
 function isUserNavigationEdge(
@@ -90,15 +54,7 @@ function isUserNavigationEdge(
 	if (state.activeWorkspaceId !== previous.activeWorkspaceId) return true;
 	const workspaceId = state.activeWorkspaceId;
 	if (!workspaceId) return false;
-	if (selectWorkspaceNavTick(state, workspaceId) > selectWorkspaceNavTick(previous, workspaceId)) {
-		return true;
-	}
-	const attention = state.layoutAttentionByWorkspace[workspaceId];
-	const before = previous.layoutAttentionByWorkspace[workspaceId];
-	if (!attention || attention === before) return false;
-	return Object.entries(attention.navigationClockByGroup).some(
-		([groupId, clock]) => clock > (before?.navigationClockByGroup[groupId] ?? 0),
-	);
+	return selectWorkspaceNavTick(state, workspaceId) > selectWorkspaceNavTick(previous, workspaceId);
 }
 
 export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () => void {
@@ -209,10 +165,7 @@ export function startNavigation({ driver, listWorkspaces }: NavigationDeps): () 
 
 	const unsubscribeDriver = driver.onIncoming(acceptFragment);
 	const unsubscribeStore = useAppStore.subscribe((state, previous) => {
-		if (
-			!applyingRoute &&
-			(isUserNavigationEdge(state, previous) || isSelectedCenterTabRemovalEdge(state, previous))
-		) {
+		if (!applyingRoute && isUserNavigationEdge(state, previous)) {
 			armedPush = true;
 		}
 		if (

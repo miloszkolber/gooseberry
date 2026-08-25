@@ -2,22 +2,17 @@ import type {
 	AskUserQuestionResult,
 	PromptHit,
 	QueueLane,
-	SlashCommandInfo,
-	TemplateInfo,
 	ThinkingLevel,
 	WireModel,
 } from "@mewa-code/contracts";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import { Popover, PopoverAnchor, PopoverTrigger } from "@/components/ui/popover";
 import {
 	EMPTY_RUNTIME,
-	SettingsSection,
 	selectCatalogModel,
 	selectSkillsStale,
 	selectWorkspaceById,
-	specPathMatcher,
 	toast,
 	useAppStore,
 } from "@/store";
@@ -25,7 +20,6 @@ import { errorText, getTransport } from "@/transport";
 import { AskStatesContext, deriveAskStates } from "./askState";
 import { type ChatActions, ChatActionsContext } from "./ChatActions";
 import { ChatHeader } from "./ChatHeader";
-import { ChatPlanContent, ChatPlanStripContent } from "./ChatPlan";
 import {
 	Composer,
 	type ComposerHandle,
@@ -34,21 +28,16 @@ import {
 } from "./Composer";
 import { ExtUiDialog } from "./ExtUiDialog";
 import { HistoryOverlay } from "./HistoryOverlay";
-import { planGlance } from "./planView";
 import { QueueStrip } from "./QueueStrip";
 import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
+import { SessionGoalControl } from "./SessionGoalControl";
 import { SkillsDialog } from "./SkillsDialog";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./StreamIndicator";
-import { parseTemplateSlots } from "./slotSession";
-import { TemplateEditorDialog } from "./TemplateEditorDialog";
-import { shouldApplyTemplatePick } from "./templatePick";
-import { stripFrontmatter } from "./templateText";
 import { useModelCatalog } from "./useModelCatalog";
 import "./tools/register";
 import { ChatTurnView } from "./turns";
 import type { ChatAttachment, ChatTurn } from "./types";
 import { useChatScroll } from "./useChatScroll";
-import { useChatTodos } from "./useChatTodos";
 import { useHistorySearch } from "./useHistorySearch";
 
 function turnAnchorText(turn: ChatTurn): string {
@@ -68,20 +57,6 @@ function turnAnchorText(turn: ChatTurn): string {
 			.join("\n");
 	}
 	return "";
-}
-
-function templateToCommand(t: TemplateInfo): SlashCommandInfo {
-	return {
-		name: t.name,
-		...(t.description ? { description: t.description } : {}),
-		source: "prompt",
-		sourceInfo: {
-			path: t.filePath,
-			source: "local",
-			scope: t.scope === "global" ? "user" : "project",
-			origin: "top-level",
-		},
-	};
 }
 
 type ChatListContext = { status: StreamStatus | null };
@@ -125,8 +100,6 @@ export default function ChatView({
 		}
 		return map;
 	}, [workspaces]);
-	const specNodes = useAppStore((s) => s.specsByWorkspace[workspaceId]);
-	const isSpec = useMemo(() => specPathMatcher(specNodes ?? []), [specNodes]);
 	const {
 		turns,
 		toolResults,
@@ -146,8 +119,8 @@ export default function ChatView({
 	const currentModel = selectCatalogModel(models, sessionModel) ?? sessionModel;
 
 	const rows = useMemo(
-		() => deriveRows(turns, toolResults, isStreaming, isSpec),
-		[turns, toolResults, isStreaming, isSpec],
+		() => deriveRows(turns, toolResults, isStreaming),
+		[turns, toolResults, isStreaming],
 	);
 
 	const listContext = useMemo<ChatListContext>(() => {
@@ -167,12 +140,6 @@ export default function ChatView({
 
 	const [mentionQuery, setMentionQuery] = useState<string | null>(null);
 	const [mentionCandidates, setMentionCandidates] = useState<MentionCandidate[]>([]);
-	const plan = useChatTodos(workspaceId, sessionId);
-	const [planOpen, setPlanOpen] = useState(false);
-	const [slashActive, setSlashActive] = useState(false);
-	const [templates, setTemplates] = useState<TemplateInfo[]>([]);
-	const [templatesEmpty, setTemplatesEmpty] = useState(false);
-	const [saveAsTemplateHit, setSaveAsTemplateHit] = useState<PromptHit | null>(null);
 
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const { followOutput, handleAtBottom, showScrollButton, scrollToBottom, containerProps } =
@@ -202,26 +169,7 @@ export default function ChatView({
 			.catch(() => {});
 	}, [sessionId]);
 
-	useEffect(() => {
-		if (!slashActive) return;
-		let cancelled = false;
-		getTransport()
-			.request("template.list", { workspaceId })
-			.then((res) => {
-				if (cancelled) return;
-				setTemplates(res.templates);
-				setTemplatesEmpty(res.templates.length === 0);
-			})
-			.catch(() => {});
-		return () => {
-			cancelled = true;
-		};
-	}, [slashActive, workspaceId]);
-
-	const mergedCommands = useMemo(
-		() => [...commands.filter((c) => c.source !== "prompt"), ...templates.map(templateToCommand)],
-		[commands, templates],
-	);
+	const mergedCommands = commands;
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `isStreaming` is the refetch trigger, not read
 	useEffect(() => {
@@ -353,8 +301,6 @@ export default function ChatView({
 
 	const onHistoryOpen = () => openOverlay(draft);
 
-	const onManageTemplates = () => useAppStore.getState().openSettings(SettingsSection.Templates);
-
 	const onDismissHistory = () => {
 		closeHistory();
 		composerRef.current?.refocus();
@@ -370,11 +316,6 @@ export default function ChatView({
 		closeHistory();
 	};
 
-	const onSaveAsTemplateHit = (hit: PromptHit) => {
-		closeHistory();
-		setSaveAsTemplateHit(hit);
-	};
-
 	const onDeleteHistoryChat = async (targetWorkspaceId: string, targetSessionId: string) => {
 		try {
 			await getTransport().request("session.delete", {
@@ -387,29 +328,6 @@ export default function ChatView({
 			toast.error(errorText(err), "Couldn't delete the chat");
 		}
 	};
-
-	const pickGeneration = useRef(0);
-	const onPickTemplate = useCallback(
-		(name: string) => {
-			const generation = ++pickGeneration.current;
-			const draftAtPick = useAppStore.getState().sessions[sessionId]?.draft ?? "";
-			getTransport()
-				.request("template.get", { workspaceId, name })
-				.then((t) => {
-					const apply = shouldApplyTemplatePick({
-						generation,
-						latestGeneration: pickGeneration.current,
-						draftAtPick,
-						currentDraft: useAppStore.getState().sessions[sessionId]?.draft ?? "",
-					});
-					if (!apply) return;
-					const parsed = parseTemplateSlots(stripFrontmatter(t.content), t.argumentHint);
-					composerRef.current?.insertTemplate(parsed);
-				})
-				.catch(() => {});
-		},
-		[workspaceId, sessionId],
-	);
 
 	useEffect(() => {
 		if (
@@ -463,20 +381,6 @@ export default function ChatView({
 		[workspaceId],
 	);
 
-	const onOpenSpec = useCallback(
-		(path: string) => {
-			useAppStore.getState().requestSpecView(workspaceId, path);
-		},
-		[workspaceId],
-	);
-
-	const onReveal = useCallback(
-		(tool: "specs" | "changes") => {
-			useAppStore.getState().requestToolView(workspaceId, tool);
-		},
-		[workspaceId],
-	);
-
 	const askStates = useMemo(
 		() => deriveAskStates(runtime.turns, runtime.askAnswers),
 		[runtime.turns, runtime.askAnswers],
@@ -484,11 +388,6 @@ export default function ChatView({
 	const askContext = useMemo(
 		() => ({ states: askStates, focusScope: askFocusScope }),
 		[askStates, askFocusScope],
-	);
-
-	const planGlanceState = useMemo(
-		() => planGlance(isStreaming, askStates),
-		[isStreaming, askStates],
 	);
 
 	const chatActions = useMemo<ChatActions>(
@@ -517,37 +416,15 @@ export default function ChatView({
 		<ChatActionsContext.Provider value={chatActions}>
 			<AskStatesContext.Provider value={askContext}>
 				<div className="flex h-full min-h-0 flex-col bg-container-workspace-bg">
-					<Popover open={planOpen} onOpenChange={setPlanOpen}>
-						<PopoverAnchor asChild>
-							<div className="shrink-0">
-								<ChatHeader
-									stats={stats}
-									statusEntries={Object.entries(extUiStatus)}
-									left={
-										plan.data ? (
-											<PopoverTrigger asChild>
-												<button
-													type="button"
-													data-testid="chat-plan-toggle"
-													data-open={planOpen}
-													className="flex min-w-0 max-w-full items-center gap-xs overflow-clip whitespace-nowrap text-text-muted tr-text-metadata hover:text-text-default"
-												>
-													<ChatPlanStripContent
-														plan={plan}
-														open={planOpen}
-														glance={planGlanceState}
-													/>
-												</button>
-											</PopoverTrigger>
-										) : null
-									}
-									skillsStale={skillsStale}
-									{...(projectId ? { onOpenSkills: () => setSkillsOpen(true) } : {})}
-								/>
-							</div>
-						</PopoverAnchor>
-						<ChatPlanContent plan={plan} glance={planGlanceState} />
-					</Popover>
+					<div className="shrink-0">
+						<ChatHeader
+							stats={stats}
+							statusEntries={Object.entries(extUiStatus)}
+							left={<SessionGoalControl workspaceId={workspaceId} sessionId={sessionId} />}
+							skillsStale={skillsStale}
+							{...(projectId ? { onOpenSkills: () => setSkillsOpen(true) } : {})}
+						/>
+					</div>
 					<div
 						data-testid="chat-scroll"
 						className="relative flex min-h-0 flex-1 flex-col"
@@ -572,9 +449,7 @@ export default function ChatView({
 									<ChatTurnView
 										row={row}
 										workspaceRoot={workspaceRoot}
-										onOpenSpec={onOpenSpec}
 										onOpenChange={onOpenChange}
-										onReveal={onReveal}
 									/>
 								</div>
 							)}
@@ -611,7 +486,6 @@ export default function ChatView({
 							onInsert={onInsertHit}
 							onInsertAndSend={onInsertAndSendHit}
 							onOpenMessage={openMessage}
-							onSaveAsTemplate={onSaveAsTemplateHit}
 							onDeleteChat={(wsId, id) => void onDeleteHistoryChat(wsId, id)}
 						/>
 						<Composer
@@ -628,25 +502,13 @@ export default function ChatView({
 							currentModel={currentModel}
 							thinkingLevel={thinkingLevel}
 							onMentionQuery={onMentionQuery}
-							onSlashActive={setSlashActive}
 							onSelectModel={onSelectModel}
 							onSelectThinking={onSelectThinking}
 							onSubmit={onSubmit}
 							onAbort={onAbort}
 							onHistoryOpen={onHistoryOpen}
-							onPickTemplate={onPickTemplate}
-							onManageTemplates={onManageTemplates}
-							templatesEmpty={templatesEmpty}
 						/>
 					</div>
-					<TemplateEditorDialog
-						open={saveAsTemplateHit != null}
-						onOpenChange={(open) => {
-							if (!open) setSaveAsTemplateHit(null);
-						}}
-						workspaceId={workspaceId}
-						initialBody={saveAsTemplateHit?.text ?? ""}
-					/>
 					{pendingExtUi ? (
 						<ExtUiDialog key={pendingExtUi.id} request={pendingExtUi} onReply={onExtUiReply} />
 					) : null}

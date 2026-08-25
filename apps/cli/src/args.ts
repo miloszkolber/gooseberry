@@ -13,21 +13,9 @@ export interface CliOptions {
 
 export type ParseEnv = Record<string, string | undefined>;
 
-const SUBCOMMANDS = ["update", "uninstall"] as const;
-
-export type Subcommand = (typeof SUBCOMMANDS)[number];
-
-export function parseSubcommand(argv: readonly string[]): Subcommand | undefined {
-	return SUBCOMMANDS.find((name) => name === argv[0]);
-}
-
 export const USAGE = `Usage: mewa-code [options] [project-dir]
-	   mewa-code uninstall [--remove-data|--keep-data] [-y]
 
 Boots the Mewa Code engine host in-process and opens the browser to the app.
-The \`update\` subcommand is reserved but disabled until Mewa Code publishes verified releases.
-\`uninstall\` removes Mewa Code from this machine (your ~/.mewa-code app state is kept
-unless you ask for it to go).
 
 Options:
   --port <n>     Listen port (default ${DEFAULT_PORT}; falls back to a free port if taken).

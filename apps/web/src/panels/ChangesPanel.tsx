@@ -1,14 +1,11 @@
 import type { GitStatus } from "@mewa-code/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-	type CenterNavigationStamp,
-	isCenterNavigationCurrent,
 	matchesWorktreePath,
 	selectActiveEditorTab,
 	selectDiffBaseRef,
 	selectDiffScope,
 	selectWorkspaceById,
-	selectWorkspaceNavTick,
 	type TabIntent,
 	toast,
 	useAppStore,
@@ -88,9 +85,9 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 	};
 
 	const openDiff = useCallback(
-		(path: string, intent: TabIntent, navigation?: CenterNavigationStamp | null) => {
+		(path: string, intent: TabIntent) => {
 			setHighlighted(path);
-			void openDiffInTab(workspaceId, scope, path, intent, navigation);
+			void openDiffInTab(workspaceId, scope, path, intent);
 		},
 		[workspaceId, scope],
 	);
@@ -100,12 +97,8 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 		if (useAppStore.getState().changesRequest !== changesRequest) return;
 		const want = changesRequest.path;
 		const match = status.changes.find((c) => matchesWorktreePath(want, c.path));
-		const currentState = useAppStore.getState();
-		const overtaken = changesRequest.navigation
-			? !isCenterNavigationCurrent(currentState, workspaceId, changesRequest.navigation)
-			: selectWorkspaceNavTick(currentState, workspaceId) !== changesRequest.navTick;
-		if (match && !overtaken) openDiff(match.path, "preview", changesRequest.navigation);
-		else setHighlighted(match ? match.path : want);
+		if (match) openDiff(match.path, "preview");
+		else setHighlighted(want);
 		useAppStore.getState().clearChangesRequest();
 	}, [changesRequest, status, workspaceId, openDiff]);
 

@@ -4,7 +4,9 @@ import {
 	base64EncodedLength,
 	IMAGE_MAX_BASE64_BYTES,
 	isRetriedAttempt,
+	normalizeSessionGoal,
 	REQUEST_IMAGE_BASE64_BUDGET,
+	SESSION_GOAL_MAX_LENGTH,
 } from "./domain";
 
 describe("isRetriedAttempt", () => {
@@ -63,5 +65,19 @@ describe("image payload ceiling", () => {
 			"image/png",
 			"image/webp",
 		]);
+	});
+});
+
+describe("session goal validation", () => {
+	test("trims a bounded goal before storage", () => {
+		expect(normalizeSessionGoal("  Finish the release  ")).toBe("Finish the release");
+	});
+
+	test("rejects empty, nul-containing, and oversized goals", () => {
+		expect(() => normalizeSessionGoal(" \n ")).toThrow("cannot be empty");
+		expect(() => normalizeSessionGoal("bad\0goal")).toThrow("invalid character");
+		expect(() => normalizeSessionGoal("x".repeat(SESSION_GOAL_MAX_LENGTH + 1))).toThrow(
+			"characters or fewer",
+		);
 	});
 });

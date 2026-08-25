@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Workspace } from "@mewa-code/contracts";
 import type { Locator, Page } from "@playwright/test";
@@ -10,7 +10,6 @@ import {
 	E2E_PI_AGENT_DIR,
 	E2E_PI_MODELS_SEED,
 	E2E_PICK_DIR_POINTER,
-	E2E_PLAIN_DIR,
 } from "./paths";
 import { fixtureRepoHealthy, seedFixtureRepo } from "./repo";
 
@@ -67,15 +66,6 @@ function resetState(): void {
 	writeFileSync(E2E_PICK_DIR_POINTER, E2E_FIXTURE_REPO);
 }
 
-export function stagePlainFolder(): string {
-	resetState();
-	rmSync(E2E_PLAIN_DIR, { recursive: true, force: true });
-	mkdirSync(E2E_PLAIN_DIR, { recursive: true });
-	writeFileSync(join(E2E_PLAIN_DIR, "notes.txt"), "hello from a plain folder\n");
-	writeFileSync(E2E_PICK_DIR_POINTER, E2E_PLAIN_DIR);
-	return E2E_PLAIN_DIR;
-}
-
 function loadPersistedWorkspaces(): Workspace[] {
 	try {
 		return JSON.parse(readFileSync(join(E2E_DATA_DIR, "workspaces.json"), "utf8")) as Workspace[];
@@ -91,6 +81,7 @@ export async function createWorkspaceViaDialog(page: Page): Promise<Workspace> {
 		if (!(await dialog.isVisible())) await page.getByTestId("add-workspace").first().click();
 		await expect(dialog).toBeVisible({ timeout: 5_000 });
 	}).toPass({ timeout: 30_000 });
+	await page.getByTestId("ws-target-worktree").click();
 	await page.getByTestId("create-workspace").click();
 	await expect(dialog).toBeHidden();
 	await expect(page.locator('[data-testid="editor-tab"][data-kind="chat"]').first()).toBeVisible();
@@ -115,9 +106,9 @@ export async function openFixtureProject(page: Page): Promise<void> {
 }
 
 export async function enterDefaultWorkspace(page: Page): Promise<void> {
-	await page.getByTestId("welcome-action").filter({ hasText: "Work in project folder" }).click();
+	await page.getByTestId("welcome-cta").filter({ hasText: "Work in project folder" }).click();
 	await expect(defaultWorkspaceRow(page)).toHaveAttribute("data-active", "true");
-	await expect(page.getByTestId("center-tabs")).toBeVisible();
+	await expect(page.getByTestId("workspace-workbench")).toBeVisible();
 }
 
 export async function revealFirstProjectWorkspaces(page: Page): Promise<void> {
@@ -199,11 +190,13 @@ export function visibleTerminalScreen(page: Page): Locator {
 }
 
 export async function waitTerminalReady(page: Page): Promise<void> {
+	await page.getByTestId("tab-terminal").click();
 	await expect(visibleTerminal(page)).toHaveAttribute("data-ready", "true");
 }
 
 export async function openTerminal(page: Page): Promise<void> {
-	await page.getByTestId("terminal-add").click();
+	await page.getByTestId("tab-terminal").click();
+	await page.getByTestId("new-terminal").click();
 	await waitTerminalReady(page);
 }
 

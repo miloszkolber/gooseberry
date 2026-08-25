@@ -40,7 +40,6 @@ const PRIMITIVE_ALLOWLIST = new Set([
 	"styles/global.css",
 	"panels/monacoSetup.ts",
 	"panels/TerminalInstance.tsx",
-	"chat/tools/visualize/mermaid.ts",
 ]);
 
 const componentFiles = () => FILES.filter((p) => !PRIMITIVE_ALLOWLIST.has(rel(p)));

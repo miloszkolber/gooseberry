@@ -5,10 +5,8 @@ import type { DiffTab } from "../store";
 import { selectDiffTabTargetRef, useAppStore } from "../store";
 import { getTransport } from "../transport";
 import { splitPath } from "./changesModel";
-import { SendReviewButton } from "./SendReviewButton";
 import { ToggleSegment } from "./ToggleSegment";
 import { useLiveTabContent } from "./useLiveTabContent";
-import { useFileReview } from "./useReviewCommenting";
 
 const MonacoDiff = lazy(() => import("./MonacoDiff"));
 const RenderedDiff = lazy(() => import("./RenderedDiff"));
@@ -22,8 +20,6 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 	const setDiffTabRendered = useAppStore((s) => s.setDiffTabRendered);
 	const setDiffTabIgnoreWhitespace = useAppStore((s) => s.setDiffTabIgnoreWhitespace);
 	const [copied, setCopied] = useState(false);
-	const reviewable = tab.scope.kind !== "commit";
-	const review = useFileReview(tab.workspaceId, tab.path, "diff", tab.scope);
 
 	const targetRef = useAppStore((s) => selectDiffTabTargetRef(s, tab));
 	useLiveTabContent(
@@ -121,7 +117,6 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 						{base}
 					</span>
 				</span>
-				<SendReviewButton workspaceId={tab.workspaceId} path={tab.path} />
 				{rendered ? null : (
 					<HeaderIconButton
 						testid="diff-toggle-whitespace"
@@ -152,7 +147,6 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 							modified={tab.modified}
 							view={markdown ? "split" : view}
 							ignoreWhitespace={ignoreWhitespace}
-							{...(reviewable ? { review } : {})}
 						/>
 					)}
 				</Suspense>

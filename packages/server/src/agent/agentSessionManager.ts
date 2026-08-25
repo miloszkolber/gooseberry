@@ -1,6 +1,6 @@
 import { createReadStream, existsSync, rmSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
@@ -30,6 +30,7 @@ import type {
 	WireModel,
 } from "@mewa-code/contracts";
 import { isTranscriptMessageRole } from "@mewa-code/contracts";
+import { clearStoredSessionGoal, clearStoredSessionGoalsForWorkspace } from "../persistence";
 import { ANSWERABILITY_ERRORS, assessAnswerability, buildAnswersMessage } from "./askUserQuestion";
 import { buildResourceLoader, toSkillCommands } from "./extensions";
 import {
@@ -47,6 +48,7 @@ import { cancelExtUiForSession, createWebUiContext, notifyExtUi } from "./webUiC
 
 interface Entry {
 	session: AgentSession;
+	settingsManager: SettingsManager;
 	generation: PiRuntimeGeneration;
 	unsubscribe: () => void;
 	workspaceId: string;
@@ -92,7 +94,6 @@ export function setSessionManagerFactory(factory: (cwd: string) => SessionManage
 
 let skillAdmissionResolver: (workspaceId: string) => SkillAdmissionContext = () => ({
 	trusted: false,
-	acknowledged: [],
 	disabled: [],
 	disabledGroups: [],
 	overrides: {},
@@ -127,17 +128,19 @@ export function getSessionWorkspaceId(sessionId: string): string | undefined {
 }
 
 export async function reloadSessionResources(sessionId: string): Promise<void> {
-	const session = mustGet(sessionId);
+	const entry = mustGetEntry(sessionId);
+	const session = entry.session;
 	if (session.isStreaming) {
 		throw new Error(
 			"Can't reload skills while the session is streaming — try again after the turn.",
 		);
 	}
+	entry.settingsManager.setProjectTrusted(skillAdmissionResolver(entry.workspaceId).trusted);
 	await session.reload();
 }
 
-export function buildSessionSettings(cwd: string): SettingsManager {
-	const settings = SettingsManager.create(cwd, undefined, { projectTrusted: true });
+export function buildSessionSettings(cwd: string, projectTrusted = true): SettingsManager {
+	const settings = SettingsManager.create(cwd, undefined, { projectTrusted });
 	settings.applyOverrides({ images: { autoResize: false } });
 	return settings;
 }
@@ -185,12 +188,14 @@ async function prepareSessionEntry(
 	session: AgentSession,
 	workspaceId: string,
 	generation: PiRuntimeGeneration,
+	settingsManager: SettingsManager,
 	lastSettlement: AgentSettlement | null | undefined = undefined,
 ): Promise<PreparedSessionEntry> {
 	const { sessionId } = session;
 	let terminal: AgentSettlement | null = null;
 	const entry: Entry = {
 		session,
+		settingsManager,
 		generation,
 		unsubscribe: () => {},
 		workspaceId,
@@ -247,27 +252,33 @@ async function registerSession(
 	session: AgentSession,
 	workspaceId: string,
 	generation: PiRuntimeGeneration,
+	settingsManager: SettingsManager,
 ): Promise<CreateSessionResult> {
-	const prepared = await prepareSessionEntry(session, workspaceId, generation);
+	const prepared = await prepareSessionEntry(session, workspaceId, generation, settingsManager);
 	sessions.set(session.sessionId, prepared.entry);
 	return prepared.result;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
 	const generation = await getPiRuntimeGeneration();
-	const settingsManager = buildSessionSettings(input.cwd);
+	const admission = skillAdmissionResolver(input.workspaceId);
+	const settingsManager = buildSessionSettings(input.cwd, admission.trusted);
 	const { session } = await createAgentSession({
 		cwd: input.cwd,
 		modelRuntime: generation.runtime,
 		sessionManager: sessionManagerFactory(input.cwd),
 		settingsManager,
-		resourceLoader: await buildResourceLoader(input.cwd, settingsManager, () =>
-			skillAdmissionResolver(input.workspaceId),
+		resourceLoader: await buildResourceLoader(
+			input.cwd,
+			settingsManager,
+			() => skillAdmissionResolver(input.workspaceId),
+			[],
+			input.workspaceId,
 		),
 		...(input.model ? { model: resolveWireModel(generation.runtime, input.model) } : {}),
 		...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
 	});
-	return registerSession(session, input.workspaceId, generation);
+	return registerSession(session, input.workspaceId, generation, settingsManager);
 }
 
 function summaryOf(sessionId: string, entry: Entry): SessionSummary {
@@ -367,22 +378,45 @@ async function scanSessionFiles(
 	return scanned;
 }
 
-async function listSessionInfosStrict(
+async function listSessionInfosForCatalog(cwd: string): Promise<SessionInfo[]> {
+	return SessionManager.list(cwd);
+}
+
+function sessionFileMayContainId(path: string, sessionId: string): boolean {
+	const name = basename(path);
+	return name === `${sessionId}.jsonl` || name.endsWith(`_${sessionId}.jsonl`);
+}
+
+async function findSessionInfoStrict(
 	cwd: string,
-	excludedPaths: ReadonlySet<string> = new Set(),
-): Promise<SessionInfo[]> {
-	const scanned = await scanSessionFiles(cwd, excludedPaths);
-	const broken = scanned.find((file) => !file.ok);
-	if (broken && !broken.ok) throw broken.error;
+	sessionId: string,
+): Promise<SessionInfo | undefined> {
+	const scanned = await scanSessionFiles(cwd);
+	const targetFiles = scanned.filter((file) =>
+		file.ok
+			? file.identity.id === sessionId && file.identity.cwd === cwd
+			: sessionFileMayContainId(file.path, sessionId),
+	);
 	const infos = await SessionManager.list(cwd);
 	const listedByPath = new Map(infos.map((info) => [resolve(info.path), info]));
-	const omitted = scanned.find((file) => {
-		if (!file.ok) return false;
+	for (const file of targetFiles) {
+		if (!file.ok) throw file.error;
 		const listed = listedByPath.get(resolve(file.path));
-		return !listed || listed.id !== file.identity.id || listed.cwd !== file.identity.cwd;
-	});
-	if (omitted) throw new Error(`Session transcript could not be listed: ${omitted.path}`);
-	return infos;
+		if (!listed || listed.id !== file.identity.id || listed.cwd !== file.identity.cwd) {
+			throw new Error(`Session transcript could not be listed: ${file.path}`);
+		}
+		return listed;
+	}
+
+	const listed = infos.find((info) => info.id === sessionId && info.cwd === cwd);
+	if (!listed) return undefined;
+	const scannedFile = scanned.find((file) => resolve(file.path) === resolve(listed.path));
+	if (!scannedFile?.ok) {
+		throw new Error(`Session transcript could not be listed: ${listed.path}`);
+	}
+	if (scannedFile.identity.id !== listed.id || scannedFile.identity.cwd !== listed.cwd)
+		throw new Error(`Session transcript could not be listed: ${listed.path}`);
+	return listed;
 }
 
 async function listSessionsInternal(workspaceId: string, cwd: string): Promise<SessionSummary[]> {
@@ -396,7 +430,9 @@ async function listSessionsInternal(workspaceId: string, cwd: string): Promise<S
 		const sessionFile = entry.session.sessionManager.getSessionFile();
 		if (sessionFile) liveFiles.add(resolve(sessionFile));
 	}
-	const infos = await listSessionInfosStrict(cwd, liveFiles);
+	const infos = (await listSessionInfosForCatalog(cwd)).filter(
+		(info) => !liveFiles.has(resolve(info.path)),
+	);
 	const disk: SessionSummary[] = infos
 		.filter(
 			(info) =>
@@ -449,13 +485,11 @@ function persistedSessionModelRef(model: unknown): { provider: string; id: strin
 
 async function openDiskSession(sessionId: string, workspaceId: string, cwd: string): Promise<void> {
 	if (isSessionDeleted(sessionId, workspaceId)) throw new Error(`Unknown session: ${sessionId}`);
-	const info = (await listSessionInfosStrict(cwd)).find(
-		(candidate) => candidate.id === sessionId && candidate.cwd === cwd,
-	);
+	const info = await findSessionInfoStrict(cwd, sessionId);
 	if (!info) throw new Error(`Unknown session: ${sessionId}`);
 	if (sessions.has(sessionId)) return;
 	const generation = await getPiRuntimeGeneration();
-	const settingsManager = buildSessionSettings(cwd);
+	const settingsManager = buildSessionSettings(cwd, skillAdmissionResolver(workspaceId).trusted);
 	const sessionManager = SessionManager.open(info.path);
 	const persistedModel = persistedSessionModelRef(sessionManager.buildSessionContext().model);
 	let exactModel: Model<string> | undefined;
@@ -472,8 +506,12 @@ async function openDiskSession(sessionId: string, workspaceId: string, cwd: stri
 		modelRuntime: generation.runtime,
 		sessionManager,
 		settingsManager,
-		resourceLoader: await buildResourceLoader(cwd, settingsManager, () =>
-			skillAdmissionResolver(workspaceId),
+		resourceLoader: await buildResourceLoader(
+			cwd,
+			settingsManager,
+			() => skillAdmissionResolver(workspaceId),
+			[],
+			workspaceId,
 		),
 		...(exactModel ? { model: exactModel } : {}),
 	});
@@ -481,7 +519,7 @@ async function openDiskSession(sessionId: string, workspaceId: string, cwd: stri
 		session.dispose();
 		return;
 	}
-	await registerSession(session, workspaceId, generation);
+	await registerSession(session, workspaceId, generation, settingsManager);
 }
 
 async function ensureSessionAttachedInternal(
@@ -495,9 +533,7 @@ async function ensureSessionAttachedInternal(
 		if (live.workspaceId !== workspaceId) throw new Error(`Unknown session: ${sessionId}`);
 		return true;
 	}
-	const known = (await listSessionInfosStrict(cwd)).some(
-		(candidate) => candidate.id === sessionId && candidate.cwd === cwd,
-	);
+	const known = await findSessionInfoStrict(cwd, sessionId);
 	if (!known) return false;
 	await attachDiskSession(sessionId, workspaceId, cwd);
 	if (!sessions.has(sessionId))
@@ -766,6 +802,7 @@ async function removeWorkspaceSessionsInternal(workspaceId: string, cwd?: string
 		disposeSession(sessionId);
 	}
 	if (cwd) await purgeDiskSessions(cwd);
+	clearStoredSessionGoalsForWorkspace(workspaceId);
 }
 
 export function removeWorkspaceSessions(workspaceId: string, cwd?: string): Promise<void> {
@@ -776,8 +813,8 @@ async function purgeDiskSessions(cwd: string): Promise<void> {
 	let infos: Awaited<ReturnType<typeof SessionManager.list>>;
 	try {
 		infos = await SessionManager.list(cwd);
-	} catch {
-		return;
+	} catch (error) {
+		throw new Error(`Session directory is unreadable: ${cwd}`, { cause: error });
 	}
 	for (const info of infos) {
 		if (info.cwd === cwd) rmSync(info.path, { force: true });
@@ -833,15 +870,16 @@ async function runDeleteTransaction(
 				throw new Error(`Persisted session has no transcript path: ${sessionId}`);
 			}
 		} else {
-			path = (await listSessionInfosStrict(cwd)).find(
-				(candidate) => candidate.id === sessionId && candidate.cwd === cwd,
-			)?.path;
+			const info = await findSessionInfoStrict(cwd, sessionId);
+			if (!info) throw new Error(`Unknown session: ${sessionId}`);
+			path = info.path;
 		}
 		if (path && existsSync(path)) await trashFile(path);
 	} catch (error) {
 		if (installedTombstone) deletedSessions.delete(sessionId);
 		throw error;
 	}
+	clearStoredSessionGoal(workspaceId, sessionId);
 	if (liveEntry && sessions.get(sessionId) === liveEntry) disposeSession(sessionId);
 	publishDeleted({ workspaceId, sessionId });
 }

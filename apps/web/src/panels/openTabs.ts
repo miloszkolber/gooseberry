@@ -1,18 +1,9 @@
 import type { GitDiffScope } from "@mewa-code/contracts";
+import { DOUBLE_CLICK_SETTLE_MS, projectRelativePath, tupleKey } from "../lib";
 import {
-	DOUBLE_CLICK_SETTLE_MS,
-	layoutResourceIdentity,
-	projectRelativePath,
-	tupleKey,
-} from "../lib";
-import {
-	type CenterNavigationStamp,
 	type EditorTab,
-	isCenterNavigationCurrent,
-	layoutOpenOptionsForNavigation,
 	selectDiffTabTargetRef,
 	selectWorkspaceById,
-	selectWorkspaceNavTick,
 	selectWorkspaceTick,
 	type TabIntent,
 	useAppStore,
@@ -24,120 +15,81 @@ function baseName(path: string): string {
 	return path.split("/").pop() || path;
 }
 
-const inFlight = new Map<
-	string,
-	{
-		intent: TabIntent;
-		claimPreview: boolean;
-		navigation: CenterNavigationStamp | null;
-		requestedAt: number;
-		startedAt: number;
-	}
->();
+type ReadEditorTab = Extract<EditorTab, { kind: "file" | "diff" }>;
 
-function navTick(workspaceId: string): number {
-	return selectWorkspaceNavTick(useAppStore.getState(), workspaceId);
+function resourceIdentity(tab: ReadEditorTab): string {
+	return tab.kind === "diff" ? `diff:${tab.scope}:${tab.path}` : `file:${tab.path}`;
+}
+
+const inFlight = new Map<string, { intent: TabIntent; claimPreview: boolean }>();
+const previewEpochByWorkspace = new Map<string, number>();
+
+function previewEpoch(workspaceId: string, intent: TabIntent): number {
+	if (intent !== "preview") return previewEpochByWorkspace.get(workspaceId) ?? 0;
+	const next = (previewEpochByWorkspace.get(workspaceId) ?? 0) + 1;
+	previewEpochByWorkspace.set(workspaceId, next);
+	return next;
 }
 
 async function openReadTab<T>(
 	workspaceId: string,
 	id: string,
-	resourceIdentity: string,
+	identity: string,
 	intent: TabIntent,
 	read: () => Promise<T>,
 	build: (payload: T, loadedTick: number) => EditorTab,
-	requestedNavigation?: CenterNavigationStamp | null,
 ): Promise<void> {
-	const navigation =
-		requestedNavigation === undefined
-			? useAppStore.getState().beginCenterNavigation(workspaceId)
-			: requestedNavigation;
 	const store = useAppStore.getState();
 	if (store.removedWorkspaceIds[workspaceId]) return;
-	if (intent === "preview" && !isCenterNavigationCurrent(store, workspaceId, navigation)) return;
 	const pending = inFlight.get(id);
 	if (pending) {
-		if (intent === "preview") pending.claimPreview = true;
+		pending.claimPreview ||= intent === "preview";
 		if (intent === "keep") pending.intent = "keep";
-		pending.navigation = navigation;
-		pending.requestedAt = navTick(workspaceId);
 		return;
 	}
-	const flight = {
-		intent,
-		claimPreview: intent === "preview",
-		navigation,
-		requestedAt: navTick(workspaceId),
-		startedAt: Date.now(),
-	};
+	const epoch = previewEpoch(workspaceId, intent);
+	const flight = { intent, claimPreview: intent === "preview", epoch };
 	inFlight.set(id, flight);
-	const cached = (store.tabsByWorkspace[workspaceId] ?? []).find(
-		(tab) =>
-			(tab.kind === "file" || tab.kind === "diff") &&
-			layoutResourceIdentity(tab) === resourceIdentity,
-	);
-	if (cached) {
-		try {
-			if (flight.intent === "preview") {
-				await new Promise((resolve) => setTimeout(resolve, DOUBLE_CLICK_SETTLE_MS));
-			}
-			const currentState = useAppStore.getState();
-			const latestCached = (currentState.tabsByWorkspace[workspaceId] ?? []).find(
-				(tab) =>
-					(tab.kind === "file" || tab.kind === "diff") &&
-					layoutResourceIdentity(tab) === resourceIdentity,
-			);
-			if (!latestCached) return;
-			const overtaken = flight.navigation
-				? !isCenterNavigationCurrent(currentState, workspaceId, flight.navigation)
-				: navTick(workspaceId) !== flight.requestedAt;
-			if (flight.intent === "preview" && overtaken) return;
-			const options = layoutOpenOptionsForNavigation(currentState, workspaceId, flight.navigation);
-			useAppStore
-				.getState()
-				.openTab(
-					latestCached,
-					flight.intent,
-					true,
-					flight.intent === "keep" && flight.claimPreview && !overtaken
-						? { ...options, claimPreview: true }
-						: options,
-				);
-		} finally {
-			inFlight.delete(id);
-		}
-		return;
-	}
-	const loadedTick = selectWorkspaceTick(useAppStore.getState(), workspaceId);
 	try {
-		const payload = await read();
-		if (flight.intent === "preview") {
-			const remaining = DOUBLE_CLICK_SETTLE_MS - (Date.now() - flight.startedAt);
-			if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+		if (intent === "preview")
+			await new Promise((resolve) => setTimeout(resolve, DOUBLE_CLICK_SETTLE_MS));
+		if (
+			flight.intent === "preview" &&
+			flight.epoch !== (previewEpochByWorkspace.get(workspaceId) ?? 0)
+		) {
+			return;
 		}
-		const currentState = useAppStore.getState();
-		const overtaken = flight.navigation
-			? !isCenterNavigationCurrent(currentState, workspaceId, flight.navigation)
-			: navTick(workspaceId) !== flight.requestedAt;
-		if (flight.intent === "preview" && overtaken) return;
-		const installedCache = (currentState.tabsByWorkspace[workspaceId] ?? []).find(
-			(tab) =>
-				(tab.kind === "file" || tab.kind === "diff") &&
-				layoutResourceIdentity(tab) === resourceIdentity,
+		const latest = useAppStore.getState();
+		const cached = (latest.tabsByWorkspace[workspaceId] ?? []).find(
+			(tab) => (tab.kind === "file" || tab.kind === "diff") && resourceIdentity(tab) === identity,
 		);
-		const tab = installedCache ?? build(payload, loadedTick);
-		const options = layoutOpenOptionsForNavigation(currentState, workspaceId, flight.navigation);
-		useAppStore
-			.getState()
-			.openTab(
-				tab,
+		if (cached) {
+			latest.openTab(
+				cached,
 				flight.intent,
-				true,
-				flight.intent === "keep" && flight.claimPreview && !overtaken
-					? { ...options, claimPreview: true }
-					: options,
+				flight.intent === "keep" && flight.claimPreview ? { claimPreview: true } : undefined,
 			);
+			return;
+		}
+		const loadedTick = selectWorkspaceTick(latest, workspaceId);
+		const payload = await read();
+		const current = useAppStore.getState();
+		if (
+			flight.intent === "preview" &&
+			flight.epoch !== (previewEpochByWorkspace.get(workspaceId) ?? 0)
+		) {
+			return;
+		}
+		const installed = (current.tabsByWorkspace[workspaceId] ?? []).find(
+			(tab) => (tab.kind === "file" || tab.kind === "diff") && resourceIdentity(tab) === identity,
+		);
+		current.openTab(
+			installed ?? build(payload, loadedTick),
+			flight.intent,
+			flight.intent === "keep" && flight.claimPreview ? { claimPreview: true } : undefined,
+		);
 	} catch {
+		// Reads are best effort. The activity panel retains the source row so users can retry.
 	} finally {
 		inFlight.delete(id);
 	}
@@ -147,7 +99,7 @@ export function openFileInTab(
 	workspaceId: string,
 	reported: string,
 	intent: TabIntent,
-	requestedNavigation?: CenterNavigationStamp | null,
+	_requestedNavigation?: unknown,
 ): Promise<void> {
 	const path = projectRelativePath(
 		reported,
@@ -157,7 +109,7 @@ export function openFileInTab(
 	return openReadTab(
 		workspaceId,
 		id,
-		layoutResourceIdentity({ kind: "file", id, name: baseName(path), path }),
+		`file:${path}`,
 		intent,
 		() => getTransport().request("fs.readFile", { workspaceId, path }),
 		({ content }, loadedTick) => ({
@@ -167,9 +119,10 @@ export function openFileInTab(
 			path,
 			name: baseName(path),
 			content,
+			savedContent: content,
+			dirty: false,
 			loadedTick,
 		}),
-		requestedNavigation,
 	);
 }
 
@@ -178,7 +131,7 @@ export function openDiffInTab(
 	scope: GitDiffScope,
 	path: string,
 	intent: TabIntent,
-	requestedNavigation?: CenterNavigationStamp | null,
+	_requestedNavigation?: unknown,
 ): Promise<void> {
 	const canonicalPath = projectRelativePath(
 		path,
@@ -189,13 +142,7 @@ export function openDiffInTab(
 	return openReadTab(
 		workspaceId,
 		id,
-		layoutResourceIdentity({
-			kind: "diff",
-			id,
-			name: diffTabName(scope, canonicalPath),
-			path: canonicalPath,
-			scope,
-		}),
+		`diff:${scope}:${canonicalPath}`,
 		intent,
 		() => getTransport().request("git.diffFile", { workspaceId, path: canonicalPath, scope }),
 		({ original, modified }, loadedTick) => ({
@@ -210,6 +157,5 @@ export function openDiffInTab(
 			loadedTick,
 			loadedTarget: target,
 		}),
-		requestedNavigation,
 	);
 }

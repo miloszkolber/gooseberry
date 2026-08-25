@@ -4,11 +4,12 @@ import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { BashCard } from "./BashCard";
 import { EditCard } from "./EditCard";
 import { ReadCard } from "./ReadCard";
-import { ResolveCommentCard } from "./ResolveCommentCard";
 import { strArg } from "./toolHelpers";
-import "./visualize/register";
 import "./web/register";
 import { WriteCard } from "./WriteCard";
+import "./browser/register";
+import "./subagent/register";
+import "./signet/register";
 
 registerToolRenderer("bash", BashCard, { summary: ({ args }) => strArg(args, "command") });
 registerToolRenderer("read", ReadCard, {
@@ -19,10 +20,6 @@ registerToolRenderer("edit", EditCard, {
 });
 registerToolRenderer("write", WriteCard, {
 	summary: ({ args, workspaceRoot }) => projectRelativePath(strArg(args, "path"), workspaceRoot),
-});
-
-registerToolRenderer("resolve_comment", ResolveCommentCard, {
-	summary: ({ args }) => strArg(args, "commentId"),
 });
 
 registerToolRenderer("ask_user_question", AskUserQuestionCard, { chrome: "bare" });

@@ -1,5 +1,5 @@
 import type { Project, SkillCatalogEntry, SkillDecision, Workspace } from "@mewa-code/contracts";
-import { Puzzle, RefreshCw, ShieldCheck } from "lucide-react";
+import { Puzzle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -10,7 +10,7 @@ import { errorText, getTransport, reloadSessionResourcesWithSkillBaseline } from
 const TIER_META: Record<string, { label: string; hint: string; rank: number }> = {
 	bundled: { label: "Mewa Code", hint: "Bundled with the app.", rank: 0 },
 	pi: { label: "Pi", hint: "Pi-native / configured.", rank: 1 },
-	personal: { label: "Personal", hint: "Your own libraries (~/.claude, ~/.codex, …).", rank: 2 },
+	personal: { label: "Personal", hint: "Pi user skills from your agent directory.", rank: 2 },
 	project: { label: "Project", hint: "Committed to the repo — gated behind trust.", rank: 4 },
 };
 
@@ -184,16 +184,6 @@ export function SkillsDialog({
 							busy={busy}
 							groupOff={!groupOn}
 							onToggle={(enabled) => setSkillEnabled(entry.name, enabled)}
-							onAcknowledge={() =>
-								void mutate(
-									() =>
-										getTransport().request("project.acknowledgeSkills", {
-											id: projectId,
-											names: [entry.name],
-										}),
-									"Couldn't confirm skill",
-								)
-							}
 						/>
 					))}
 				</div>
@@ -327,7 +317,6 @@ const DECISION_TEXT: Record<SkillDecision, string> = {
 	load: "on",
 	disabled: "off",
 	untrusted: "trust to enable",
-	"pending-ack": "new",
 };
 
 function SkillRow({
@@ -335,13 +324,11 @@ function SkillRow({
 	busy,
 	groupOff,
 	onToggle,
-	onAcknowledge,
 }: {
 	entry: SkillCatalogEntry;
 	busy: boolean;
 	groupOff: boolean;
 	onToggle: (enabled: boolean) => void;
-	onAcknowledge: () => void;
 }) {
 	const loaded = entry.decision === "load";
 	return (
@@ -357,12 +344,7 @@ function SkillRow({
 					<span className="truncate text-text-muted tr-text-metadata">{entry.description}</span>
 				) : null}
 			</span>
-			{entry.decision === "pending-ack" ? (
-				<Button size="sm" data-testid="skill-ack" disabled={busy} onClick={onAcknowledge}>
-					<ShieldCheck className="size-3.5" />
-					Enable
-				</Button>
-			) : entry.decision === "untrusted" ? (
+			{entry.decision === "untrusted" ? (
 				<span className="shrink-0 text-text-muted tr-text-metadata">{DECISION_TEXT.untrusted}</span>
 			) : groupOff ? (
 				<span

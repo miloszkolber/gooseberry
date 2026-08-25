@@ -8,12 +8,9 @@ export interface Project {
 	lastOpened: number;
 	closed?: true;
 	trusted?: boolean;
-	acknowledgedSkills?: string[];
 	disabledSkills?: string[];
 	disabledGroups?: string[];
 }
-
-export type ProjectPathStatus = { kind: "repo" | "initable" | "missing" | "notDirectory" };
 
 export interface DiffStats {
 	added: number;
@@ -32,11 +29,6 @@ export interface Workspace {
 	renamed?: boolean;
 	diffStats?: DiffStats;
 	skillOverrides?: Record<string, "on" | "off">;
-}
-
-export interface OpenBranchReview {
-	kind: "pull-request" | "merge-request";
-	number: number;
 }
 
 export type ExistingWorktreeCandidate =
@@ -66,6 +58,27 @@ export interface Session {
 	status: TabStatus;
 }
 
+export interface SessionGoal {
+	workspaceId: string;
+	sessionId: string;
+	goal: string | null;
+	active: boolean;
+	updatedAt: number | null;
+}
+
+export const SESSION_GOAL_MAX_LENGTH = 2_000;
+
+export function normalizeSessionGoal(value: unknown): string {
+	if (typeof value !== "string") throw new Error("Session goal must be text");
+	const goal = value.trim();
+	if (!goal) throw new Error("Session goal cannot be empty");
+	if (goal.includes("\0")) throw new Error("Session goal contains an invalid character");
+	if (goal.length > SESSION_GOAL_MAX_LENGTH) {
+		throw new Error(`Session goal must be ${SESSION_GOAL_MAX_LENGTH} characters or fewer`);
+	}
+	return goal;
+}
+
 export type FileKind = "file" | "dir";
 
 export interface FileNode {
@@ -74,62 +87,6 @@ export interface FileNode {
 	kind: FileKind;
 	gitignored?: boolean;
 	children?: FileNode[];
-}
-
-export interface SpecGraphNode {
-	id: string;
-	type: string;
-	title: string;
-	status?: string;
-	path: string;
-	parent?: string;
-	dependsOn: string[];
-	references: string[];
-	implements: string[];
-	tags: string[];
-}
-
-export interface SpecGraphSnapshot {
-	nodes: SpecGraphNode[];
-}
-
-export type TodoStatus = "pending" | "in_progress" | "done";
-export type TodoOrigin = "agent" | "user";
-
-export type TodoArtifactKind = "file" | "change" | "spec" | "commit";
-
-export interface TodoArtifact {
-	kind: TodoArtifactKind;
-	path?: string;
-	label?: string;
-	specId?: string;
-	sha?: string;
-	files?: GitFileChange[];
-}
-
-export interface TodoItem {
-	id: string;
-	title: string;
-	status: TodoStatus;
-	origin: TodoOrigin;
-	note?: string;
-	artifacts?: TodoArtifact[];
-	createdAt: string;
-	updatedAt: string;
-}
-
-export type TodoGroupStatus = "pending" | "active" | "done";
-
-export interface TodoGroupItem {
-	id: string;
-	title: string;
-	todos: TodoItem[];
-	status: TodoGroupStatus;
-}
-
-export interface TodoPlan {
-	todos: TodoItem[];
-	groups: TodoGroupItem[];
 }
 
 export type GitFileStatus = "added" | "modified" | "deleted" | "renamed" | "untracked";
@@ -183,6 +140,45 @@ export interface ProviderStatusReport {
 	providers: ProviderStatus[];
 }
 
+export type PiProfileCapabilityId =
+	| "browser"
+	| "webAccess"
+	| "signetMemory"
+	| "goals"
+	| "subagents"
+	| "protectedStateGuard";
+
+/** Persisted Mewa choices for the curated Pi profile.
+ *
+ * The protected-state guard is intentionally absent. It is a mandatory
+ * safety boundary and cannot be disabled through Mewa settings.
+ */
+export interface PiProfileSettings {
+	browser: boolean;
+	webAccess: boolean;
+	signetMemory: boolean;
+	goals: boolean;
+	subagents: boolean;
+}
+
+export type PiProfileSettingsPatch = Partial<PiProfileSettings>;
+
+export interface PiProfileCapability {
+	id: PiProfileCapabilityId;
+	label: string;
+	description: string;
+	enabled: boolean;
+	available: boolean;
+	required?: boolean;
+	unavailableReason?: string;
+}
+
+export interface PiProfileDescriptor {
+	id: "mewa";
+	label: "Mewa";
+	capabilities: PiProfileCapability[];
+}
+
 export type LoginFrame =
 	| { kind: "authUrl"; url: string; instructions?: string }
 	| { kind: "deviceCode"; userCode: string; verificationUri: string; expiresInSeconds?: number }
@@ -209,198 +205,33 @@ export interface LoginReply {
 	value: string;
 }
 
-export interface GithubAuthStatus {
-	connected: boolean;
-	login?: string;
-	scopes?: string[];
-}
-
 export type ThemeId = string;
-
-export type LayoutToolId = "projects" | "specs" | "files" | "changes" | "review";
-
-export interface LayoutFileTab {
-	kind: "file";
-	id: string;
-	name: string;
-	path: string;
-}
-
-export interface LayoutDiffTab {
-	kind: "diff";
-	id: string;
-	name: string;
-	path: string;
-	scope: GitDiffScope;
-}
-
-export interface LayoutChatTab {
-	kind: "chat";
-	id: string;
-	name: string;
-	sessionId: string;
-}
-
-export interface LayoutDocumentTab {
-	kind: "document";
-	id: string;
-	name: string;
-	documentKind: "todo-plan";
-	sourceId: string;
-	docPath: string;
-}
-
-export interface LayoutTerminalTab {
-	kind: "terminal";
-	id: string;
-	name: string;
-	tabKey: string;
-}
-
-export interface LayoutToolTab {
-	kind: "tool";
-	id: string;
-	name: string;
-	tool: LayoutToolId;
-}
-
-export type LayoutCenterTab =
-	| LayoutFileTab
-	| LayoutDiffTab
-	| LayoutChatTab
-	| LayoutDocumentTab
-	| LayoutTerminalTab;
-export type LayoutSideTab = LayoutToolTab | LayoutTerminalTab;
-export type LayoutTab = LayoutCenterTab | LayoutSideTab;
-
-export interface LayoutCenterGroup {
-	kind: "group";
-	id: string;
-	tabs: LayoutCenterTab[];
-	previewTabId?: string;
-}
-
-export interface LayoutCenterSplit {
-	kind: "split";
-	id: string;
-	direction: "horizontal" | "vertical";
-	weights: [number, number];
-	children: [LayoutCenterNode, LayoutCenterNode];
-}
-
-export type LayoutCenterNode = LayoutCenterGroup | LayoutCenterSplit;
-
-export interface LayoutSideGroup {
-	id: string;
-	weight: number;
-	folded: boolean;
-	tabs: LayoutSideTab[];
-}
-
-export interface LayoutSideRegion {
-	visible: boolean;
-	width: number;
-	groups: LayoutSideGroup[];
-}
-
-export interface LayoutToolRestoreTarget {
-	side: "left" | "right";
-	groupId?: string;
-	index: number;
-}
-
-export interface WorkspaceLayoutDocument {
-	version: 1;
-	center: LayoutCenterNode;
-	left: LayoutSideRegion;
-	right: LayoutSideRegion;
-	toolRestoreTargets: Partial<Record<LayoutToolId, LayoutToolRestoreTarget>>;
-}
-
-export interface WorkspaceLayoutSnapshot {
-	workspaceId: string;
-	revision: number;
-	document: WorkspaceLayoutDocument;
-}
-
-export interface LayoutReplaceParams {
-	workspaceId: string;
-	mutationId: string;
-	expectedRevision: number | null;
-	document: WorkspaceLayoutDocument;
-}
-
-export interface LayoutChangedPayload {
-	snapshot: WorkspaceLayoutSnapshot;
-	mutationId: string;
-}
-
-export type LayoutReplaceResult =
-	| { status: "accepted"; payload: LayoutChangedPayload }
-	| { status: "conflict"; current: WorkspaceLayoutSnapshot | null };
-
-export interface LayoutPresetCenterGroup {
-	kind: "group";
-	id: string;
-}
-export interface LayoutPresetCenterSplit {
-	kind: "split";
-	id: string;
-	direction: "horizontal" | "vertical";
-	weights: [number, number];
-	children: [LayoutPresetCenterNode, LayoutPresetCenterNode];
-}
-export type LayoutPresetCenterNode = LayoutPresetCenterGroup | LayoutPresetCenterSplit;
-
-export interface LayoutPresetSideGroup {
-	id: string;
-	weight: number;
-	folded: boolean;
-	tools: LayoutToolId[];
-}
-export interface LayoutPresetSideRegion {
-	visible: boolean;
-	width: number;
-	groups: LayoutPresetSideGroup[];
-}
-
-export interface LayoutPreset {
-	id: string;
-	name: string;
-	center: LayoutPresetCenterNode;
-	left: LayoutPresetSideRegion;
-	right: LayoutPresetSideRegion;
-}
-
-export interface LayoutSettings {
-	defaultPresetId: string;
-	customPresets: LayoutPreset[];
-	maxSideGroups: number;
-}
 
 export interface AppConfig {
 	theme: ThemeId;
 	terminalReplayKb: number;
-	layout: LayoutSettings;
+	piProfile?: PiProfileSettings;
 }
+
+export type AppConfigPatch = Omit<Partial<AppConfig>, "piProfile"> & {
+	piProfile?: PiProfileSettingsPatch;
+};
 
 export const TERMINAL_REPLAY_KB = { min: 0, max: 1024, default: 64 } as const;
 
-export const DEFAULT_CONFIG: AppConfig = {
-	theme: "dark",
-	terminalReplayKb: TERMINAL_REPLAY_KB.default,
-	layout: {
-		defaultPresetId: "balanced",
-		customPresets: [],
-		maxSideGroups: 6,
-	},
+export const DEFAULT_PI_PROFILE_SETTINGS: Required<PiProfileSettings> = {
+	browser: true,
+	webAccess: true,
+	signetMemory: true,
+	goals: true,
+	subagents: true,
 };
 
-export const TODO_NUDGE_PREFIX = "[mewa-code:todo-nudge] ";
-
-export function isControlMessage(text: string): boolean {
-	return text.startsWith(TODO_NUDGE_PREFIX);
-}
+export const DEFAULT_CONFIG = {
+	theme: "dark",
+	terminalReplayKb: TERMINAL_REPLAY_KB.default,
+	piProfile: DEFAULT_PI_PROFILE_SETTINGS,
+} satisfies AppConfig;
 
 export const IMAGE_MAX_BASE64_BYTES = 4.5 * 1024 * 1024;
 
@@ -461,75 +292,4 @@ export interface HistorySearchResult {
 	promptTotal: number;
 	messageTotal: number;
 	indexing: boolean;
-}
-
-export type TemplateScope = "global" | "project";
-
-export interface TemplateInfo {
-	name: string;
-	description?: string;
-	argumentHint?: string;
-	scope: TemplateScope;
-	filePath: string;
-}
-
-export interface Template extends TemplateInfo {
-	content: string;
-}
-
-export type ReviewCommentKind = "inline" | "diff" | "file" | "review";
-
-export type ReviewCommentStatus = "draft" | "sent" | "resolved" | "dismissed";
-
-export type ReviewAnchorState = "anchored" | "moved" | "outdated";
-
-export type ReviewSelector =
-	| { kind: "lineRange"; startLine: number; endLine: number }
-	| { kind: "textQuote"; exact: string; prefix: string; suffix: string }
-	| { kind: "diffHunk"; hunkHeader: string }
-	| { kind: "structural"; scheme: string; ref: string };
-
-export interface ReviewAnchor {
-	path: string;
-	side: "base" | "worktree";
-	baseRef?: string;
-	scope?: GitDiffScope;
-	contentHash?: string;
-	selectors: ReviewSelector[];
-}
-
-export interface ReviewComment {
-	id: string;
-	reviewId: string;
-	kind: ReviewCommentKind;
-	anchor: ReviewAnchor | null;
-	body: string;
-	status: ReviewCommentStatus;
-	anchorState: ReviewAnchorState;
-	sessionId?: string;
-	resolvedBy?: "agent" | "user";
-	resolveNote?: string;
-	createdAt: number;
-	sentAt?: number;
-	resolvedAt?: number;
-}
-
-export interface Review {
-	id: string;
-	workspaceId: string;
-	status: "open" | "closed";
-	baseSha: string;
-	fileSessions?: Record<string, string>;
-	doneFiles?: string[];
-	createdAt: number;
-	closedAt?: number;
-}
-
-export interface ReviewSnapshot {
-	review: Review;
-	comments: ReviewComment[];
-}
-
-export interface ReviewChangedPayload extends ReviewSnapshot {
-	workspaceId: string;
 }

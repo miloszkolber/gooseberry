@@ -3,7 +3,7 @@ export * from "./askUserQuestion";
 export {
 	type BundledExtensionFactory,
 	type BundledExtensions,
-	listProjectAliasSkillNames,
+	getPiProfile,
 	listSkillCatalog,
 	listSkillCommands,
 	registerBundledRuntime,
@@ -22,11 +22,11 @@ export {
 	settledAvailableModels,
 } from "./piRuntime";
 export {
-	RESOLVE_COMMENT_TOOL_NAME,
-	type ResolveCommentOutcome,
-	setReviewCommentHandler,
-} from "./reviewTool";
+	SESSION_GOAL_CONTEXT_PREFIX,
+	SESSION_GOAL_STATUS_KEY,
+	sessionGoalContextMessage,
+	sessionGoalExtension,
+} from "./sessionGoalExtension";
 export * from "./sessionRepair";
 export type { SkillAdmissionContext, SkillDecision, SkillFacts } from "./skillAdmission";
-export { isProjectSkillPath } from "./skillSources";
 export * from "./webUiContext";

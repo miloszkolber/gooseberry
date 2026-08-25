@@ -5,6 +5,5 @@
 		"allowImportingTsExtensions": true,
 		"types": ["bun"]
 	},
-	"include": ["src"],
-	"exclude": ["src/web-assets.generated.ts"]
+	"include": ["src"]
 }

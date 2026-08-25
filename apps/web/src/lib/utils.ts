@@ -1,4 +1,4 @@
-import type { LayoutTab, UserMessage } from "@mewa-code/contracts";
+import type { UserMessage } from "@mewa-code/contracts";
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -10,30 +10,6 @@ export const DOUBLE_CLICK_SETTLE_MS = 250;
 
 export function tupleKey(namespace: string, ...parts: string[]): string {
 	return `${namespace}:${parts.map((part) => `${part.length}:${part}`).join("")}`;
-}
-
-export function layoutResourceIdentity(tab: LayoutTab): string {
-	switch (tab.kind) {
-		case "file":
-			return tupleKey("layout-resource", "file", tab.path);
-		case "diff": {
-			const reference =
-				tab.scope.kind === "commit"
-					? tab.scope.sha
-					: tab.scope.kind === "pinned"
-						? tab.scope.baseRef
-						: "";
-			return tupleKey("layout-resource", "diff", tab.path, tab.scope.kind, reference);
-		}
-		case "chat":
-			return tupleKey("layout-resource", "chat", tab.sessionId);
-		case "document":
-			return tupleKey("layout-resource", "document", tab.documentKind, tab.sourceId);
-		case "terminal":
-			return tupleKey("layout-resource", "terminal", tab.tabKey);
-		case "tool":
-			return tupleKey("layout-resource", "tool", tab.tool);
-	}
 }
 
 export function parseTupleKey(key: string, namespace: string): string[] | null {

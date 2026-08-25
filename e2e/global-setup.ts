@@ -12,7 +12,6 @@ import {
 } from "./fixtures/paths";
 import { seedFixtureRepo } from "./fixtures/repo";
 import { seedExternalCwdSessions } from "./fixtures/sessions";
-import { seedTemplateFixtures } from "./fixtures/templates";
 
 export default function globalSetup(): void {
 	rmSync(E2E_DATA_DIR, { recursive: true, force: true });
@@ -46,8 +45,6 @@ export default function globalSetup(): void {
 	);
 
 	seedExternalCwdSessions();
-
-	seedTemplateFixtures();
 
 	seedFixtureRepo();
 

@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join, normalize } from "node:path";
 import type {
-	LayoutChangedPayload,
 	ServerWelcome,
 	SessionDeletedPayload,
 	TerminalTabsPush,
@@ -12,16 +11,13 @@ import { errorCodeOf } from "@mewa-code/shared/codedError";
 import {
 	disposeAllSessions,
 	getSessionWorkspaceId,
-	isProjectSkillPath,
 	setExtUiPublisher,
-	setReviewCommentHandler,
 	setSessionDeletedPublisher,
 	setSessionPublisher,
 	setSkillAdmissionResolver,
 } from "../agent";
 import { cancelAllLogins, setLoginPublisher } from "../auth";
 import { resolveWorktreeFile } from "../fs";
-import { normalizeStoredLayoutSettings, setLayoutPublisher } from "../layout";
 import {
 	getProjects,
 	listProjects,
@@ -29,8 +25,7 @@ import {
 	openProject,
 	setProjectPublisher,
 } from "../projects";
-import { reanchorWorkspace, resolveCommentFromAgent, setReviewPublisher } from "../reviews";
-import { getConfig, setSettingsPublisher, updateConfig } from "../settings";
+import { getConfig, setSettingsPublisher } from "../settings";
 import {
 	closeAllTerminals,
 	persistTerminalSessions,
@@ -39,7 +34,6 @@ import {
 	setTerminalPublisher,
 	setTerminalTabsPublisher,
 } from "../terminal";
-import { isTodoToolEnd, maybeAttachChangeArtifacts } from "../todos";
 import {
 	setRepoMetaPublisher,
 	setSkillPathClassifier,
@@ -76,17 +70,105 @@ interface SocketData {
 }
 
 const CLIENT_REPLAY_RETENTION_MS = 60_000;
+const BROWSER_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
+const BROWSER_ARTIFACT_TIMEOUT_MS = 30_000;
+const BROWSER_ARTIFACT_PATH = /^\/v1\/artifacts\/([^/]+)\/([^/]+)$/;
+const BROWSER_SESSION = /^[A-Za-z0-9_-]{1,38}$/;
+const BROWSER_ARTIFACT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.(?:png|jpe?g|webp)$/i;
+const BROWSER_ARTIFACT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+const PROJECT_SKILL_PATH = /^\.pi\/skills(?:\/|$)/;
+
+function isProjectSkillPath(relativePath: string): boolean {
+	return PROJECT_SKILL_PATH.test(relativePath.replaceAll("\\", "/"));
+}
+
+interface BrowserArtifactTarget {
+	session: string;
+	name: string;
+	path: string;
+}
+
+function browserArtifactTarget(pathname: string): BrowserArtifactTarget | undefined {
+	const match = BROWSER_ARTIFACT_PATH.exec(pathname);
+	if (!match) return undefined;
+	let session: string;
+	let name: string;
+	try {
+		session = decodeURIComponent(match[1] as string);
+		name = decodeURIComponent(match[2] as string);
+	} catch {
+		return undefined;
+	}
+	if (!BROWSER_SESSION.test(session) || !BROWSER_ARTIFACT_NAME.test(name)) return undefined;
+	return {
+		session,
+		name,
+		path: `/v1/artifacts/${encodeURIComponent(session)}/${encodeURIComponent(name)}`,
+	};
+}
+
+function browserArtifactServiceUrl(): URL | undefined {
+	const configured = (process.env.MEWA_BROWSER_URL ?? "http://mewa-browser:8787").trim();
+	try {
+		const url = new URL(configured);
+		if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password)
+			return undefined;
+		return url;
+	} catch {
+		return undefined;
+	}
+}
+
+async function proxyBrowserArtifact(pathname: string): Promise<Response> {
+	const target = browserArtifactTarget(pathname);
+	if (!target) return new Response("not found", { status: 404 });
+
+	const token = process.env.MEWA_BROWSER_TOKEN?.trim();
+	const serviceUrl = browserArtifactServiceUrl();
+	if (!token || !serviceUrl)
+		return new Response("browser artifact proxy unavailable", { status: 503 });
+
+	let upstream: Response;
+	try {
+		upstream = await fetch(new URL(target.path, serviceUrl), {
+			headers: { authorization: `Bearer ${token}` },
+			redirect: "error",
+			signal: AbortSignal.timeout(BROWSER_ARTIFACT_TIMEOUT_MS),
+		});
+	} catch {
+		return new Response("browser artifact proxy unavailable", { status: 502 });
+	}
+
+	if (!upstream.ok) return new Response("not found", { status: 404 });
+	const contentType = upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+	const contentLengthHeader = upstream.headers.get("content-length");
+	const contentLength = contentLengthHeader === null ? NaN : Number(contentLengthHeader);
+	if (
+		!contentType ||
+		!BROWSER_ARTIFACT_TYPES.has(contentType) ||
+		!Number.isSafeInteger(contentLength) ||
+		contentLength < 0 ||
+		contentLength > BROWSER_ARTIFACT_MAX_BYTES ||
+		!upstream.body
+	) {
+		return new Response("invalid browser artifact", { status: 502 });
+	}
+
+	return new Response(upstream.body, {
+		status: 200,
+		headers: {
+			"content-type": contentType,
+			"content-length": String(contentLength),
+			"cache-control": "no-store",
+			"x-content-type-options": "nosniff",
+		},
+	});
+}
 
 const isRequestId = (id: unknown): id is string => typeof id === "string";
 
-function normalizePersistedLayoutSettings(): void {
-	const current = getConfig().layout;
-	const normalized = normalizeStoredLayoutSettings(current);
-	if (JSON.stringify(normalized) !== JSON.stringify(current)) updateConfig({ layout: normalized });
-}
-
 export async function createServer(options: CreateServerOptions = {}): Promise<RunningServer> {
-	normalizePersistedLayoutSettings();
 	const { port = 24242, host = "localhost", staticDir, projectPath, appVersion } = options;
 
 	const sockets = new Map<string, Bun.ServerWebSocket<SocketData>>();
@@ -120,6 +202,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			if (url.pathname === "/health") {
 				return new Response("ok");
 			}
+			if (url.pathname.startsWith("/v1/artifacts/")) {
+				if (req.method !== "GET") {
+					return new Response("method not allowed", {
+						status: 405,
+						headers: { allow: "GET" },
+					});
+				}
+				return proxyBrowserArtifact(url.pathname);
+			}
 			if (url.pathname.startsWith("/files/")) {
 				return serveWorktreeFile(url.pathname);
 			}
@@ -150,8 +241,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				ws.subscribe(WS_CHANNELS.workspaceRemoved);
 				ws.subscribe(WS_CHANNELS.workspaceFsChanged);
 				ws.subscribe(WS_CHANNELS.settingsChanged);
-				ws.subscribe(WS_CHANNELS.layoutChanged);
-				ws.subscribe(WS_CHANNELS.reviewChanged);
 				const welcome: ServerWelcome = {
 					protocolVersion: PROTOCOL_VERSION,
 					projects: listProjects(),
@@ -272,13 +361,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			const project = getProjects().find((p) => p.id === projectId);
 			return {
 				trusted: project?.trusted === true,
-				acknowledged: project?.acknowledgedSkills ?? [],
 				disabled: project?.disabledSkills ?? [],
 				disabledGroups: project?.disabledGroups ?? [],
 				overrides: skillOverrides ?? {},
 			};
 		} catch {
-			return { trusted: false, acknowledged: [], disabled: [], disabledGroups: [], overrides: {} };
+			return { trusted: false, disabled: [], disabledGroups: [], overrides: {} };
 		}
 	});
 
@@ -314,7 +402,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			WS_CHANNELS.workspaceFsChanged,
 			JSON.stringify({ channel: WS_CHANNELS.workspaceFsChanged, data: payload }),
 		);
-		reanchorWorkspace(payload.workspaceId);
 	};
 	setWatchPublisher(publishFsChanged);
 	setSkillPathClassifier(isProjectSkillPath);
@@ -323,23 +410,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	setRepoMetaPublisher((workspaceId) => {
 		refreshUserOwnedWorkspace(workspaceId);
 		publishFsChanged({ workspaceId, paths: [], truncated: false, skillChange: "none" });
-	});
-
-	setReviewPublisher((payload) => {
-		server.publish(
-			WS_CHANNELS.reviewChanged,
-			JSON.stringify({ channel: WS_CHANNELS.reviewChanged, data: payload }),
-		);
-	});
-	setReviewCommentHandler((commentId, note) => ({
-		resolvedBody: resolveCommentFromAgent(commentId, note).body,
-	}));
-
-	setLayoutPublisher((payload: LayoutChangedPayload) => {
-		server.publish(
-			WS_CHANNELS.layoutChanged,
-			JSON.stringify({ channel: WS_CHANNELS.layoutChanged, data: payload }),
-		);
 	});
 
 	setSettingsPublisher((config) => {
@@ -367,10 +437,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		} else if (isSettledTurn(payload.event)) {
 			const workspaceId = getSessionWorkspaceId(payload.sessionId);
 			if (workspaceId) void maybeAutoRenameWorkspace(payload.sessionId, workspaceId);
-		}
-		if (isTodoToolEnd(payload.event)) {
-			const workspaceId = getSessionWorkspaceId(payload.sessionId);
-			if (workspaceId) void maybeAttachChangeArtifacts(workspaceId, payload.sessionId);
 		}
 	});
 
@@ -416,7 +482,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			requestReplays.clear();
 			persistTerminalSessions();
 			closeAllTerminals();
-			setLayoutPublisher(null);
 			setSettingsPublisher(null);
 			server.stop(true);
 		},

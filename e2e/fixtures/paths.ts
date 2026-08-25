@@ -65,8 +65,6 @@ export const E2E_BINARY_CACHE = join(tmpdir(), `mewa-code-e2e-binary-cache-${E2E
 
 export const E2E_PICK_DIR_POINTER = join(E2E_DATA_DIR, "pick-dir");
 
-export const E2E_PLAIN_DIR = join(E2E_DATA_DIR, "plain-folder");
-
 export const E2E_SCREENSHOT_DIR = join(repoRoot, "e2e", "screenshots");
 
 export const E2E_EDITOR_LOG = join(E2E_DATA_DIR, "editor-invocations.log");

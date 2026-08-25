@@ -35,7 +35,7 @@ async function coldOpen(page: Page, fragment: string): Promise<void> {
 	await expect(page.getByTestId("connection-status")).toHaveAttribute("data-status", "connected");
 }
 
-test("reloading from the older of two chats returns to that exact chat without rail clicks", async ({
+test("reloading from the older of two chats returns to that exact chat without sidebar clicks", async ({
 	page,
 }) => {
 	await openFixtureProject(page);
@@ -45,8 +45,6 @@ test("reloading from the older of two chats returns to that exact chat without r
 	await expect(chatTabs(page)).toHaveCount(2);
 
 	const older = chatTabs(page).first();
-	const olderPlacementId = await older.getByRole("tab").getAttribute("data-layout-tab-id");
-	if (!olderPlacementId) throw new Error("chat tab carries no layout id");
 	await older.getByRole("tab").click();
 	await expect(older).toHaveAttribute("data-active", "true");
 	const hash = await currentHash(page);
@@ -55,10 +53,7 @@ test("reloading from the older of two chats returns to that exact chat without r
 	await page.reload();
 	await expect(page.getByTestId("connection-status")).toHaveAttribute("data-status", "connected");
 	await expect(activeWorktreeRow(page)).toHaveCount(1);
-	await expect(activeTab(page).getByRole("tab")).toHaveAttribute(
-		"data-layout-tab-id",
-		olderPlacementId,
-	);
+	await expect(activeTab(page)).toHaveAttribute("data-kind", "chat");
 	await expect(chatTabs(page)).toHaveCount(2);
 	expect(await currentHash(page)).toBe(hash);
 });
@@ -78,8 +73,6 @@ test("a directly opened exact-chat fragment restores that chat; two tabs keep in
 	await expect(first).toHaveAttribute("data-active", "true");
 	const firstHash = await currentHash(page);
 	chatIdFromHash(firstHash);
-	const firstPlacementId = await first.getByRole("tab").getAttribute("data-layout-tab-id");
-	if (!firstPlacementId) throw new Error("first chat carries no layout id");
 
 	const second = chatTabs(page).last();
 	await second.getByRole("tab").click();
@@ -87,36 +80,22 @@ test("a directly opened exact-chat fragment restores that chat; two tabs keep in
 	await expect.poll(() => currentHash(page)).not.toBe(firstHash);
 	const secondHash = await currentHash(page);
 	chatIdFromHash(secondHash);
-	const secondPlacementId = await second.getByRole("tab").getAttribute("data-layout-tab-id");
-	if (!secondPlacementId) throw new Error("second chat carries no layout id");
 
 	const page2 = await context.newPage();
 	await page2.goto(`/${firstHash}`);
 	await expect(page2.getByTestId("connection-status")).toHaveAttribute("data-status", "connected");
-	await expect(activeTab(page2).getByRole("tab")).toHaveAttribute(
-		"data-layout-tab-id",
-		firstPlacementId,
-	);
+	await expect(activeTab(page2)).toHaveAttribute("data-kind", "chat");
 	expect(await currentHash(page2)).toBe(firstHash);
 
-	await expect(activeTab(page).getByRole("tab")).toHaveAttribute(
-		"data-layout-tab-id",
-		secondPlacementId,
-	);
+	await expect(activeTab(page)).toHaveAttribute("data-kind", "chat");
 	expect(await currentHash(page)).toBe(secondHash);
 
 	await page.evaluate((hash) => {
 		window.location.hash = hash;
 	}, firstHash);
-	await expect(activeTab(page).getByRole("tab")).toHaveAttribute(
-		"data-layout-tab-id",
-		firstPlacementId,
-	);
+	await expect(activeTab(page)).toHaveAttribute("data-kind", "chat");
 	await expect.poll(() => currentHash(page)).toBe(firstHash);
-	await expect(activeTab(page2).getByRole("tab")).toHaveAttribute(
-		"data-layout-tab-id",
-		firstPlacementId,
-	);
+	await expect(activeTab(page2)).toHaveAttribute("data-kind", "chat");
 	expect(await currentHash(page2)).toBe(firstHash);
 	await page2.close();
 });
@@ -300,9 +279,7 @@ test("user navigation while the restore read is delayed wins over the late respo
 	expect(await currentHash(page)).toBe(`#/v1/projects/${projectId}`);
 });
 
-test("reload from a file tab restores its shared placement under the workspace route", async ({
-	page,
-}) => {
+test("reload from a file tab restores the tab under the workspace route", async ({ page }) => {
 	await openFixtureProject(page);
 	await enterDefaultWorkspace(page);
 	const projectId = fixtureProjectId();

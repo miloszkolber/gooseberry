@@ -1,20 +1,5 @@
-import type {
-	GitDiffScope,
-	LayoutCenterTab,
-	LayoutTab,
-	Project,
-	SpecGraphNode,
-	WireModel,
-	Workspace,
-	WorkspaceLayoutDocument,
-} from "@mewa-code/contracts";
-import {
-	isAbsolutePath,
-	type LayoutAttention,
-	layoutResourceIdentity,
-	normalizePath,
-	readLayoutSelection,
-} from "../lib";
+import type { GitDiffScope, Project, WireModel, Workspace } from "@mewa-code/contracts";
+import { isAbsolutePath, normalizePath } from "../lib";
 import type { ClosedChat, EditorTab, RouteChatTarget, TerminalTab } from "./appStore";
 
 interface ConnectionGenerationState {
@@ -34,133 +19,9 @@ interface ActiveWorkspaceState {
 	workspaces: Record<string, Workspace[]>;
 }
 
-interface LayoutDocumentState {
-	layoutDocumentsByWorkspace: Record<string, WorkspaceLayoutDocument>;
-}
-
-interface LayoutAttentionState extends LayoutDocumentState {
-	layoutAttentionByWorkspace: Record<string, LayoutAttention>;
-}
-
-interface CenterResourceCacheState extends LayoutAttentionState {
-	tabsByWorkspace: Record<string, EditorTab[]>;
-	terminalsByWorkspace: Record<string, TerminalTab[]>;
-}
-
 interface ProjectContextState extends ActiveWorkspaceState {
 	selectedProjectId: string | null;
 	projects: Project[];
-}
-
-export interface LayoutTabPlacement {
-	area: "center" | "left" | "right";
-	groupId: string;
-}
-
-export interface LayoutResourcePlacement extends LayoutTabPlacement {
-	tabId: string;
-	tab: LayoutTab;
-}
-
-function findLayoutPlacement(
-	document: WorkspaceLayoutDocument,
-	matches: (tab: LayoutTab) => boolean,
-): LayoutResourcePlacement | null {
-	const findCenter = (node: WorkspaceLayoutDocument["center"]): LayoutResourcePlacement | null => {
-		if (node.kind === "split") return findCenter(node.children[0]) ?? findCenter(node.children[1]);
-		const tab = node.tabs.find(matches);
-		return tab ? { area: "center", groupId: node.id, tabId: tab.id, tab } : null;
-	};
-	const center = findCenter(document.center);
-	if (center) return center;
-	for (const side of ["left", "right"] as const) {
-		for (const group of document[side].groups) {
-			const tab = group.tabs.find(matches);
-			if (tab) return { area: side, groupId: group.id, tabId: tab.id, tab };
-		}
-	}
-	return null;
-}
-
-export function selectLayoutTabPlacement(
-	state: LayoutDocumentState,
-	workspaceId: string,
-	tabId: string,
-): LayoutTabPlacement | null {
-	const document = state.layoutDocumentsByWorkspace[workspaceId];
-	if (!document) return null;
-	const placement = findLayoutPlacement(document, (tab) => tab.id === tabId);
-	return placement ? { area: placement.area, groupId: placement.groupId } : null;
-}
-
-export function selectLayoutResourcePlacement(
-	state: LayoutDocumentState,
-	workspaceId: string,
-	resource: LayoutTab,
-): LayoutResourcePlacement | null {
-	const document = state.layoutDocumentsByWorkspace[workspaceId];
-	if (!document) return null;
-	const identity = layoutResourceIdentity(resource);
-	return findLayoutPlacement(document, (tab) => layoutResourceIdentity(tab) === identity);
-}
-
-export function selectLayoutTabPlaced(
-	state: LayoutDocumentState,
-	workspaceId: string,
-	tabId: string,
-): boolean {
-	return selectLayoutTabPlacement(state, workspaceId, tabId) !== null;
-}
-
-export function selectAttentionCenterTab(
-	state: LayoutAttentionState,
-	workspaceId: string,
-): LayoutCenterTab | null {
-	const document = state.layoutDocumentsByWorkspace[workspaceId];
-	const attention = state.layoutAttentionByWorkspace[workspaceId];
-	if (!document || !attention) return null;
-	const find = (node: WorkspaceLayoutDocument["center"]): LayoutCenterTab | null => {
-		if (node.kind === "split") return find(node.children[0]) ?? find(node.children[1]);
-		if (node.id !== attention.lastFocusedCenterGroupId) return null;
-		const selectedId = readLayoutSelection(attention, node.id);
-		return node.tabs.find((tab) => tab.id === selectedId) ?? node.tabs[0] ?? null;
-	};
-	return find(document.center);
-}
-
-export function selectAttentionCenterResourceCacheKey(
-	state: CenterResourceCacheState,
-	workspaceId: string,
-): string | null {
-	const selected = selectAttentionCenterTab(state, workspaceId);
-	if (!selected) return null;
-	if (selected.kind === "terminal") {
-		return (state.terminalsByWorkspace[workspaceId] ?? []).some(
-			(terminal) => terminal.tabKey === selected.tabKey,
-		)
-			? selected.tabKey
-			: null;
-	}
-	const identity = layoutResourceIdentity(selected);
-	const cache = (state.tabsByWorkspace[workspaceId] ?? []).find((tab) => {
-		switch (tab.kind) {
-			case "file":
-			case "diff":
-			case "chat":
-				return tab.kind === selected.kind && layoutResourceIdentity(tab) === identity;
-			case "doc":
-				return selected.kind === "document" && tab.sourceId === selected.sourceId;
-		}
-		return false;
-	});
-	return cache?.id ?? null;
-}
-
-export function selectAttentionCenterResourceReady(
-	state: CenterResourceCacheState,
-	workspaceId: string,
-): boolean {
-	return selectAttentionCenterResourceCacheKey(state, workspaceId) !== null;
 }
 
 export function isDefaultWorkspace(workspace: Pick<Workspace, "kind">): boolean {
@@ -258,37 +119,17 @@ export function selectWorkspaceSessionIds(
 	state: {
 		tabsByWorkspace: Record<string, EditorTab[]>;
 		closedChatsByWorkspace: Record<string, ClosedChat[]>;
-		layoutDocumentsByWorkspace?: Record<string, WorkspaceLayoutDocument>;
 	},
 	workspaceId: string,
 ): string[] {
 	const sessionIds = new Set(
 		(state.tabsByWorkspace[workspaceId] ?? []).flatMap((tab) =>
-			tab.kind === "chat" || tab.kind === "plan"
-				? [tab.sessionId]
-				: tab.kind === "doc"
-					? [tab.sourceId]
-					: [],
+			tab.kind === "chat" ? [tab.sessionId] : [],
 		),
 	);
 	for (const chat of state.closedChatsByWorkspace[workspaceId] ?? []) {
 		sessionIds.add(chat.sessionId);
 	}
-	const visit = (node: WorkspaceLayoutDocument["center"]): void => {
-		if (node.kind === "split") {
-			visit(node.children[0]);
-			visit(node.children[1]);
-			return;
-		}
-		for (const tab of node.tabs) {
-			if (tab.kind === "chat") sessionIds.add(tab.sessionId);
-			if (tab.kind === "document" && tab.documentKind === "todo-plan") {
-				sessionIds.add(tab.sourceId);
-			}
-		}
-	};
-	const document = state.layoutDocumentsByWorkspace?.[workspaceId];
-	if (document) visit(document.center);
 	return [...sessionIds];
 }
 
@@ -325,11 +166,6 @@ export function matchesWorktreePath(reported: string, rel: string): boolean {
 	const path = normalizePath(reported);
 	if (path === rel) return true;
 	return isAbsolutePath(path) && path.endsWith(`/${rel}`);
-}
-
-export function specPathMatcher(nodes: SpecGraphNode[]): (path: string) => boolean {
-	const paths = nodes.map((node) => node.path);
-	return (reported) => paths.some((rel) => matchesWorktreePath(reported, rel));
 }
 
 export function selectChatTitle(
@@ -416,13 +252,4 @@ export function selectLastOpenChatSession(
 		if (tab?.kind === "chat" && tab.sessionId) return tab.sessionId;
 	}
 	return null;
-}
-
-export function selectReviewDraftCount(
-	state: { reviewsByWorkspace: Record<string, { comments: { status: string }[] }> },
-	workspaceId: string | null,
-): number {
-	if (!workspaceId) return 0;
-	const snapshot = state.reviewsByWorkspace[workspaceId];
-	return snapshot ? snapshot.comments.filter((c) => c.status === "draft").length : 0;
 }

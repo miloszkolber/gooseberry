@@ -28,8 +28,8 @@ test("a workspace opens a terminal automatically, rooted in the worktree, with w
 	await createWorkspaceViaDialog(page);
 	await expect(worktreeRows(page)).toHaveCount(1);
 
-	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
 	await waitTerminalReady(page);
+	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
 	const term = visibleTerminalScreen(page);
 
 	await runInTerminal(page, 'basename "$(pwd)"');
@@ -53,6 +53,7 @@ test("terminals are workspace-scoped and survive workspace switches", async ({ p
 	await expect(visibleTerminalScreen(page)).not.toContainText("TR_WS1_BUFFER");
 
 	await worktreeRows(page).nth(0).getByRole("button").first().click();
+	await page.getByTestId("tab-terminal").click();
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
 	await expect(visibleTerminalScreen(page)).toContainText("TR_WS1_BUFFER");
 });
@@ -83,9 +84,7 @@ test("multiple terminals per workspace keep independent buffers and can be close
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(0);
 	await page.getByTestId("new-terminal").first().click();
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
-	await expect(
-		page.getByTestId("center-group").filter({ has: page.getByTestId("terminal-tab") }),
-	).toBeVisible();
+	await expect(page.getByTestId("tab-terminal")).toHaveAttribute("aria-selected", "true");
 	await waitTerminalReady(page);
 });
 
@@ -571,7 +570,7 @@ test("a tab opened or closed in one browser reaches the other", async ({ page, c
 	await waitTerminalReady(page2);
 	await expect(page2.getByTestId("terminal-tab")).toHaveCount(1);
 
-	await page2.getByTestId("terminal-add").click();
+	await page2.getByTestId("new-terminal").click();
 	await expect(page2.getByTestId("terminal-tab")).toHaveCount(2);
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(2);
 

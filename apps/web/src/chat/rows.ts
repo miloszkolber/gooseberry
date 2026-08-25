@@ -43,7 +43,6 @@ export function deriveRows(
 	turns: ChatTurn[],
 	toolResults: Record<string, ToolResultState>,
 	isStreaming: boolean,
-	isSpec?: (path: string) => boolean,
 ): ChatRow[] {
 	const rows: ChatRow[] = [];
 	let run: ActivityStep[] = [];
@@ -130,7 +129,7 @@ export function deriveRows(
 			(turns[i + 1]?.kind === "user" || (i === turns.length - 1 && !isStreaming));
 		if (roundEnded) {
 			flushRun();
-			const data = turnDivider(turns, i, isSpec);
+			const data = turnDivider(turns, i);
 			if (data) rows.push({ kind: "divider", id: `${turn.id}:divider`, data });
 		}
 	}
@@ -141,19 +140,12 @@ export function deriveRows(
 export interface TurnDividerData {
 	elapsedMs: number | null;
 	toolCount: number;
-	specs: string[];
 	changedFiles: string[];
 }
 
-const SPEC_WRITER_TOOL = "spec_create";
-
 const FILE_WRITER_TOOLS = new Set(["write", "edit"]);
 
-export function turnDivider(
-	turns: ChatTurn[],
-	endIndex: number,
-	isSpec: (path: string) => boolean = () => false,
-): TurnDividerData | null {
+export function turnDivider(turns: ChatTurn[], endIndex: number): TurnDividerData | null {
 	let userIdx = -1;
 	for (let i = endIndex; i >= 0; i--) {
 		if (turns[i]?.kind === "user") {
@@ -164,7 +156,7 @@ export function turnDivider(
 	if (userIdx < 0) return null;
 
 	let toolCount = 0;
-	const written = new Map<string, boolean>();
+	const written = new Set<string>();
 	let endMs: number | null = null;
 	for (let i = userIdx + 1; i <= endIndex; i++) {
 		const turn = turns[i];
@@ -173,12 +165,10 @@ export function turnDivider(
 			for (const block of turn.message.content) {
 				if (block.type !== "toolCall") continue;
 				toolCount++;
-				const specWrite = block.name === SPEC_WRITER_TOOL;
-				if (!specWrite && !FILE_WRITER_TOOLS.has(block.name)) continue;
+				if (!FILE_WRITER_TOOLS.has(block.name)) continue;
 				const path = strArg(block.arguments, "path");
 				if (!path) continue;
-				if (specWrite || isSpec(path)) written.set(path, true);
-				else if (!written.has(path)) written.set(path, false);
+				written.add(path);
 			}
 		} else if (turn?.kind === "system" && turn.endedAt != null) {
 			endMs = turn.endedAt;
@@ -189,10 +179,7 @@ export function turnDivider(
 	const startMs = user?.kind === "user" ? user.message.timestamp : null;
 	const elapsedMs = startMs != null && endMs != null ? endMs - startMs : null;
 
-	const specs: string[] = [];
-	const changedFiles: string[] = [];
-	for (const [path, isSpecPath] of written) (isSpecPath ? specs : changedFiles).push(path);
-	return { elapsedMs, toolCount, specs, changedFiles };
+	return { elapsedMs, toolCount, changedFiles: [...written] };
 }
 
 export function rowIndexForTurn(rows: ChatRow[], turnId: string): number {

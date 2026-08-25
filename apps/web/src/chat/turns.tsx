@@ -5,7 +5,6 @@ import {
 	ChevronRight,
 	Clock,
 	FileDiff,
-	FileText,
 	FoldVertical,
 	RotateCw,
 	TriangleAlert,
@@ -24,7 +23,6 @@ import { ActivityGroup } from "./ActivityGroup";
 import { FileChip } from "./FileChip";
 import { useFold, useSelection } from "./foldState";
 import { Markdown } from "./Markdown";
-import { parseReviewPackage, type ReviewPackageItem, reviewPackageLabel } from "./reviewPackage";
 import type { ChatRow, TurnDividerData } from "./rows";
 import { formatTokens } from "./SessionStatsBar";
 import { ToolCard } from "./ToolCard";
@@ -34,15 +32,11 @@ import type { CompactionState } from "./types";
 export function ChatTurnView({
 	row,
 	workspaceRoot,
-	onOpenSpec,
 	onOpenChange,
-	onReveal,
 }: {
 	row: ChatRow;
 	workspaceRoot?: string | undefined;
-	onOpenSpec?: ((path: string) => void) | undefined;
 	onOpenChange?: ((path: string) => void) | undefined;
-	onReveal?: ((tab: "specs" | "changes") => void) | undefined;
 }) {
 	switch (row.kind) {
 		case "user":
@@ -93,9 +87,7 @@ export function ChatTurnView({
 					id={row.id}
 					data={row.data}
 					workspaceRoot={workspaceRoot}
-					onOpenSpec={onOpenSpec ?? (() => {})}
 					onOpenChange={onOpenChange ?? (() => {})}
-					onReveal={onReveal ?? (() => {})}
 				/>
 			);
 		default:
@@ -178,7 +170,6 @@ function UserTurn({
 		);
 	}
 
-	const review = parseReviewPackage(text);
 	return (
 		<div data-testid="chat-message" data-role="user" className="flex justify-end">
 			<div className={USER_BUBBLE}>
@@ -189,20 +180,7 @@ function UserTurn({
 						))}
 					</div>
 				) : null}
-				{review ? (
-					<div data-testid="review-package-card" className="whitespace-normal">
-						<span data-testid="review-package-summary" className="block text-text-default">
-							{reviewPackageLabel(review)}
-						</span>
-						<ul className="mt-xs flex flex-col">
-							{keyPackageItems(review.items).map(({ key, item }) => (
-								<PackageCommentRow key={key} foldId={`${id}:${key}`} item={item} />
-							))}
-						</ul>
-					</div>
-				) : (
-					text
-				)}
+				{text}
 			</div>
 		</div>
 	);
@@ -256,54 +234,6 @@ function SkillInvocationCard({
 				</div>
 			) : null}
 		</div>
-	);
-}
-
-function keyPackageItems(items: ReviewPackageItem[]): { key: string; item: ReviewPackageItem }[] {
-	const seen = new Map<string, number>();
-	return items.map((item) => {
-		const base = `${item.lineRef}·${item.body}`;
-		const n = (seen.get(base) ?? 0) + 1;
-		seen.set(base, n);
-		return { key: `${base}·${n}`, item };
-	});
-}
-
-function PackageCommentRow({ foldId, item }: { foldId: string; item: ReviewPackageItem }) {
-	const [expanded, toggle] = useFold(foldId);
-	return (
-		<li data-testid="review-package-item" data-expanded={expanded}>
-			<button
-				type="button"
-				data-testid="review-package-item-toggle"
-				aria-expanded={expanded}
-				onClick={toggle}
-				className="flex w-full cursor-pointer select-none items-start gap-xs rounded-[var(--radius-sm)] px-xs py-xs text-left outline-none transition-colors hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary"
-			>
-				<ChevronRight
-					className={cn(
-						"mt-0.5 size-3 shrink-0 text-text-subtle transition-transform",
-						expanded && "rotate-90",
-					)}
-				/>
-				{item.lineRef && (
-					<span className="shrink-0 tr-code-text text-text-subtle">{item.lineRef}</span>
-				)}
-				<span
-					className={cn(
-						"min-w-0 flex-1 text-text-default",
-						expanded ? "whitespace-pre-wrap" : "truncate",
-					)}
-				>
-					{item.body}
-				</span>
-			</button>
-			{expanded && item.fragment && (
-				<pre className="mb-xs ml-lg max-h-32 overflow-auto whitespace-pre-wrap rounded-[var(--radius-sm)] border border-border-muted bg-sunken px-sm py-xs tr-code-text text-text-muted">
-					{item.fragment}
-				</pre>
-			)}
-		</li>
 	);
 }
 
@@ -498,13 +428,12 @@ function formatElapsed(ms: number): string {
 }
 
 interface ArtifactGroup {
-	id: "specs" | "files";
-	icon: typeof FileText;
+	id: "files";
+	icon: typeof FileDiff;
 	paths: string[];
 	label: (count: number) => string;
 	expanded: boolean;
 	onOpen: (path: string) => void;
-	reveal: () => void;
 }
 
 function ArtifactChip({
@@ -516,7 +445,7 @@ function ArtifactChip({
 	listId: string;
 	onSelect: () => void;
 }) {
-	const { id, icon: Icon, paths, label, expanded, onOpen, reveal } = group;
+	const { id, icon: Icon, paths, label, expanded, onOpen } = group;
 	const many = paths.length > 1;
 	const first = paths[0];
 	return (
@@ -531,7 +460,6 @@ function ArtifactChip({
 					if (first) onOpen(first);
 					return;
 				}
-				if (!expanded) reveal();
 				onSelect();
 			}}
 			className={cn(
@@ -589,29 +517,16 @@ export function TurnDivider({
 	id,
 	data,
 	workspaceRoot,
-	onOpenSpec,
 	onOpenChange,
-	onReveal,
 }: {
 	id: string;
 	data: TurnDividerData;
 	workspaceRoot?: string | undefined;
-	onOpenSpec: (path: string) => void;
 	onOpenChange: (path: string) => void;
-	onReveal: (tab: "specs" | "changes") => void;
 }) {
-	const { elapsedMs, toolCount, specs, changedFiles } = data;
+	const { elapsedMs, toolCount, changedFiles } = data;
 	const [selected, select] = useSelection(`${id}:artifacts`);
 	const allGroups: ArtifactGroup[] = [
-		{
-			id: "specs",
-			icon: FileText,
-			paths: specs,
-			label: (n) => `${n} ${n === 1 ? "spec" : "specs"}`,
-			expanded: selected === "specs",
-			onOpen: onOpenSpec,
-			reveal: () => onReveal("specs"),
-		},
 		{
 			id: "files",
 			icon: FileDiff,
@@ -619,7 +534,6 @@ export function TurnDivider({
 			label: (n) => `${n} ${n === 1 ? "file changed" : "files changed"}`,
 			expanded: selected === "files",
 			onOpen: onOpenChange,
-			reveal: () => onReveal("changes"),
 		},
 	];
 	const groups = allGroups.filter((group) => group.paths.length > 0);

@@ -4,7 +4,6 @@ import {
 	hasPlatformModifier,
 	isAbsolutePath,
 	isMarkdownPath,
-	layoutResourceIdentity,
 	normalizePath,
 	parseTupleKey,
 	platformShortcutLabel,
@@ -76,29 +75,6 @@ test("tuple keys keep delimiter-bearing identity tuples distinct and parse only 
 	expect(parseTupleKey(first, "resource")).toEqual(["a:b", "c"]);
 	expect(parseTupleKey(first, "other")).toBeNull();
 	expect(parseTupleKey("resource:not-json", "resource")).toBeNull();
-});
-
-test("layout resource identity ignores placement ids and separates delimiter-bearing diff tuples", () => {
-	expect(layoutResourceIdentity({ kind: "file", id: "one", name: "One", path: "src/a:b.ts" })).toBe(
-		layoutResourceIdentity({ kind: "file", id: "two", name: "Two", path: "src/a:b.ts" }),
-	);
-	expect(
-		layoutResourceIdentity({
-			kind: "diff",
-			id: "one",
-			name: "One",
-			path: "a",
-			scope: { kind: "commit", sha: "x:commit:y" },
-		}),
-	).not.toBe(
-		layoutResourceIdentity({
-			kind: "diff",
-			id: "two",
-			name: "Two",
-			path: "a:commit:x",
-			scope: { kind: "commit", sha: "y" },
-		}),
-	);
 });
 
 test("normalizePath brings both separator styles to one form and drops a leading ./", () => {

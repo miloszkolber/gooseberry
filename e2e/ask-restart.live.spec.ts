@@ -110,6 +110,7 @@ test("a pending questionnaire survives a host kill -9: reboot, reopen, answer, a
 	await page.getByTestId("add-workspace").first().click();
 	const dialog = page.getByTestId("new-workspace-dialog");
 	await expect(dialog).toBeVisible();
+	await dialog.getByTestId("ws-target-worktree").click();
 	await page.getByTestId("create-workspace").click();
 	await expect(dialog).toBeHidden();
 	await expect(page.locator('[data-testid="workspace-item"][data-active="true"]')).toHaveCount(1, {

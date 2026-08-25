@@ -12,13 +12,7 @@ import { openChatInTab } from "../panels/openChat";
 import { type ClosedChat, toast, useAppStore } from "../store";
 import { errorText, getTransport } from "../transport";
 
-export function WorkspaceChatHistory({
-	workspaceId,
-	targetGroupId,
-}: {
-	workspaceId: string;
-	targetGroupId: string;
-}) {
+export function WorkspaceChatHistory({ workspaceId }: { workspaceId: string }) {
 	const closed = useAppStore((state) => state.closedChatsByWorkspace[workspaceId] ?? EMPTY_CHATS);
 	if (closed.length === 0) return null;
 	return (
@@ -43,10 +37,7 @@ export function WorkspaceChatHistory({
 							data-testid="closed-chat-item"
 							data-session-id={chat.sessionId}
 							onSelect={() => {
-								const navigation = useAppStore
-									.getState()
-									.beginCenterNavigation(workspaceId, targetGroupId);
-								void openChatInTab(workspaceId, chat.sessionId, navigation);
+								void openChatInTab(workspaceId, chat.sessionId);
 							}}
 							className="min-w-0 flex-1"
 						>

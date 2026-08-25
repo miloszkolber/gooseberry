@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import {
 	createSyntheticSourceInfo,
 	DefaultPackageManager,
@@ -7,22 +8,30 @@ import {
 	type ExtensionAPI,
 	type ExtensionFactory,
 	getAgentDir,
+	type InlineExtension,
 	type PathMetadata,
 	type ResourceDiagnostic,
 	type ResourceLoader,
 	SettingsManager,
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
-import type { SkillCatalogEntry, SlashCommandInfo } from "@mewa-code/contracts";
+import type {
+	PiProfileCapability,
+	PiProfileCapabilityId,
+	PiProfileDescriptor,
+	PiProfileSettings,
+	SkillCatalogEntry,
+	SlashCommandInfo,
+} from "@mewa-code/contracts";
+import { DEFAULT_PI_PROFILE_SETTINGS } from "@mewa-code/contracts";
+import { PiConnector } from "@signetai/connector-pi";
+import { getConfig } from "../settings";
 import { askUserQuestionExtension } from "./askUserQuestion";
 import { oversizedImageGuard } from "./imageGuard";
-import { reviewToolExtension } from "./reviewTool";
+import { protectedStateRoots } from "./protectedPaths";
+import { protectedStateGuard } from "./protectedStateGuard";
+import { sessionGoalExtension } from "./sessionGoalExtension";
 import { decideSkill, type SkillAdmissionContext } from "./skillAdmission";
-import {
-	type CompatibilitySkillSource,
-	candidateCompatibilitySkillRoots,
-	discoverCompatibilitySkillSources,
-} from "./skillSources";
 import { type BundledTrashHelpers, setBundledTrashHelpers } from "./trash";
 
 export type BundledExtensionFactory = ExtensionFactory;
@@ -48,24 +57,204 @@ export async function registerBundledRuntime(extensions: BundledExtensions): Pro
 	setBedrockProviderModule(bedrockProviderModule);
 }
 
-let devPaths: { extensionPaths: string[]; skillPaths: string[] } | undefined;
-function resolveDevPaths(): { extensionPaths: string[]; skillPaths: string[] } {
-	if (devPaths) return devPaths;
-	const require = createRequire(import.meta.url);
-	const webAccessPath = require.resolve("pi-web-access/index.ts");
-	const visualizePath = require.resolve("pi-visualize/index.ts");
-	const specGraphPath = require.resolve("pi-spec-graph/index.ts");
-	const workflowPath = require.resolve("pi-mewa-code-workflow/index.ts");
-	const todosPath = require.resolve("pi-todos/index.ts");
-	devPaths = {
-		extensionPaths: [webAccessPath, visualizePath, specGraphPath, workflowPath, todosPath],
-		skillPaths: [
-			join(dirname(specGraphPath), "skills"),
-			join(dirname(workflowPath), "skills"),
-			join(dirname(todosPath), "skills"),
+interface DevPaths {
+	extensionPaths: string[];
+	skillPaths: string[];
+	browserPath?: string;
+	webAccessPath?: string;
+	subagentPath?: string;
+}
+
+let devPaths: { key: string; paths: DevPaths } | undefined;
+
+function resolveConfiguredPath(environmentName: string, packageName: string): string | undefined {
+	const configured = process.env[environmentName]?.trim();
+	if (configured) {
+		const path = resolve(configured);
+		return existsSync(path) ? path : undefined;
+	}
+	try {
+		return createRequire(import.meta.url).resolve(packageName);
+	} catch {
+		return undefined;
+	}
+}
+
+function resolveDevPaths(): {
+	extensionPaths: string[];
+	skillPaths: string[];
+	browserPath?: string;
+	webAccessPath?: string;
+	subagentPath?: string;
+} {
+	const key = [
+		process.env.MEWA_CODE_WEB_ACCESS_EXTENSION_PATH?.trim() ?? "",
+		process.env.MEWA_CODE_BROWSER_EXTENSION_PATH?.trim() ?? "",
+		process.env.MEWA_CODE_SUBAGENTS_EXTENSION_PATH?.trim() ?? "",
+	].join("\0");
+	if (devPaths?.key === key) return devPaths.paths;
+	const webAccessPath = resolveConfiguredPath(
+		"MEWA_CODE_WEB_ACCESS_EXTENSION_PATH",
+		"pi-web-access/index.ts",
+	);
+	const browserPath = resolveConfiguredPath(
+		"MEWA_CODE_BROWSER_EXTENSION_PATH",
+		"@mewa-code/pi-mewa-browser",
+	);
+	const subagentPath = resolveConfiguredPath("MEWA_CODE_SUBAGENTS_EXTENSION_PATH", "pi-subagents");
+	const paths: DevPaths = {
+		extensionPaths: [webAccessPath, browserPath].filter(
+			(path): path is string => path !== undefined,
+		),
+		skillPaths: [],
+		...(browserPath ? { browserPath } : {}),
+		...(webAccessPath ? { webAccessPath } : {}),
+		...(subagentPath ? { subagentPath } : {}),
+	};
+	devPaths = { key, paths };
+	return paths;
+}
+
+let signetExtensionState: { configuredKey: string; path: Promise<string | undefined> } | undefined;
+
+/**
+ * Signet's public connector owns the bundled extension and its managed install
+ * path. Keep installation lazy and opt-in so an unavailable daemon never
+ * prevents an otherwise valid Pi session from starting.
+ */
+async function resolveSignetExtensionPath(): Promise<string | undefined> {
+	const configuredUrl = process.env.SIGNET_DAEMON_URL?.trim() ?? "";
+	if (!configuredUrl) return undefined;
+	const configuredKey = `${configuredUrl}\0${getAgentDir()}`;
+	if (signetExtensionState?.configuredKey === configuredKey) {
+		return signetExtensionState.path;
+	}
+
+	const path = (async (): Promise<string | undefined> => {
+		try {
+			const connector = new PiConnector();
+			await connector.install("");
+			return connector.getConfigPath();
+		} catch (error) {
+			console.warn(
+				`Signet memory extension unavailable: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return undefined;
+		}
+	})();
+	signetExtensionState = { configuredKey, path };
+	return path;
+}
+
+function signetManagedExtensionPath(): string | undefined {
+	try {
+		return resolve(new PiConnector().getConfigPath());
+	} catch {
+		return undefined;
+	}
+}
+
+const PROFILE_SETTING_KEY: Record<
+	Exclude<PiProfileCapabilityId, "protectedStateGuard">,
+	keyof PiProfileSettings
+> = {
+	browser: "browser",
+	webAccess: "webAccess",
+	signetMemory: "signetMemory",
+	goals: "goals",
+	subagents: "subagents",
+};
+
+function profileChoiceEnabled(settings: PiProfileSettings, id: PiProfileCapabilityId): boolean {
+	if (id === "protectedStateGuard") return true;
+	return settings[PROFILE_SETTING_KEY[id]] !== false;
+}
+
+function profileCapability(
+	id: PiProfileCapabilityId,
+	label: string,
+	description: string,
+	available: boolean,
+	settings: PiProfileSettings,
+	options: { required?: boolean; unavailableReason?: string } = {},
+): PiProfileCapability {
+	const required = options.required === true;
+	const enabled = required ? true : available && profileChoiceEnabled(settings, id);
+	return {
+		id,
+		label,
+		description,
+		enabled,
+		available,
+		...(required ? { required: true } : {}),
+		...(available || !options.unavailableReason
+			? {}
+			: { unavailableReason: options.unavailableReason }),
+	};
+}
+
+export async function getPiProfile(): Promise<PiProfileDescriptor> {
+	const settings = getConfig().piProfile ?? DEFAULT_PI_PROFILE_SETTINGS;
+	const paths = resolveDevPaths();
+	const signetConfigured = Boolean(process.env.SIGNET_DAEMON_URL?.trim());
+	const signetPath = signetConfigured ? await resolveSignetExtensionPath() : undefined;
+	return {
+		id: "mewa",
+		label: "Mewa",
+		capabilities: [
+			profileCapability(
+				"browser",
+				"Browser QA",
+				"Bounded browser actions run through the isolated mewa-browser service.",
+				paths.browserPath !== undefined,
+				settings,
+				{ unavailableReason: "The Mewa browser extension is not available." },
+			),
+			profileCapability(
+				"webAccess",
+				"Web access",
+				"Search and fetch tools return source URLs for citations.",
+				paths.webAccessPath !== undefined,
+				settings,
+				{ unavailableReason: "The Pi web-access extension is not available." },
+			),
+			profileCapability(
+				"signetMemory",
+				"Signet memory",
+				"Recall and save durable context through the configured Signet connector.",
+				signetPath !== undefined,
+				settings,
+				{
+					unavailableReason: signetConfigured
+						? "The Signet memory extension could not be loaded."
+						: "Signet memory is not configured.",
+				},
+			),
+			profileCapability(
+				"goals",
+				"Session goals",
+				"Keep one visible goal active for each Pi session.",
+				true,
+				settings,
+			),
+			profileCapability(
+				"subagents",
+				"Subagents",
+				"Run explicitly requested child sessions through Pi's subagent extension.",
+				paths.subagentPath !== undefined,
+				settings,
+				{ unavailableReason: "The Pi subagents extension is not available." },
+			),
+			profileCapability(
+				"protectedStateGuard",
+				"Protected-state guard",
+				"Keep Pi and Mewa credentials and state roots out of project-scoped access.",
+				true,
+				settings,
+				{ required: true },
+			),
 		],
 	};
-	return devPaths;
 }
 
 const headlessSearchPolicy: ExtensionFactory = (pi: ExtensionAPI) => {
@@ -76,84 +265,38 @@ const headlessSearchPolicy: ExtensionFactory = (pi: ExtensionAPI) => {
 	});
 };
 
-function isUnderPath(path: string, root: string): boolean {
-	const normalizedPath = resolve(path);
-	const normalizedRoot = resolve(root);
-	return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}${sep}`);
-}
-
-function relabelAliasProvenance(skill: Skill, sources: CompatibilitySkillSource[]): Skill {
-	if (skill.sourceInfo.scope !== "temporary") return skill;
-	const source = sources.find((candidate) => isUnderPath(skill.filePath, candidate.path));
-	if (!source) return skill;
-	return {
-		...skill,
-		sourceInfo: createSyntheticSourceInfo(skill.filePath, {
-			source: source.provider,
-			scope: source.scope,
-			origin: "top-level",
-			baseDir: source.path,
-		}),
-	};
-}
-
-function skillGroup(
-	filePath: string,
-	sources: CompatibilitySkillSource[],
-	bundledPaths: string[],
-): { group: string; isPlugin: boolean } {
-	const source = sources.find((candidate) => isUnderPath(filePath, candidate.path));
-	if (source?.plugin) return { group: source.plugin, isPlugin: true };
-	if (source?.scope === "project") return { group: "project", isPlugin: false };
-	if (source?.scope === "user") return { group: "personal", isPlugin: false };
-	if (bundledPaths.some((path) => isUnderPath(filePath, path))) {
+function skillGroup(skill: Skill, bundledPaths: string[]): { group: string; isPlugin: boolean } {
+	if (bundledPaths.some((path) => resolve(skill.filePath).startsWith(`${resolve(path)}/`))) {
 		return { group: "bundled", isPlugin: false };
 	}
+	if (skill.sourceInfo.scope === "project") return { group: "project", isPlugin: false };
+	if (skill.sourceInfo.scope === "user") return { group: "personal", isPlugin: false };
 	return { group: "pi", isPlugin: false };
 }
 
-function skillsGate(cwd: string, bundledPaths: string[], getCtx: () => SkillAdmissionContext) {
+function skillsGate(bundledPaths: string[], getCtx: () => SkillAdmissionContext) {
 	return (current: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		const ctx = getCtx();
-		const sources = discoverCompatibilitySkillSources(cwd);
-		const projectAliasPaths = sources.filter((s) => s.scope === "project").map((s) => s.path);
-		const isProjectAlias = (filePath: string) =>
-			projectAliasPaths.some((path) => isUnderPath(filePath, path));
 		return {
 			...current,
-			skills: current.skills
-				.map((skill) => relabelAliasProvenance(skill, sources))
-				.filter((skill) => {
-					const { group, isPlugin } = skillGroup(skill.filePath, sources, bundledPaths);
-					return (
-						decideSkill(
-							{ name: skill.name, isProjectAlias: isProjectAlias(skill.filePath), group, isPlugin },
-							ctx,
-						) === "load"
-					);
-				}),
+			skills: current.skills.filter((skill) => {
+				const { group, isPlugin } = skillGroup(skill, bundledPaths);
+				const isProjectSkill = skill.sourceInfo.scope === "project";
+				if (isProjectSkill && !ctx.trusted) return false;
+				return decideSkill({ name: skill.name, isProjectSkill, group, isPlugin }, ctx) === "load";
+			}),
 		};
 	};
 }
 
-function resolveSkillInputs(
-	cwd: string,
-	getCtx: () => SkillAdmissionContext,
-): {
+function resolveSkillInputs(getCtx: () => SkillAdmissionContext): {
 	additionalSkillPaths: string[];
 	skillsOverride: ReturnType<typeof skillsGate>;
 } {
-	const candidates = candidateCompatibilitySkillRoots(cwd);
-	const personal = candidates.filter((source) => source.scope === "user");
-	const project = candidates.filter((source) => source.scope === "project");
 	const bundledSkillPaths = bundled ? [bundled.skillsDir] : resolveDevPaths().skillPaths;
 	return {
-		additionalSkillPaths: [
-			...bundledSkillPaths,
-			...personal.map((source) => source.path),
-			...project.map((source) => source.path),
-		],
-		skillsOverride: skillsGate(cwd, bundledSkillPaths, getCtx),
+		additionalSkillPaths: bundledSkillPaths,
+		skillsOverride: skillsGate(bundledSkillPaths, getCtx),
 	};
 }
 
@@ -171,15 +314,31 @@ export async function buildResourceLoader(
 	settingsManager: SettingsManager,
 	getAdmission: () => SkillAdmissionContext,
 	excludedExtensionPaths: readonly string[] = [],
+	workspaceId = "",
 ): Promise<ResourceLoader> {
-	const sharedFactories = [
-		headlessSearchPolicy,
-		askUserQuestionExtension,
-		reviewToolExtension,
-		oversizedImageGuard,
+	const defaultPaths = resolveDevPaths();
+	const signetPath = await resolveSignetExtensionPath();
+	const managedSignetPath = signetManagedExtensionPath();
+	const sharedFactories: InlineExtension[] = [
+		{ name: "mewa-headless-search-policy", factory: headlessSearchPolicy, hidden: true },
+		{ name: "mewa-ask-user-question", factory: askUserQuestionExtension, hidden: true },
+		{ name: "mewa-image-guard", factory: oversizedImageGuard, hidden: true },
+		{
+			name: "mewa-goals",
+			factory: sessionGoalExtension(workspaceId),
+			hidden: true,
+		},
 	];
-	const skillInputs = resolveSkillInputs(cwd, getAdmission);
+	const skillInputs = resolveSkillInputs(getAdmission);
 	const agentDir = getAgentDir();
+	const guardedFactories: InlineExtension[] = [
+		...sharedFactories,
+		{
+			name: "mewa-protected-state-guard",
+			factory: protectedStateGuard(cwd, protectedStateRoots({ agentDir })),
+			hidden: true,
+		},
+	];
 	const common = {
 		cwd,
 		agentDir,
@@ -205,23 +364,53 @@ export async function buildResourceLoader(
 	}
 
 	const additionalExtensionPaths = [
-		...(bundled ? [] : resolveDevPaths().extensionPaths),
+		...(bundled ? [] : defaultPaths.extensionPaths),
+		...(defaultPaths.subagentPath ? [defaultPaths.subagentPath] : []),
+		...(signetPath ? [signetPath] : []),
 		...discoveredExtensionPaths,
-	];
+	].filter((path) => !excluded.has(resolve(path)));
+	const extensionPathsByCapability: Partial<Record<PiProfileCapabilityId, string>> = {
+		...(defaultPaths.browserPath ? { browser: defaultPaths.browserPath } : {}),
+		...(defaultPaths.webAccessPath ? { webAccess: defaultPaths.webAccessPath } : {}),
+		...(defaultPaths.subagentPath ? { subagents: defaultPaths.subagentPath } : {}),
+		...(signetPath ? { signetMemory: signetPath } : {}),
+	};
+	const extensionsOverride = (current: ReturnType<ResourceLoader["getExtensions"]>) => ({
+		...current,
+		extensions: current.extensions.filter((extension) => {
+			const activeSettings = getConfig().piProfile ?? DEFAULT_PI_PROFILE_SETTINGS;
+			if (excluded.has(resolve(extension.resolvedPath))) return false;
+			if (managedSignetPath && resolve(extension.resolvedPath) === managedSignetPath) {
+				return signetPath !== undefined && profileChoiceEnabled(activeSettings, "signetMemory");
+			}
+			const path = extensionPathsByCapability;
+			for (const [id, configuredPath] of Object.entries(path)) {
+				if (resolve(extension.resolvedPath) !== resolve(configuredPath)) continue;
+				return profileChoiceEnabled(activeSettings, id as PiProfileCapabilityId);
+			}
+			if (extension.path === "<inline:mewa-goals>")
+				return profileChoiceEnabled(activeSettings, "goals");
+			return true;
+		}),
+	});
 	const loader = new DefaultResourceLoader(
 		bundled
 			? {
 					...common,
-					...(excluded.size > 0 ? { noExtensions: true, additionalExtensionPaths } : {}),
-					extensionFactories: [...bundled.factories, ...sharedFactories],
+					extensionsOverride,
+					...(excluded.size > 0 ? { noExtensions: true } : {}),
+					additionalExtensionPaths,
+					extensionFactories: [...bundled.factories, ...guardedFactories],
 				}
 			: {
 					...common,
+					extensionsOverride,
 					...(excluded.size > 0 ? { noExtensions: true } : {}),
 					additionalExtensionPaths,
-					extensionFactories: sharedFactories,
+					extensionFactories: guardedFactories,
 				},
 	);
+	settingsManager.setProjectTrusted(getAdmission().trusted);
 	await loader.reload();
 
 	for (const extension of loader.getExtensions().extensions) {
@@ -238,7 +427,6 @@ function admissionCacheKey(cwd: string, ctx: SkillAdmissionContext): string {
 	return JSON.stringify([
 		cwd,
 		ctx.trusted,
-		[...ctx.acknowledged].sort(),
 		[...ctx.disabled].sort(),
 		[...ctx.disabledGroups].sort(),
 		Object.entries(ctx.overrides).sort(([a], [b]) => a.localeCompare(b)),
@@ -260,7 +448,7 @@ export async function listSkillCommands(
 		cwd,
 		agentDir: getAgentDir(),
 		settingsManager,
-		...resolveSkillInputs(cwd, () => admission),
+		...resolveSkillInputs(() => admission),
 		noExtensions: true,
 		noPromptTemplates: true,
 		noThemes: true,
@@ -272,51 +460,17 @@ export async function listSkillCommands(
 	return value;
 }
 
-export async function listProjectAliasSkillNames(cwd: string): Promise<string[]> {
-	const projectPaths = discoverCompatibilitySkillSources(cwd)
-		.filter((source) => source.scope === "project")
-		.map((source) => source.path);
-	if (projectPaths.length === 0) return [];
-	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: true });
-	const loader = new DefaultResourceLoader({
-		cwd,
-		agentDir: getAgentDir(),
-		settingsManager,
-		additionalSkillPaths: projectPaths,
-		noExtensions: true,
-		noPromptTemplates: true,
-		noThemes: true,
-		noContextFiles: true,
-	});
-	await loader.reload();
-	return loader
-		.getSkills()
-		.skills.filter((skill) => projectPaths.some((path) => isUnderPath(skill.filePath, path)))
-		.map((skill) => skill.name);
-}
-
 export async function listSkillCatalog(
 	cwd: string,
 	admission: SkillAdmissionContext,
 ): Promise<SkillCatalogEntry[]> {
-	const discovered = discoverCompatibilitySkillSources(cwd);
-	const personal = discovered.filter((s) => s.scope === "user");
-	const project = discovered.filter((s) => s.scope === "project");
 	const bundledSkillPaths = bundled ? [bundled.skillsDir] : resolveDevPaths().skillPaths;
 	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: true });
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir: getAgentDir(),
 		settingsManager,
-		additionalSkillPaths: [
-			...bundledSkillPaths,
-			...personal.map((s) => s.path),
-			...project.map((s) => s.path),
-		],
-		skillsOverride: (current) => ({
-			...current,
-			skills: current.skills.map((skill) => relabelAliasProvenance(skill, discovered)),
-		}),
+		additionalSkillPaths: bundledSkillPaths,
 		noExtensions: true,
 		noPromptTemplates: true,
 		noThemes: true,
@@ -324,20 +478,19 @@ export async function listSkillCatalog(
 	});
 	await loader.reload();
 	return loader.getSkills().skills.map((skill) => {
-		const source = discovered.find((candidate) => isUnderPath(skill.filePath, candidate.path));
-		const gated = source?.scope === "project";
-		const { group, isPlugin } = skillGroup(skill.filePath, discovered, bundledSkillPaths);
+		const gated = skill.sourceInfo.scope === "project";
+		const { group, isPlugin } = skillGroup(skill, bundledSkillPaths);
+		const decision =
+			gated && !admission.trusted
+				? "untrusted"
+				: decideSkill({ name: skill.name, isProjectSkill: gated, group, isPlugin }, admission);
 		return {
 			name: skill.name,
 			description: skill.description,
 			sourceInfo: skill.sourceInfo,
 			gated,
 			group,
-			...(source?.plugin ? { plugin: source.plugin } : {}),
-			decision: decideSkill(
-				{ name: skill.name, isProjectAlias: gated, group, isPlugin },
-				admission,
-			),
+			decision,
 		};
 	});
 }

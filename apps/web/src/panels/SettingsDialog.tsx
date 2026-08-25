@@ -1,34 +1,28 @@
 import {
-	GitBranch,
 	KeyRound,
-	LayoutPanelTop,
-	LayoutTemplate,
 	type LucideIcon,
 	Palette,
+	PlugZap,
 	SlidersHorizontal,
 	SquareTerminal,
 } from "lucide-react";
-import type { ReactNode } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib";
 import { SettingsSection, useAppStore } from "@/store";
 import { AppearanceSettings } from "./AppearanceSettings";
-import { GithubSettings } from "./GithubSettings";
+import { PiProfileSettings } from "./PiProfileSettings";
 import { ProvidersSettings } from "./ProvidersSettings";
-import { TemplatesSettings } from "./TemplatesSettings";
 import { TerminalSettings } from "./TerminalSettings";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
 	{ id: SettingsSection.Providers, label: "Providers", icon: KeyRound },
-	{ id: SettingsSection.Github, label: "GitHub", icon: GitBranch },
+	{ id: SettingsSection.Extensions, label: "Pi profile", icon: PlugZap },
 	{ id: SettingsSection.Appearance, label: "Appearance", icon: Palette },
-	{ id: SettingsSection.Layout, label: "Layout", icon: LayoutPanelTop },
 	{ id: SettingsSection.Terminal, label: "Terminal", icon: SquareTerminal },
-	{ id: SettingsSection.Templates, label: "Templates", icon: LayoutTemplate },
 ];
 const SOON: { label: string; icon: LucideIcon }[] = [{ label: "General", icon: SlidersHorizontal }];
 
-export function SettingsDialog({ layoutSettings }: { layoutSettings: ReactNode }) {
+export function SettingsDialog() {
 	const open = useAppStore((s) => s.settingsOpen);
 	const section = useAppStore((s) => s.settingsSection);
 
@@ -90,14 +84,10 @@ export function SettingsDialog({ layoutSettings }: { layoutSettings: ReactNode }
 					<div className="min-h-0 flex-1 overflow-y-auto p-lg">
 						{section === SettingsSection.Providers ? (
 							<ProvidersSettings />
-						) : section === SettingsSection.Github ? (
-							<GithubSettings />
-						) : section === SettingsSection.Layout ? (
-							layoutSettings
+						) : section === SettingsSection.Extensions ? (
+							<PiProfileSettings />
 						) : section === SettingsSection.Terminal ? (
 							<TerminalSettings />
-						) : section === SettingsSection.Templates ? (
-							<TemplatesSettings />
 						) : (
 							<AppearanceSettings />
 						)}

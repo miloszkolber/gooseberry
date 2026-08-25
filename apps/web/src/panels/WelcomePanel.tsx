@@ -1,6 +1,6 @@
 import type { Workspace } from "@mewa-code/contracts";
-import { FolderOpen, House, type LucideIcon, Rocket, Sparkles } from "lucide-react";
-import { type ComponentPropsWithoutRef, forwardRef, useEffect, useState } from "react";
+import { FolderOpen, House, type LucideIcon, Rocket } from "lucide-react";
+import { type ComponentPropsWithoutRef, forwardRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PRODUCT_NAME } from "../constants/branding";
 import { useAppStore } from "../store";
@@ -12,11 +12,6 @@ import { ProjectSkillsNotice } from "./ProjectSkillsNotice";
 import { ProviderWarningBanner } from "./ProviderWarningBanner";
 import { useOpenProject } from "./useOpenProject";
 
-const SETUP_PROMPT = "/skill:setting-up-a-project ";
-
-const SETUP_NOTE =
-	"Runs the setting-up-a-project skill — the agent drafts your project's specs, starting from its goal, before building.";
-
 export function WelcomePanel() {
 	const projects = useAppStore((s) => s.projects);
 	const recentProjects = useAppStore((s) => s.recentProjects);
@@ -24,32 +19,10 @@ export function WelcomePanel() {
 	const [dialog, setDialog] = useState<{
 		projectId: string;
 		prompt: string;
-		note?: string;
+		target?: "worktree" | "default";
 	} | null>(null);
-	const [hasSpecs, setHasSpecs] = useState<boolean | null>(null);
 
 	const project = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null;
-
-	useEffect(() => {
-		const projectId = project?.id;
-		if (!projectId) {
-			setHasSpecs(null);
-			return;
-		}
-		let cancelled = false;
-		setHasSpecs(null);
-		getTransport()
-			.request("project.hasSpecs", { projectId })
-			.then((r) => {
-				if (!cancelled) setHasSpecs(r.hasSpecs);
-			})
-			.catch(() => {
-				if (!cancelled) setHasSpecs(true);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [project?.id]);
 
 	const { openProject, pickAndOpen, dialogs } = useOpenProject((opened) =>
 		useAppStore.getState().selectProject(opened.id, { reveal: true }),
@@ -68,10 +41,21 @@ export function WelcomePanel() {
 
 	const projectFolderCard = (projectId: string) => (
 		<Card
+			cta
+			primary
 			icon={House}
 			title="Work in project folder"
 			subtitle="Chats, changes, and terminals run directly in your project folder — no isolation."
 			onClick={() => void enterDefaultWorkspace(projectId)}
+		/>
+	);
+
+	const isolatedWorktreeCard = (projectId: string) => (
+		<Card
+			icon={Rocket}
+			title="Start in isolated worktree"
+			subtitle="Create a separate checkout and branch when you need isolated changes."
+			onClick={() => setDialog({ projectId, prompt: "", target: "worktree" })}
 		/>
 	);
 
@@ -110,42 +94,10 @@ export function WelcomePanel() {
 			<div className="mt-xl flex flex-wrap justify-center gap-md">
 				{noProjects ? (
 					openProjectCard()
-				) : hasSpecs === null ? null : hasSpecs ? (
-					<>
-						<Card
-							cta
-							primary
-							icon={Rocket}
-							title="Start building"
-							subtitle="Cut an isolated worktree + branch, then pair with the agent to build it."
-							onClick={() => setDialog({ projectId: project.id, prompt: "" })}
-						/>
-						{projectFolderCard(project.id)}
-					</>
 				) : (
 					<>
-						<Card
-							cta
-							primary
-							icon={Sparkles}
-							title="Set up project"
-							tag="spec-first"
-							subtitle="Draft the project's specs with the agent before building, starting from its goal."
-							onClick={() =>
-								setDialog({
-									projectId: project.id,
-									prompt: SETUP_PROMPT,
-									note: SETUP_NOTE,
-								})
-							}
-						/>
-						<Card
-							icon={Rocket}
-							title="Start building"
-							subtitle="Cut an isolated worktree + branch and pair with the agent."
-							onClick={() => setDialog({ projectId: project.id, prompt: "" })}
-						/>
 						{projectFolderCard(project.id)}
+						{isolatedWorktreeCard(project.id)}
 					</>
 				)}
 			</div>
@@ -155,7 +107,7 @@ export function WelcomePanel() {
 					open
 					projectId={dialog.projectId}
 					initialPrompt={dialog.prompt}
-					{...(dialog.note !== undefined ? { promptNote: dialog.note } : {})}
+					{...(dialog.target ? { initialTarget: dialog.target } : {})}
 					onOpenChange={(o) => {
 						if (!o) setDialog(null);
 					}}

@@ -1,19 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	closeProject,
-	initProject,
-	inspectProjectPath,
 	isProjectTrusted,
 	listProjects,
 	listRecentProjects,
@@ -21,11 +11,6 @@ import {
 	setProjectPublisher,
 	setProjectTrust,
 } from "./projects";
-
-function gitOut(cwd: string, ...args: string[]): string {
-	const r = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "ignore" });
-	return new TextDecoder().decode(r.stdout).trim();
-}
 
 function git(cwd: string, ...args: string[]): void {
 	const result = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "ignore", stderr: "ignore" });
@@ -84,6 +69,21 @@ test("openProject refuses a checkout already attached as an external workspace",
 	expect(listProjects()).toHaveLength(0);
 });
 
+test("openProject refuses a Pi agent state root", () => {
+	const stateRoot = mkdtempSync(join(tmpdir(), "trpi-protected-pi-test-"));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = stateRoot;
+	makeRepo(stateRoot);
+
+	try {
+		expect(() => openProject(stateRoot)).toThrow("protected Pi or Mewa state root");
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		rmSync(stateRoot, { recursive: true, force: true });
+	}
+});
+
 test("openProject refuses a Mewa Code-managed worktree dir, whatever symlinks the path carries", () => {
 	const repo = join(dataDir, "repo");
 	makeRepo(repo);
@@ -104,89 +104,6 @@ test("openProject still reopens a closed project whose own Default workspace hol
 
 	expect(openProject(repo).id).toBe(project.id);
 	expect(listProjects().map((p) => p.id)).toEqual([project.id]);
-});
-
-test("inspectProjectPath: a path that doesn't exist is `missing`", () => {
-	expect(inspectProjectPath(join(dataDir, "nope"))).toEqual({ kind: "missing" });
-});
-
-test("inspectProjectPath: a file is `notDirectory`", () => {
-	const file = join(dataDir, "a-file.txt");
-	writeFileSync(file, "not a dir\n");
-	expect(inspectProjectPath(file)).toEqual({ kind: "notDirectory" });
-});
-
-test("inspectProjectPath: a plain directory is `initable`", () => {
-	const dir = join(dataDir, "plain");
-	mkdirSync(dir);
-	expect(inspectProjectPath(dir)).toEqual({ kind: "initable" });
-});
-
-test("inspectProjectPath: a git repo (and any subdirectory) is `repo`", () => {
-	const repo = join(dataDir, "repo");
-	makeRepo(repo);
-	const sub = join(repo, "src", "deep");
-	mkdirSync(sub, { recursive: true });
-	expect(inspectProjectPath(repo)).toEqual({ kind: "repo" });
-	expect(inspectProjectPath(sub)).toEqual({ kind: "repo" });
-});
-
-test("initProject: initialises a plain folder, commits its contents, and opens it", () => {
-	const dir = join(dataDir, "plain");
-	mkdirSync(dir);
-	writeFileSync(join(dir, "hello.txt"), "hi\n");
-
-	const project = initProject(dir);
-	expect(project.path).toBe(realpathSync(dir));
-	expect(existsSync(join(dir, ".git"))).toBe(true);
-	expect(gitOut(dir, "rev-parse", "HEAD")).not.toBe("");
-	expect(gitOut(dir, "ls-tree", "-r", "HEAD", "--name-only")).toContain("hello.txt");
-	expect(listProjects()).toHaveLength(1);
-});
-
-test("initProject: an empty folder gets an empty initial commit (a HEAD), so worktrees work", () => {
-	const dir = join(dataDir, "empty");
-	mkdirSync(dir);
-
-	initProject(dir);
-	expect(gitOut(dir, "rev-parse", "HEAD")).not.toBe("");
-	expect(gitOut(dir, "ls-tree", "-r", "HEAD", "--name-only")).toBe("");
-	const wt = join(dataDir, "wt");
-	git(dir, "worktree", "add", wt, "-b", "feature");
-	expect(existsSync(wt)).toBe(true);
-});
-
-test("initProject: commits even with no configured git identity (the -c fallback)", () => {
-	const dir = join(dataDir, "noid");
-	mkdirSync(dir);
-	writeFileSync(join(dir, "file.txt"), "x\n");
-
-	const savedGlobal = process.env.GIT_CONFIG_GLOBAL;
-	const savedSystem = process.env.GIT_CONFIG_SYSTEM;
-	process.env.GIT_CONFIG_GLOBAL = "/dev/null";
-	process.env.GIT_CONFIG_SYSTEM = "/dev/null";
-	try {
-		initProject(dir);
-		expect(gitOut(dir, "rev-parse", "HEAD")).not.toBe("");
-		expect(gitOut(dir, "log", "-1", "--format=%an")).toBe("Mewa Code");
-	} finally {
-		if (savedGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-		else process.env.GIT_CONFIG_GLOBAL = savedGlobal;
-		if (savedSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM;
-		else process.env.GIT_CONFIG_SYSTEM = savedSystem;
-	}
-});
-
-test("initProject: an existing repo is opened, not re-initialised (dedupe, history preserved)", () => {
-	const repo = join(dataDir, "repo");
-	makeRepo(repo);
-	const originalHead = gitOut(repo, "rev-parse", "HEAD");
-
-	const first = initProject(repo);
-	const second = initProject(repo);
-	expect(second.id).toBe(first.id);
-	expect(listProjects()).toHaveLength(1);
-	expect(gitOut(repo, "rev-parse", "HEAD")).toBe(originalHead);
 });
 
 test("legacy project records default to open in both projections", () => {
@@ -245,7 +162,7 @@ test("closeProject rejects an unknown id instead of reporting a success with no 
 test("setProjectTrust: persists a revocable, fail-closed trust decision", () => {
 	const repo = join(dataDir, "repo");
 	makeRepo(repo);
-	const project = initProject(repo);
+	const project = openProject(repo);
 
 	expect(project.trusted).toBeUndefined();
 	expect(isProjectTrusted(project.id)).toBe(false);

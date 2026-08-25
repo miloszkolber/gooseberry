@@ -127,7 +127,7 @@ export function renderCss(colors: Colors): string {
 	);
 
 	const themeLines = [
-		// The built-in-palette reset must precede our entries — a reset in a later block would wipe them too (see scripts/SPEC.md).
+		// The built-in-palette reset must precede our entries. A reset in a later block would wipe them too.
 		"\t--color-*: initial;",
 		...roles.filter(([, r]) => r.publish).map(([n]) => `\t${themeVar(n)}: var(${roleVar(n)});`),
 		...effects.map(([n]) => `\t${themeVar(n)}: var(--${n});`),

@@ -110,7 +110,7 @@ export function useTerminalClose(): {
 		if (activeRequest.current === request) activeRequest.current = null;
 		if (forceSubmitted.current === request) forceSubmitted.current = null;
 		if (accepted) {
-			useAppStore.getState().closeTerminalTab(request.tab.workspaceId, request.tab.tabKey, false);
+			useAppStore.getState().closeTerminalTab(request.tab.workspaceId, request.tab.tabKey);
 			request.onClosed();
 		}
 		setCloseState((current) => (current?.request === request ? null : current));

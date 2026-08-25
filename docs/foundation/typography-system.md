@@ -216,9 +216,7 @@ italics are real, not synthetic. Pinned by `e2e/fonts.spec.ts`.
 **Swapping a family is a one-file change**: edit the family's `stack` + `selfHosted` here, `bun add` the
 new package, `typography:generate`. No face name is written anywhere else — the tests read it back from
 the generated output (`e2e/fixtures/typography.ts`), and `validate` rejects both a `selfHosted` package
-that is not a dependency and a font dependency no family claims. The one other copy of the stacks lives
-in `apps/website` (a standalone leaf that cannot import ours); `apps/website/src/fonts.test.ts` fails
-when it drifts from this file.
+that is not a dependency and a font dependency no family claims.
 
 `tokens.css` holds **no typography at all** — not a value and not an alias. It used to carry `--font`,
 `--font-mono`, `--font-accent`, `--font-mono-size` and `--line-height` as aliases onto the generated
@@ -257,7 +255,6 @@ The allowlist is deliberately tiny, and each entry is enforced by name in
 |---|---|
 | `panels/monacoSetup.ts` | Monaco takes `fontFamily` / `fontSize` / `lineHeight` as JS options — it reads `--tr-font-family-code`, `--tr-font-size-s11`, `--tr-line-height-default`, so it cannot drift from a code block |
 | `panels/TerminalInstance.tsx` | xterm, same reason — it reads `--tr-font-family-code` + `--tr-font-size-s13` (the primitives behind `code.text`), and owns row height through its own `lineHeight` option rather than a CSS line-height |
-| `chat/tools/visualize/mermaid.ts` | mermaid's theme config takes a family string (`--tr-font-family-code`) |
 | `index.css`, `styles/tokens.css`, `styles/global.css` | the mapping layers themselves |
 
 The OTP code is **not** an exception any more: it is the named `code.otp` style (`.tr-code-otp`).

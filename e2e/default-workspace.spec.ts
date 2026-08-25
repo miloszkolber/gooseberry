@@ -19,7 +19,7 @@ test("the Welcome fork's “Work in project folder” enters the Default workspa
 
 	await enterDefaultWorkspace(page);
 
-	await expect(page.getByTestId("center-tabs")).toBeVisible();
+	await expect(page.getByTestId("workspace-workbench")).toBeVisible();
 	await expect(page.getByTestId("scope-name")).toHaveText("Default");
 	await expect(page.getByTestId("scope-branch")).toHaveText("main");
 	await expect(page.getByTestId("scope-base")).toHaveCount(0);
@@ -41,7 +41,7 @@ test("the Welcome fork's “Work in project folder” enters the Default workspa
 	await page.getByTestId("tab-changes").click();
 	await expect(page.getByTestId("changes-empty")).toBeVisible();
 
-	await page.getByTestId("terminal-tab").click();
+	await page.getByTestId("tab-terminal").click();
 	await waitTerminalReady(page);
 	await runInTerminal(page, 'basename "$(pwd)"');
 	await expect(visibleTerminalScreen(page)).toContainText("sample-project");
@@ -84,8 +84,8 @@ test("the Default workspace is non-removable and unique; project home stays reac
 	await expect(defaultWorkspaceRow(page)).toHaveCount(1);
 
 	await defaultWorkspaceRow(page).getByRole("button").first().click();
-	await expect(page.getByTestId("center-tabs")).toBeVisible();
+	await expect(page.getByTestId("workspace-workbench")).toBeVisible();
 	await expect(defaultWorkspaceRow(page)).toHaveAttribute("data-active", "true");
 	await goProjectHome(page);
-	await expect(page.getByTestId("center-tabs")).toHaveCount(0);
+	await expect(page.getByTestId("workspace-workbench")).toHaveCount(0);
 });

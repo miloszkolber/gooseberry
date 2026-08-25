@@ -7,15 +7,9 @@ import {
 	defaultWorkspaceRow,
 	openAppFresh,
 	openFixtureProject,
-	stagePlainFolder,
 	worktreeRows,
 } from "./fixtures/app";
-import {
-	E2E_DATA_DIR,
-	E2E_FIXTURE_REPO,
-	E2E_PICK_DIR_POINTER,
-	E2E_PLAIN_DIR,
-} from "./fixtures/paths";
+import { E2E_DATA_DIR, E2E_FIXTURE_REPO, E2E_PICK_DIR_POINTER } from "./fixtures/paths";
 
 async function openProjectActions(page: Page, row: Locator): Promise<Locator> {
 	await row.click({ button: "right" });
@@ -48,27 +42,6 @@ test("opens a git repo as a project via the directory picker", async ({ page }) 
 	await expect(
 		page.getByTestId("project-item").filter({ hasText: basename(E2E_FIXTURE_REPO) }),
 	).toBeVisible();
-});
-
-test("opening a non-git folder offers to initialise a repo, then opens it end-to-end", async ({
-	page,
-}) => {
-	stagePlainFolder();
-	await page.goto("/");
-	await expect(page.getByTestId("connection-status")).toHaveAttribute("data-status", "connected");
-
-	await page.getByTestId("add-project-menu").click();
-	await page.getByTestId("menu-open-project").click();
-	const confirmInit = page.getByTestId("confirm-init-repo");
-	await expect(confirmInit).toBeVisible();
-	await confirmInit.click();
-
-	await expect(
-		page.getByTestId("project-item").filter({ hasText: basename(E2E_PLAIN_DIR) }),
-	).toBeVisible();
-
-	await createWorkspaceViaDialog(page);
-	await expect(worktreeRows(page).first()).toBeVisible();
 });
 
 test("rail expansion is per-browser view state that survives a reload", async ({ page }) => {
@@ -117,7 +90,7 @@ test("activating a workspace in one project keeps the other project's rail expan
 		.locator('[data-testid="workspace-item"][data-kind="default"]');
 	await fixtureDefaultRow.click();
 	await expect(fixtureDefaultRow).toHaveAttribute("data-active", "true");
-	await expect(page.getByTestId("center-tabs")).toBeVisible();
+	await expect(page.getByTestId("workspace-workbench")).toBeVisible();
 
 	await expect(secondExpand).toHaveAttribute("data-expanded", "true");
 	await expect(fixtureExpand).toHaveAttribute("data-expanded", "true");
@@ -166,7 +139,7 @@ test("project context actions stay compact and close/reopen is lossless across c
 	await page.mouse.click(pointer.x, pointer.y, { button: "right" });
 	await expect(projectActions).toBeVisible();
 	await expect(fixtureRow).toHaveAttribute("data-menu-open", "true");
-	await expect(page.getByTestId("center-tabs")).toBeVisible();
+	await expect(page.getByTestId("workspace-workbench")).toBeVisible();
 	const menuBox = await projectActions.boundingBox();
 	if (!menuBox) throw new Error("Project context menu has no bounding box");
 	expect(Math.abs(menuBox.x - pointer.x)).toBeLessThan(8);
@@ -305,7 +278,7 @@ test("project context actions stay compact and close/reopen is lossless across c
 	).toHaveCount(0);
 	await expect(page.getByTestId("welcome-title")).toHaveText("sample-project");
 	await expect(observer.getByTestId("welcome-title")).toHaveText("sample-project");
-	await expect(page.getByTestId("center-tabs")).toHaveCount(0);
+	await expect(page.getByTestId("workspace-workbench")).toHaveCount(0);
 	await expect(fixtureName).toBeFocused();
 
 	const remainingRow = page.getByTestId("project-item").filter({ hasText: "sample-project" });
@@ -328,7 +301,7 @@ test("project context actions stay compact and close/reopen is lossless across c
 		observer.getByTestId("project-item").filter({ hasText: "sample-project" }),
 	).toBeVisible();
 	await expect(observer.getByTestId("welcome-title")).toHaveText("sample-project");
-	await expect(page.getByTestId("center-tabs")).toHaveCount(0);
+	await expect(page.getByTestId("workspace-workbench")).toHaveCount(0);
 	await expect(worktreeRows(page).filter({ hasText: workspace.name })).toBeVisible();
 
 	await openAppFresh(page);

@@ -7,6 +7,7 @@ async function kickOff(page: import("@playwright/test").Page, prompt: string): P
 		if (!(await dialog.isVisible())) await page.getByTestId("add-workspace").first().click();
 		await expect(dialog).toBeVisible({ timeout: 5_000 });
 	}).toPass({ timeout: 30_000 });
+	await page.getByTestId("ws-target-worktree").click();
 	await page.getByTestId("ws-prompt").fill(prompt);
 	await page.getByTestId("create-workspace").click();
 	await expect(dialog).toBeHidden();

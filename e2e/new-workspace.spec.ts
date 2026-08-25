@@ -10,21 +10,19 @@ test("the dialog lists local branches (no stray origin) and creates a worktree",
 	const dialog = page.getByTestId("new-workspace-dialog");
 	await expect(dialog).toBeVisible();
 
-	await expect(dialog.getByRole("heading", { name: "Create workspace" })).toBeVisible();
-	await expect(dialog).toContainText("A separate checkout on its own new branch");
-	await expect(dialog.getByTestId("ws-prompt-note")).toHaveCount(0);
-	await expect(dialog).toContainText("Files, chats, changes, and terminals stay scoped to it");
-	await expect(dialog.getByTestId("ws-target-worktree")).toHaveAttribute("data-active", "true");
+	await expect(dialog.getByRole("heading", { name: "Work in project folder" })).toBeVisible();
+	await expect(dialog).toContainText("Runs directly in your project folder");
+	await expect(dialog.getByTestId("ws-target-default")).toHaveAttribute("data-active", "true");
 
+	await dialog.getByTestId("ws-target-worktree").click();
+	await expect(dialog.getByRole("heading", { name: "Create workspace" })).toBeVisible();
+	await expect(dialog.getByTestId("ws-branch-picker")).toBeVisible();
+	await expect(page.getByTestId("create-workspace")).toHaveText(/Create/);
 	await dialog.getByTestId("ws-target-default").click();
 	await expect(dialog.getByRole("heading", { name: "Work in project folder" })).toBeVisible();
 	await expect(dialog).toContainText("no isolation");
 	await expect(dialog.getByTestId("ws-branch-picker")).toHaveCount(0);
 	await expect(page.getByTestId("create-workspace")).toHaveText(/Start/);
-	await dialog.getByTestId("ws-target-worktree").click();
-	await expect(dialog.getByRole("heading", { name: "Create workspace" })).toBeVisible();
-	await expect(dialog.getByTestId("ws-branch-picker")).toBeVisible();
-	await expect(page.getByTestId("create-workspace")).toHaveText(/Create/);
 
 	await expect(dialog.getByTestId("ws-project-picker")).toContainText("sample-project");
 
@@ -78,6 +76,7 @@ test("the dialog lists local branches (no stray origin) and creates a worktree",
 
 	await page.getByTestId("add-workspace").first().click();
 	await expect(dialog).toBeVisible();
+	await dialog.getByTestId("ws-target-worktree").click();
 	await page.getByTestId("create-workspace").click();
 	await expect(dialog).toBeHidden();
 	await expect(worktreeRows(page)).toHaveCount(1);
@@ -101,7 +100,6 @@ test("folder-mode Start with an empty prompt lands in a fresh chat in the Defaul
 	await page.getByTestId("add-workspace").first().click();
 	const dialog = page.getByTestId("new-workspace-dialog");
 	await expect(dialog).toBeVisible();
-	await dialog.getByTestId("ws-target-default").click();
 	await page.getByTestId("create-workspace").click();
 	await expect(dialog).toBeHidden();
 

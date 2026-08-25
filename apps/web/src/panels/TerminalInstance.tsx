@@ -29,7 +29,7 @@ function sendTerminalWrite(send: Promise<unknown>): void {
 
 const IME_SENTINEL_KEYCODE = 229;
 
-// xterm #6065: an active IME reports keyCode 229, so xterm's chord table drops Ctrl+<letter>/Escape — see panels/SPEC.md.
+// xterm #6065: an active IME reports keyCode 229, so xterm's chord table drops Ctrl+<letter>/Escape.
 function imeControlBytes(event: KeyboardEvent): string | null {
 	if (event.altKey || event.metaKey) return null;
 	if (event.code === "Escape") return "\x1b";

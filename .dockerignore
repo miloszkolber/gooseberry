@@ -1,0 +1,17 @@
+.git
+.github
+.turbo
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+test-results
+test-results-binary
+playwright-report
+e2e
+docs
+*.log
+*.test.ts
+*.test.tsx
+*.test.mjs
+*.snap

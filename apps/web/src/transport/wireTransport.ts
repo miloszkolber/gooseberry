@@ -1,10 +1,8 @@
 import type {
 	AppConfig,
 	ExtUiRequest,
-	LayoutChangedPayload,
 	LoginPush,
 	Project,
-	ReviewChangedPayload,
 	ServerWelcome,
 	SessionDeletedPayload,
 	SessionEventPayload,
@@ -73,21 +71,12 @@ export function initTransport(): WsTransport {
 		useAppStore.getState().applyWorkspaceRemoved(projectId, id);
 	});
 
-	transport.subscribe(WS_CHANNELS.reviewChanged, (data) => {
-		const payload = data as ReviewChangedPayload;
-		useAppStore.getState().applyReviewChanged(payload);
-	});
-
 	transport.subscribe(WS_CHANNELS.workspaceFsChanged, (data) => {
 		useAppStore.getState().noteFsChanged(data as WorkspaceFsChangedPayload);
 	});
 
 	transport.subscribe(WS_CHANNELS.settingsChanged, (data) => {
 		useAppStore.getState().applyConfig(data as AppConfig);
-	});
-
-	transport.subscribe(WS_CHANNELS.layoutChanged, (data) => {
-		useAppStore.getState().applyLayoutChanged(data as LayoutChangedPayload);
 	});
 
 	transport.connect();

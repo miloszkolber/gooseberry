@@ -7,7 +7,7 @@ test("renders the branded shell and, with no workspace, the Welcome screen", asy
 	await expect(page.getByTestId("shell")).toBeVisible();
 	await expect(page.getByTestId("left-nav")).toBeVisible();
 	await expect(page.getByTestId("welcome")).toBeVisible();
-	await expect(page.getByTestId("center-tabs")).toHaveCount(0);
+	await expect(page.getByTestId("workspace-workbench")).toHaveCount(0);
 	await expect(page.getByTestId("right-panel")).toHaveCount(0);
 
 	const primary = await page.evaluate(() =>

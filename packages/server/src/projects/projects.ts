@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { rmSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
-import type { Project, ProjectPathStatus } from "@mewa-code/contracts";
+import { basename } from "node:path";
+import type { Project } from "@mewa-code/contracts";
+import { isProtectedRoot, protectedStateRoots } from "../agent/protectedPaths";
 import { canonicalPath, git as runGit } from "../git";
 import { loadProjects, loadWorkspaces, saveProjects } from "../persistence";
 
@@ -62,8 +62,12 @@ export function getProjects(): Project[] {
 }
 
 export function openProject(path: string): Project {
+	if (isProtectedRoot(path, { roots: protectedStateRoots() }))
+		throw new Error(`Cannot open a protected Pi or Mewa state root as a project: ${path}`);
 	const root = gitToplevel(path);
 	if (!root) throw new Error(`Not a git repository: ${path}`);
+	if (isProtectedRoot(root, { roots: protectedStateRoots() }))
+		throw new Error(`Cannot open a protected Pi or Mewa state root as a project: ${root}`);
 
 	const projects = getProjects();
 	const existing = projects.find((p) => p.path === root);
@@ -115,25 +119,11 @@ export function closeProject(id: string): Project {
 	return project;
 }
 
-export function setProjectTrust(
-	id: string,
-	trusted: boolean,
-	acknowledgedSkills?: string[],
-): Project {
+export function setProjectTrust(id: string, trusted: boolean): Project {
 	const projects = getProjects();
 	const project = projects.find((p) => p.id === id);
 	if (!project) throw new Error(`Unknown project: ${id}`);
 	project.trusted = trusted;
-	if (acknowledgedSkills !== undefined) project.acknowledgedSkills = acknowledgedSkills;
-	saveProjects(projects);
-	return project;
-}
-
-export function acknowledgeProjectSkills(id: string, names: string[]): Project {
-	const projects = getProjects();
-	const project = projects.find((p) => p.id === id);
-	if (!project) throw new Error(`Unknown project: ${id}`);
-	project.acknowledgedSkills = [...new Set([...(project.acknowledgedSkills ?? []), ...names])];
 	saveProjects(projects);
 	return project;
 }
@@ -164,41 +154,4 @@ export function setProjectGroupEnabled(id: string, group: string, enabled: boole
 
 export function isProjectTrusted(id: string): boolean {
 	return getProjects().find((p) => p.id === id)?.trusted === true;
-}
-
-export function inspectProjectPath(path: string): ProjectPathStatus {
-	let stat: ReturnType<typeof statSync>;
-	try {
-		stat = statSync(path);
-	} catch {
-		return { kind: "missing" };
-	}
-	if (!stat.isDirectory()) return { kind: "notDirectory" };
-	return { kind: gitToplevel(path) ? "repo" : "initable" };
-}
-
-export function initProject(path: string): Project {
-	const status = inspectProjectPath(path);
-	if (status.kind === "missing") throw new Error(`No such folder: ${path}`);
-	if (status.kind === "notDirectory") throw new Error(`Not a folder: ${path}`);
-	if (status.kind === "repo") return openProject(path);
-
-	const init = git(path, ["init", "-b", "main"]);
-	if (!init.ok) throw new Error(`git init failed: ${path}`);
-	try {
-		const added = git(path, ["add", "-A"]);
-		if (!added.ok) throw new Error(`git add failed: ${path}`);
-
-		const identity: string[] = [];
-		if (!git(path, ["config", "user.name"]).out) identity.push("-c", "user.name=Mewa Code");
-		if (!git(path, ["config", "user.email"]).out)
-			identity.push("-c", "user.email=mewa-code@localhost");
-		const commit = git(path, [...identity, "commit", "--allow-empty", "-m", "Initial commit"]);
-		if (!commit.ok) throw new Error(`git commit failed: ${path}`);
-	} catch (err) {
-		rmSync(join(path, ".git"), { recursive: true, force: true });
-		throw err;
-	}
-
-	return openProject(path);
 }

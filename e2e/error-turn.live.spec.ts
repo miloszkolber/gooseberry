@@ -42,6 +42,7 @@ test("a bad model surfaces a visible error toast, not a false ✓ Done", {
 	const dialog = page.getByTestId("new-workspace-dialog");
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByTestId("model-selector")).not.toContainText("Select model");
+	await dialog.getByTestId("ws-target-worktree").click();
 	await page.getByTestId("ws-prompt").fill("Reply with the single word: pong");
 	await page.getByTestId("create-workspace").click();
 	await expect(dialog).toBeHidden();

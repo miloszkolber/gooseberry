@@ -4,16 +4,7 @@ import {
 	type ThinkingLevel,
 	type WireModel,
 } from "@mewa-code/contracts";
-import {
-	ArrowUp,
-	ChevronUp,
-	FileIcon,
-	FolderIcon,
-	History,
-	Sparkles,
-	Square,
-	X,
-} from "lucide-react";
+import { ArrowUp, ChevronUp, FileIcon, FolderIcon, History, Square, X } from "lucide-react";
 import {
 	type ClipboardEvent,
 	type DragEvent,
@@ -33,17 +24,8 @@ import { ModelSelector } from "./ModelSelector";
 import {
 	SlashCommandMenu,
 	selectedSlashCommandValue,
-	slashCommandQuery,
 	useSlashCommandCompletion,
 } from "./SlashCommandCompletion";
-import type { ParsedTemplate, SlotHighlightState, SlotSegment, TemplateSlot } from "./slotSession";
-import {
-	highlightSegments,
-	mirrorAllGroups,
-	mirrorSlotGroup,
-	shiftSlots,
-	stripUntouchedSlots,
-} from "./slotSession";
 import { ThinkingSelector } from "./ThinkingSelector";
 import type { ChatAttachment } from "./types";
 
@@ -96,57 +78,6 @@ function activeToken(value: string, caret: number): { token: string; start: numb
 	return { token: match[0], start: caret - match[0].length };
 }
 
-function diffValues(
-	oldVal: string,
-	newVal: string,
-	newCaret: number,
-): { editStart: number; removedLen: number; insertedLen: number } {
-	const maxPrefix = Math.min(newCaret, oldVal.length, newVal.length);
-	let prefix = 0;
-	while (prefix < maxPrefix && oldVal[prefix] === newVal[prefix]) prefix++;
-
-	const maxSuffix = Math.min(oldVal.length - prefix, newVal.length - prefix);
-	let suffix = 0;
-	while (
-		suffix < maxSuffix &&
-		oldVal[oldVal.length - 1 - suffix] === newVal[newVal.length - 1 - suffix]
-	) {
-		suffix++;
-	}
-
-	return {
-		editStart: prefix,
-		removedLen: oldVal.length - prefix - suffix,
-		insertedLen: newVal.length - prefix - suffix,
-	};
-}
-
-function touches(slot: TemplateSlot, editStart: number, editEnd: number): boolean {
-	return editStart < slot.end && editEnd > slot.start;
-}
-
-function withOffsets(segments: SlotSegment[]): (SlotSegment & { start: number })[] {
-	let offset = 0;
-	return segments.map((seg) => {
-		const start = offset;
-		offset += seg.text.length;
-		return { ...seg, start };
-	});
-}
-
-function highlightTint(state: SlotHighlightState): string {
-	switch (state) {
-		case "unfilled":
-			return "rounded-[var(--radius-xs)] bg-primary-soft";
-		case "active":
-			return "rounded-[var(--radius-xs)] bg-primary-muted";
-		case "filled":
-			return "rounded-[var(--radius-xs)] bg-primary-subtle";
-		case "plain":
-			return "";
-	}
-}
-
 interface ComposerProps {
 	value: string;
 	onChange: (value: string) => void;
@@ -160,21 +91,16 @@ interface ComposerProps {
 	currentModel: WireModel | null;
 	thinkingLevel: ThinkingLevel;
 	onMentionQuery: (query: string | null) => void;
-	onSlashActive: (active: boolean) => void;
 	onSelectModel: (model: WireModel) => void;
 	onSelectThinking: (level: ThinkingLevel) => void;
 	onSubmit: (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => void;
 	onAbort: () => void;
 	onHistoryOpen?: () => void;
-	onPickTemplate?: (name: string) => void;
-	onManageTemplates?: () => void;
-	templatesEmpty?: boolean;
 }
 
 export interface ComposerHandle {
 	insertText: (text: string) => void;
 	insertAndSubmit: (text: string, behavior: SubmitBehavior) => void;
-	insertTemplate: (parsed: ParsedTemplate) => void;
 	openHistory: () => void;
 	refocus: () => void;
 }
@@ -193,15 +119,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		currentModel,
 		thinkingLevel,
 		onMentionQuery,
-		onSlashActive,
 		onSelectModel,
 		onSelectThinking,
 		onSubmit,
 		onAbort,
 		onHistoryOpen,
-		onPickTemplate,
-		onManageTemplates,
-		templatesEmpty,
 	},
 	handleRef,
 ) {
@@ -219,24 +141,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const [mentionDismissed, setMentionDismissed] = useState(false);
 	const [sendMenuOpen, setSendMenuOpen] = useState(false);
 	const recallIdxRef = useRef<number | null>(null);
-	const [slots, setSlots] = useState<TemplateSlot[] | null>(null);
-	const [slotIdx, setSlotIdx] = useState(0);
-	const backdropRef = useRef<HTMLDivElement | null>(null);
-	const attachBackdrop = (el: HTMLDivElement | null) => {
-		backdropRef.current = el;
-		const textarea = ref.current;
-		if (el && textarea) {
-			el.scrollLeft = textarea.scrollLeft;
-			el.scrollTop = textarea.scrollTop;
-		}
-	};
 
 	const { token, start } = activeToken(value, caret);
 	const mentionQuery = token.startsWith("@") ? token.slice(1) : null;
-	const slashQuery = slashCommandQuery(value);
 
 	useEffect(() => onMentionQuery(mentionQuery), [mentionQuery, onMentionQuery]);
-	useEffect(() => onSlashActive(slashQuery !== null), [slashQuery, onSlashActive]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the query changes
 	useEffect(() => {
 		setMentionActiveIndex(0);
@@ -267,7 +176,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const replaceDraft = useCallback(
 		(text: string, caret: number = text.length) => {
 			recallIdxRef.current = null;
-			setSlots(null);
 			onChange(text);
 			focusSelection(caret);
 		},
@@ -288,7 +196,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		commitImages([]);
 		setAttachErrors([]);
 		recallIdxRef.current = null;
-		setSlots(null);
 	};
 
 	const pickMention = (c: MentionCandidate) => {
@@ -305,13 +212,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const slashCompletion = useSlashCommandCompletion({
 		value,
 		commands,
-		onSelect: (command) =>
-			command.source === "prompt" && onPickTemplate
-				? onPickTemplate(command.name)
-				: replaceDraft(selectedSlashCommandValue(command)),
+		onSelect: (command) => replaceDraft(selectedSlashCommandValue(command)),
 	});
-
-	const menuOpen = mentionOpen || slashCompletion.open;
 
 	const openHistory = () => {
 		setMentionDismissed(true);
@@ -323,23 +225,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		insertText: (text: string) => replaceDraft(text),
 		insertAndSubmit: (text: string, behavior: SubmitBehavior) =>
 			canSubmit(text) ? submitText(text, behavior) : replaceDraft(text),
-		insertTemplate: (parsed: ParsedTemplate) => {
-			const first = parsed.slots[0];
-			if (!first) {
-				replaceDraft(parsed.text);
-				return;
-			}
-			recallIdxRef.current = null;
-			onChange(parsed.text);
-			setSlots(parsed.slots);
-			setSlotIdx(0);
-			focusSelection(first.start, first.end);
-		},
 		openHistory,
 		refocus: () => {
-			const slot = slots?.[slotIdx];
-			if (slot) focusSelection(slot.start, slot.end);
-			else focusSelection(caret);
+			focusSelection(caret);
 		},
 	}));
 
@@ -378,45 +266,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	};
 
 	const submit = (behavior: SubmitBehavior) => {
-		let text = value;
-		if (slots) {
-			const mirrored = mirrorAllGroups(value, slots);
-			text = stripUntouchedSlots(mirrored.value, mirrored.slots);
-		}
-		submitText(text, behavior);
-	};
-
-	const stepSlot = (dir: 1 | -1) => {
-		if (!slots || slots.length === 0) return;
-		const cur = slots[slotIdx];
-		if (!cur) return;
-
-		const { value: nextValue, slots: nextSlots } = cur.edited
-			? mirrorSlotGroup(value, slots, slotIdx)
-			: { value, slots };
-
-		if (nextValue !== value) onChange(nextValue);
-		setSlots(nextSlots);
-		const len = nextSlots.length;
-		const next = (((slotIdx + dir) % len) + len) % len;
-		setSlotIdx(next);
-		const target = nextSlots[next];
-		if (target) focusSelection(target.start, target.end);
+		submitText(value, behavior);
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (slots && !menuOpen) {
-			if (e.key === "Tab") {
-				e.preventDefault();
-				stepSlot(e.shiftKey ? -1 : 1);
-				return;
-			}
-			if (e.key === "Escape") {
-				e.preventDefault();
-				setSlots(null);
-				return;
-			}
-		}
 		if (mentionOpen) {
 			const menuLen = mentionCandidates.length;
 			if (e.key === "ArrowDown") {
@@ -445,7 +298,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		const recallAt = recallIdxRef.current;
 		if (e.key === "ArrowUp" && (value === "" || recallAt !== null) && recentPrompts.length > 0) {
 			e.preventDefault();
-			setSlots(null);
 			const next = recallAt === null ? 0 : Math.min(recallAt + 1, recentPrompts.length - 1);
 			const text = recentPrompts[next] ?? "";
 			recallIdxRef.current = next;
@@ -455,7 +307,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		}
 		if (e.key === "ArrowDown" && recallAt !== null) {
 			e.preventDefault();
-			setSlots(null);
 			if (recallAt === 0) {
 				recallIdxRef.current = null;
 				onChange("");
@@ -530,36 +381,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					activeIndex={slashCompletion.activeIndex}
 					onSelect={slashCompletion.pick}
 					className="absolute bottom-full left-sm mb-xs"
-					footer={
-						templatesEmpty && onManageTemplates ? (
-							<button
-								type="button"
-								data-testid="slash-templates-empty"
-								onClick={() => {
-									replaceDraft("");
-									onManageTemplates();
-								}}
-								className="flex w-full items-center gap-sm rounded-[var(--radius-sm)] border-border-default border-t px-sm py-xs text-left text-text-muted tr-text-metadata hover:bg-control-bg-hovered hover:text-text-default"
-							>
-								<Sparkles className="size-3 shrink-0" />
-								<span className="truncate">
-									No prompt templates yet — add starters in Settings → Templates
-								</span>
-							</button>
-						) : null
-					}
 				/>
-			) : null}
-
-			{slots && !menuOpen ? (
-				<button
-					type="button"
-					data-testid="slot-hint"
-					onClick={() => stepSlot(1)}
-					className="absolute bottom-full left-sm mb-xs rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-sm py-xs text-text-muted tr-text-metadata shadow-[var(--shadow-md)] hover:bg-control-bg-hovered hover:text-text-default"
-				>
-					slot {slotIdx + 1}/{slots.length} · ⇥ next · esc done
-				</button>
 			) : null}
 
 			{images.length > 0 || pendingImages > 0 || attachErrors.length > 0 ? (
@@ -622,71 +444,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
 			<div className="flex flex-col gap-sm p-sm">
 				<div className="relative rounded-[var(--radius-md)] border border-control-border-default bg-control-bg bg-clip-padding transition-colors focus-within:border-control-border-active">
-					{slots ? (
-						<div
-							ref={attachBackdrop}
-							data-testid="slot-backdrop"
-							aria-hidden
-							className="pointer-events-none absolute inset-0 overflow-hidden rounded-[var(--radius-md)]"
-						>
-							<div className="w-full whitespace-pre-wrap break-words px-md py-sm tr-text-ui">
-								{withOffsets(highlightSegments(value, slots, slotIdx)).map((seg) => (
-									<span
-										key={seg.start}
-										data-testid={seg.state === "plain" ? undefined : "slot-highlight"}
-										data-slot-state={seg.state === "plain" ? undefined : seg.state}
-										className={`text-transparent ${highlightTint(seg.state)}`}
-									>
-										{seg.text}
-									</span>
-								))}
-							</div>
-						</div>
-					) : null}
 					<textarea
 						ref={ref}
 						data-testid="chat-input"
 						value={value}
-						onScroll={(e) => {
-							const backdrop = backdropRef.current;
-							if (backdrop) {
-								backdrop.scrollLeft = e.currentTarget.scrollLeft;
-								backdrop.scrollTop = e.currentTarget.scrollTop;
-							}
-						}}
 						onChange={(e) => {
 							const next = e.target.value;
 							const nextCaret = e.target.selectionStart;
 							const recalled = recallIdxRef.current;
 							if (recalled !== null && next !== recentPrompts[recalled]) {
 								recallIdxRef.current = null;
-							}
-							if (slots) {
-								const { editStart, removedLen, insertedLen } = diffValues(value, next, nextCaret);
-								if (editStart === 0 && removedLen === value.length) {
-									setSlots(null);
-								} else {
-									const editEnd = editStart + removedLen;
-									const active = slots[slotIdx];
-									const growing =
-										removedLen === 0 &&
-										insertedLen > 0 &&
-										active !== undefined &&
-										active.end === editStart;
-									const shifted = shiftSlots(slots, editStart, removedLen, insertedLen).map(
-										(slot, i) => {
-											const grown =
-												growing && i === slotIdx
-													? { ...slot, end: slot.end + insertedLen, filled: true, edited: true }
-													: slot;
-											const original = slots[i];
-											return original && touches(original, editStart, editEnd)
-												? { ...grown, filled: true, edited: true }
-												: grown;
-										},
-									);
-									setSlots(shifted);
-								}
 							}
 							onChange(next);
 							setCaret(nextCaret);

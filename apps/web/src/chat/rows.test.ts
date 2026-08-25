@@ -378,55 +378,8 @@ test("turnDivider reports no changed files / zero tools for a plain Q&A round", 
 	const turns: ChatTurn[] = [user("u1", 0), assistantWithPaths("a1", [], 2_000), done("s1", 2_000)];
 	const d = turnDivider(turns, 2);
 	expect(d?.toolCount).toBe(0);
-	expect(d?.specs).toEqual([]);
 	expect(d?.changedFiles).toEqual([]);
 	expect(d?.elapsedMs).toBe(2_000);
-});
-
-test("turnDivider splits specs from code changes via isSpec, each path on exactly one side", () => {
-	const turns: ChatTurn[] = [
-		user("u1", 0),
-		assistantWithPaths("a1", [
-			{ name: "write", path: "packages/pi-todos/SPEC.md" },
-			{ name: "edit", path: "packages/pi-todos/core/store.ts" },
-		]),
-		done("s1", 5_000),
-	];
-	const d = turnDivider(turns, 2, (p) => p.endsWith("SPEC.md"));
-	expect(d?.specs).toEqual(["packages/pi-todos/SPEC.md"]);
-	expect(d?.changedFiles).toEqual(["packages/pi-todos/core/store.ts"]);
-});
-
-test("turnDivider counts a gitignored scratch spec as a spec, not as a (never-visible) change", () => {
-	const path = ".mewa-code/context/TASK-todo-linear-groups.md";
-	const turns: ChatTurn[] = [
-		user("u1", 0),
-		assistantWithPaths("a1", [
-			{ name: "spec_create", path },
-			{ name: "write", path },
-			{ name: "edit", path },
-		]),
-		done("s1", 5_000),
-	];
-	const d = turnDivider(turns, 2, () => false);
-	expect(d?.toolCount).toBe(3);
-	expect(d?.specs).toEqual([path]);
-	expect(d?.changedFiles).toEqual([]);
-});
-
-test("turnDivider lets the spec side win a tie — a path reached by both routes is never double-counted", () => {
-	const path = "docs/SPEC.md";
-	const turns: ChatTurn[] = [
-		user("u1", 0),
-		assistantWithPaths("a1", [
-			{ name: "edit", path },
-			{ name: "spec_create", path },
-		]),
-		done("s1", 5_000),
-	];
-	const d = turnDivider(turns, 2);
-	expect(d?.specs).toEqual([path]);
-	expect(d?.changedFiles).toEqual([]);
 });
 
 test("turnDivider treats every written file as a change when no classifier is supplied", () => {
@@ -436,6 +389,5 @@ test("turnDivider treats every written file as a change when no classifier is su
 		done("s1", 5_000),
 	];
 	const d = turnDivider(turns, 2);
-	expect(d?.specs).toEqual([]);
 	expect(d?.changedFiles).toEqual(["SPEC.md"]);
 });

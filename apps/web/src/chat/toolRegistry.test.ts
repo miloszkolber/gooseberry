@@ -68,12 +68,12 @@ describe("resolveProminence (the settings seam)", () => {
 		});
 	});
 
-	it("honors a registered primary + defaultExpanded (the visualize shape)", () => {
-		registerToolRenderer("viz-like-tool", () => null, {
+	it("honors a registered primary + defaultExpanded", () => {
+		registerToolRenderer("primary-tool", () => null, {
 			prominence: "primary",
 			defaultExpanded: true,
 		});
-		expect(resolveProminence("viz-like-tool")).toEqual({
+		expect(resolveProminence("primary-tool")).toEqual({
 			prominence: "primary",
 			defaultExpanded: true,
 		});

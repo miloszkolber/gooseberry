@@ -1,17 +1,8 @@
 import { useMemo } from "react";
 import { stripFrontmatter } from "@/lib/utils";
-import { Markdown, type MarkdownRehypePlugins } from "../chat/Markdown";
+import { Markdown } from "../chat/Markdown";
 import { alertComponents, remarkGithubAlerts } from "./markdownAlerts";
 import { documentComponents, remarkHeadingIds } from "./markdownLinks";
-import { type ComposerInsert, PreviewCommenting } from "./PreviewCommenting";
-import { ReviewThreadCard } from "./ReviewThreadCard";
-import {
-	frontmatterOffset,
-	indivisibleSpans,
-	snapSplitLine,
-	sourceLineRehype,
-} from "./sourceLines";
-import type { EditorReview } from "./useReviewCommenting";
 
 const DOCUMENT_PROSE = [
 	"tr-prose-doc max-w-none break-words text-pretty text-text-default",
@@ -57,110 +48,20 @@ export function MarkdownDocument({
 	);
 }
 
-interface FlowInsert {
-	key: string;
-	line: number;
-	node: React.ReactNode;
-}
-
-function splicedSegments(
-	stripped: string,
-	rawOffset: number,
-	inserts: FlowInsert[],
-): { key: string; text: string; stampOffset: number; nodes: React.ReactNode[] }[] {
-	const lines = stripped.split("\n");
-	const spans = indivisibleSpans(stripped);
-	const ordered = [...inserts].sort((a, b) => a.line - b.line);
-	const segments: { key: string; text: string; stampOffset: number; nodes: React.ReactNode[] }[] =
-		[];
-	let cursor = 0;
-	const tail: React.ReactNode[] = [];
-	for (const insert of ordered) {
-		const anchored = insert.line - rawOffset;
-		if (anchored < 1 || anchored > lines.length) {
-			tail.push(insert.node);
-			continue;
-		}
-		const end = snapSplitLine(spans, anchored);
-		if (end <= cursor) {
-			const last = segments.at(-1);
-			if (last) last.nodes.push(insert.node);
-			else tail.push(insert.node);
-			continue;
-		}
-		segments.push({
-			key: `seg-${end}`,
-			text: lines.slice(cursor, end).join("\n"),
-			stampOffset: rawOffset + cursor,
-			nodes: [insert.node],
-		});
-		cursor = end;
-	}
-	segments.push({
-		key: "seg-tail",
-		text: lines.slice(cursor).join("\n"),
-		stampOffset: rawOffset + cursor,
-		nodes: tail,
-	});
-	return segments;
-}
-
 export default function MarkdownPreview({
 	content,
 	workspaceId,
 	path,
-	review,
 }: {
 	content: string;
 	workspaceId: string;
 	path: string;
-	review?: EditorReview;
 }) {
-	const components = useMemo(() => documentComponents({ workspaceId, path }), [path, workspaceId]);
-	if (!review) {
-		return (
-			<div
-				data-testid="markdown-preview"
-				className="h-full overflow-auto bg-container-workspace-bg"
-			>
-				<article className="mx-auto max-w-[78ch] px-xl py-lg">
-					<MarkdownDocument content={content} workspaceId={workspaceId} path={path} />
-				</article>
-			</div>
-		);
-	}
-
-	const stripped = stripFrontmatter(content);
-	const rawOffset = frontmatterOffset(content, stripped);
-	const mdProps = (stampOffset: number) => ({
-		className: DOCUMENT_PROSE,
-		remarkPlugins: [remarkGithubAlerts, remarkHeadingIds],
-		rehypePlugins: [[sourceLineRehype, { offset: stampOffset }]] as MarkdownRehypePlugins,
-		components: { ...alertComponents, ...components },
-	});
-	const threadInserts: FlowInsert[] = review.threads.map((thread) => ({
-		key: thread.id,
-		line: thread.endLine,
-		node: <ReviewThreadCard key={thread.id} thread={thread} actions={review.actions} />,
-	}));
 	return (
-		<PreviewCommenting source={content} review={review}>
-			{(composer: ComposerInsert | null) => {
-				const inserts = composer
-					? [...threadInserts, { key: "composer", line: composer.line, node: composer.node }]
-					: threadInserts;
-				const segments = splicedSegments(stripped, rawOffset, inserts);
-				return (
-					<article className="mx-auto max-w-[78ch] px-xl py-lg">
-						{segments.map((segment) => (
-							<div key={segment.key}>
-								{segment.text && <Markdown text={segment.text} {...mdProps(segment.stampOffset)} />}
-								{segment.nodes}
-							</div>
-						))}
-					</article>
-				);
-			}}
-		</PreviewCommenting>
+		<div data-testid="markdown-preview" className="h-full overflow-auto bg-container-workspace-bg">
+			<article className="mx-auto max-w-[78ch] px-xl py-lg">
+				<MarkdownDocument content={content} workspaceId={workspaceId} path={path} />
+			</article>
+		</div>
 	);
 }

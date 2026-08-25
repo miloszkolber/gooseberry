@@ -1,5 +1,5 @@
 import type { Project } from "@mewa-code/contracts";
-import { Folder, Globe } from "lucide-react";
+import { Folder } from "lucide-react";
 import type { ReactNode } from "react";
 import {
 	DropdownMenu,
@@ -31,10 +31,6 @@ export function AddProjectMenu({
 				<DropdownMenuItem data-testid="menu-open-project" onSelect={() => onOpen()}>
 					<Folder />
 					<span>Open project</span>
-				</DropdownMenuItem>
-				<DropdownMenuItem disabled>
-					<Globe />
-					<span>Open GitHub project</span>
 				</DropdownMenuItem>
 				{recentProjects.length > 0 && (
 					<>

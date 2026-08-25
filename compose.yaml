@@ -1,0 +1,100 @@
+# Development and trusted private-network deployment example.
+# Keep the controller publish binding on loopback unless an external
+# authentication boundary is already in place for non-loopback access.
+services:
+    mewa:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: controller
+        image: core/mewa-code-controller
+        container_name: mewa-controller
+        restart: unless-stopped
+        working_dir: /workspace
+        command:
+            - bun
+            - /app/mewa-code.js
+            - --no-open
+            - /workspace
+        read_only: true
+        environment:
+            MEWA_CODE_HOST: "0.0.0.0"
+            MEWA_CODE_PORT: "24242"
+            MEWA_CODE_DATA_DIR: "/var/lib/mewa"
+            PI_CODING_AGENT_DIR: "/home/bun/.pi/agent"
+            MEWA_BROWSER_URL: "http://mewa-browser:8787"
+            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:?set an independent MEWA_BROWSER_TOKEN before starting the stack}"
+        ports:
+            - "127.0.0.1:${MEWA_CODE_PORT:-24242}:24242"
+        volumes:
+            - mewa-state:/var/lib/mewa
+            - pi-state:/home/bun/.pi
+            # Set MEWA_WORKSPACE to the local repository or workspace to expose.
+            - type: bind
+              source: "${MEWA_WORKSPACE:-.}"
+              target: /workspace
+              read_only: false
+        tmpfs:
+            - /tmp:size=64m,mode=1777
+            - /run:size=16m,mode=755,uid=1000,gid=1000
+        depends_on:
+            mewa-browser:
+                condition: service_healthy
+        healthcheck:
+            test:
+                - CMD
+                - bun
+                - -e
+                - fetch('http://127.0.0.1:24242/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))
+            interval: 30s
+            timeout: 5s
+            start_period: 10s
+            retries: 3
+        networks:
+            - mewa
+
+    mewa-browser:
+        build:
+            context: ./mewa-browser
+            dockerfile: Dockerfile
+        image: core/mewa-browser
+        container_name: mewa-browser
+        restart: unless-stopped
+        read_only: true
+        environment:
+            MEWA_BROWSER_TOKEN: "${MEWA_BROWSER_TOKEN:?set an independent MEWA_BROWSER_TOKEN before starting the stack}"
+            PORT: "8787"
+            BROWSER_ARTIFACT_ROOT: "/state/artifacts"
+            BROWSER_STATE_ROOT: "/state/browser"
+            BROWSER_MAX_ARTIFACT_BYTES: "67108864"
+            BROWSER_MAX_TOTAL_ARTIFACT_BYTES: "268435456"
+            BROWSER_MAX_STATE_BYTES: "268435456"
+            BROWSER_MAX_SESSIONS: "16"
+        expose:
+            - "8787"
+        tmpfs:
+            - /tmp:size=128m,mode=1777,uid=1000,gid=1000
+            - /run:size=16m,mode=755,uid=1000,gid=1000
+            - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000
+            - /state/artifacts:size=256m,mode=700,uid=1000,gid=1000
+            - /state/browser:size=256m,mode=700,uid=1000,gid=1000
+        healthcheck:
+            test:
+                - CMD
+                - node
+                - -e
+                - fetch('http://127.0.0.1:8787/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))
+            interval: 30s
+            timeout: 5s
+            start_period: 10s
+            retries: 3
+        networks:
+            - mewa
+
+volumes:
+    mewa-state:
+    pi-state:
+
+networks:
+    mewa:
+        internal: false

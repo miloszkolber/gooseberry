@@ -3,8 +3,7 @@ import type {
 	AskUserAnswersDetails,
 	TranscriptMessage,
 } from "@mewa-code/contracts";
-import { isAskUserAnswersMessage, isControlMessage, isRetriedAttempt } from "@mewa-code/contracts";
-import { userText } from "../lib";
+import { isAskUserAnswersMessage, isRetriedAttempt } from "@mewa-code/contracts";
 import { assistantFailureText } from "./assistantFailure";
 import type { ChatTurn, ToolResultState } from "./types";
 
@@ -26,10 +25,8 @@ export function messagesToRuntime(
 	for (const [index, message] of messages.entries()) {
 		let turnId: string | null = null;
 		if (message.role === "user") {
-			if (!isControlMessage(userText(message.content))) {
-				turnId = crypto.randomUUID();
-				turns.push({ kind: "user", id: turnId, message });
-			}
+			turnId = crypto.randomUUID();
+			turns.push({ kind: "user", id: turnId, message });
 		} else if (message.role === "assistant") {
 			if (isRetriedAttempt(messages, index)) {
 			} else {

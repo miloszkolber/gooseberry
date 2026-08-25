@@ -95,7 +95,7 @@ Children:
 
 | Canonical name | Implementation | `data-testid` | Responsibility |
 |---|---|---|---|
-| Add-Project Button / Menu | `panels/AddProjectMenu.tsx` → `AddProjectMenu` (the rail "+") | `add-project-menu` | Open project / Open GitHub (soon) / Recents dropdown |
+| Add-Project Button / Menu | `panels/AddProjectMenu.tsx` → `AddProjectMenu` (the rail "+") | `add-project-menu` | Open project / Recents dropdown |
 | Project Row | inline row in `ProjectTree` | `project-item` | A project (git repo); clicking selects it (project home) |
 | — Project Expander | chevron control | `project-expand` | Expands/collapses the project's workspace list |
 | — Project Name | inline `<button>` | `project-name` | Selects the project (project home) |
@@ -123,8 +123,8 @@ the last workspace). Mutually exclusive with the Workspace Workbench.
 - **Implementation:** `panels/WelcomePanel.tsx` → `WelcomePanel`.
 - **Parent:** App Shell (Welcome Layout, `id="welcome"` panel).
 - **Position:** Centered content in the wide right column beside the Projects Rail.
-- **Responsibility:** first-touch surface + the **mode fork** — pair "Start building" (isolated worktree)
-  with "Work in project folder" (Default workspace).
+- **Responsibility:** first-touch surface + the **mode fork** — lead with "Work in project folder"
+  (Default workspace) and offer "Start in isolated worktree" as the secondary alternative.
 
 Children:
 
@@ -153,7 +153,7 @@ separators resize adjacent groups.
 - **Responsibility:** hosts **File**, **Chat**, **Diff**, rehydratable **Document**, and **Terminal** tabs;
   owns recursive placement, per-group preview/keep semantics, movement, overflow, and focus recovery.
 
-**⚠ Naming note (tab element):** file/chat/diff/document tabs carry `data-testid="editor-tab"`; terminal
+**⚠ Naming note (tab element):** file/chat/diff tabs carry `data-testid="editor-tab"`; terminal
 placements carry `terminal-tab`. The resource kind is also available through `data-kind`. "Editor tab" is
 a compatibility test hook, not the kind.
 
@@ -182,7 +182,6 @@ Tab-body components:
 | — Monaco Diff | `panels/MonacoDiff.tsx` → `MonacoDiff` (lazy) | — | Read-only two-side diff |
 | — Rendered Diff | `panels/RenderedDiff.tsx` → `RenderedDiff` (lazy) | — | Rich markdown diff (`<ins>`/`<del>`) |
 | Chat View | `chat/ChatView.tsx` → `ChatView` (lazy) | `chat` | The agent conversation (its own section below) |
-| Document Pane | `WorkspaceWorkbench` reference renderer | `document` | Rehydratable virtual documents such as TODO plans |
 | Terminal Body | `panels/TerminalWorkbench.tsx` → `TerminalWorkbenchBody` | `terminal` | Visibility-gated xterm surface |
 
 ---
@@ -198,7 +197,7 @@ The agent conversation, rendered inside a Chat tab in the Center Tabbed Area.
 - **Position:** Fills the Editor Pane. Vertically: Chat Header (top) → Message List (middle, scrolls) →
   Composer (bottom).
 - **Responsibility:** render pi's canonical message / content-block model as folded rows; own the
-  composer, history overlay, plan popover, and dialogs.
+  composer, history overlay, and dialogs.
 
 ## Chat Header
 
@@ -207,8 +206,6 @@ The agent conversation, rendered inside a Chat tab in the Center Tabbed Area.
 - **Parent:** Chat View.
 - **Position:** Slim top bar of the Chat View.
 - **Children / slots:**
-  - **Plan Strip** — `ChatPlanStripContent` (from `chat/ChatPlan.tsx`), passed into the header's `left`
-    slot; opens the **Plan Popover** (`ChatPlanContent`) over the chat.
   - **Status Entries** — inline muted `statusEntries` text (extension status).
   - **Session Stats Bar** — `chat/SessionStatsBar.tsx` → `SessionStatsBar` (token/cost stats).
   - **Skills Button** — `chat/SkillsButton.tsx` → `SkillsButton` (`data-testid="open-skills"`); opens the
@@ -241,7 +238,7 @@ Row / message renderers (all in `chat/turns.tsx` unless noted):
 | Tool Card | `chat/ToolCard.tsx` → `ToolCard` | `tool-card` (`-toggle`) | `tool` | A primary tool call (collapsible frame) |
 | Activity Group | `chat/ActivityGroup.tsx` → `ActivityGroup` | — | `activity` | Folded run of routine steps ("N steps · …") |
 | Turn Divider | `TurnDivider` | `turn-divider` / `turn-divider-<id>` | `divider` | Round-end summary + artifact chips |
-| — Artifact Chip | `ArtifactChip` | `turn-divider-<id>` | — | "N specs" / "N files changed" deep-link/disclosure |
+| — Artifact Chip | `ArtifactChip` | `turn-divider-<id>` | — | "N files changed" disclosure |
 | — Artifact List | `ArtifactList` | `<testid>-list` / `-list-item` | — | Expanded per-path list |
 | Stream Indicator | `chat/StreamIndicator.tsx` → `StreamIndicator` | — | — | Live streaming status |
 
@@ -264,7 +261,6 @@ Built-in tool renderers (in `chat/tools/`):
 | Write Card | `ReadCard.tsx` → `WriteCard` | routine | File write |
 | Edit Card | `EditCard.tsx` → `EditCard` | routine | Edit (removed/added line diff) |
 | Ask-User-Question Card | `AskUserQuestionCard.tsx` → `AskUserQuestionCard` | primary, "bare" | Inline questionnaire |
-| Visualization Card | `tools/visualize/` → `VisualizationCard` | primary, expanded | Mermaid diagram / comparison cards |
 | Web Card(s) | `tools/web/` | routine | Search/fetch renderers |
 | Default Tool Renderer | `DefaultToolRenderer` | routine | Fallback for unregistered tools |
 
@@ -275,7 +271,7 @@ Built-in tool renderers (in `chat/tools/`):
 - **Parent:** Chat View.
 - **Position:** Bottom of the Chat View.
 - **Responsibility:** the prompt input + send/steer/followUp/abort, `@`-mentions, `/` slash commands,
-  template slot sessions, image paste/drop, `↑` recall, and the history-open affordance.
+  image paste/drop, `↑` recall, and the history-open affordance.
 
 Children / associated surfaces:
 
@@ -283,11 +279,9 @@ Children / associated surfaces:
 |---|---|---|---|
 | Model Selector | `chat/ModelSelector.tsx` → `ModelSelector` | — | Model picker (+ Refresh catalog) |
 | Thinking Selector | `chat/ThinkingSelector.tsx` → `ThinkingSelector` | — | Thinking/effort level picker |
-| Slash-Command Menu | `chat/SlashCommandCompletion.tsx` → `SlashCommandMenu` | `slash-templates-empty` (footer) | `/` command + template completion |
+| Slash-Command Menu | `chat/SlashCommandCompletion.tsx` → `SlashCommandMenu` | — | `/` command completion |
 | Send Button | inline (`ArrowUp` / `Square` abort) | — | Send / steer / follow-up / abort |
 | History-Open Button | inline (`History` icon) | `history-open` | Opens the History Overlay |
-| Slot Hint Chip | inline pill | `slot-hint` | Template slot session progress (`slot n/m · ⇥ next · esc done`) |
-| Slot Highlight | inline backdrop span | `slot-highlight` (`data-slot-state`) | Tinted template-slot ranges |
 
 ## History Overlay
 
@@ -303,16 +297,6 @@ Children / associated surfaces:
 | Preview Pane | inside `HistoryOverlay` | `history-preview` | Full text of the selected hit |
 | Scope Picker | inside `HistoryOverlay` | `history-scope` / `-option` | This chat / Workspace / Project / Everywhere |
 | Jump Action | inside `HistoryOverlay` | `history-jump` (`-shortcut`) | Go to chat |
-| Save-as-Template Action | inside `HistoryOverlay` | `history-save-template` (`-shortcut`) | Opens the Template Editor Dialog |
-
-## Chat Plan (TODO plan)
-
-- **Canonical name:** Chat Plan.
-- **Implementation:** `chat/ChatPlan.tsx` (`ChatPlanStripContent` = the Plan Strip in the Chat Header;
-  `ChatPlanContent` = the Plan Popover body) + `chat/TodoList.tsx` → `TodoList`.
-- **Parent:** Chat Header (strip) → Popover (body).
-- **Responsibility:** surface the chat's `pi-todos` plan (group-first, status-ordered). There is no
-  side-tool Todo tab — the plan lives in the conversation.
 
 ---
 
@@ -328,25 +312,19 @@ leaves a compact restore rail. Side arrangement is workspace-shared; selection a
   `side-group-fold`, and side-specific group resize handles.
 - **Parent:** Workspace Workbench.
 - **Responsibility:** arrange singleton shell tools and terminals without coupling feature panels to
-  their position. Files, diffs, chats, and documents remain center-only; terminals can cross domains.
+  their position. Files, diffs, and chats remain center-only; terminals can cross domains.
 
 Every Side Group has a **Group Header**; folding retains that header as a 27px row while its linked
-body stays native-hidden and unmounted. Initial Balanced placement puts Projects on the left, Specs and
-All files in the first right group, then Changes and Review in the second; the default terminal catalog
-joins that last group. This is startup behavior, not a fixed hierarchy.
+body stays native-hidden and unmounted. Initial Balanced placement puts Projects on the left and All
+files plus Changes on the right. This is startup behavior, not a fixed hierarchy.
 
 ## Side Tools
 
 | Canonical name | `data-testid` | Implementation / responsibility |
 |---|---|---|
 | Projects | `tab-projects`, body `left-nav` | `panels/ProjectTree.tsx`; projects and workspaces |
-| Specs | `tab-specs` | `panels/SpecsPanel.tsx`; read-only spec graph, with `specs-refresh` |
 | All files | `tab-files` | `panels/FileTree.tsx`; worktree file tree |
 | Changes | `tab-changes` | `panels/ChangesPanel.tsx`; scoped git changes and diff opens |
-| Review | `tab-review` | `panels/ReviewPanel.tsx`; review accordion and send actions |
-
-`WorkspaceWorkbench` owns the long-lived Specs and Review reads so badges, review flags, and artifact
-classification remain current even while those tool bodies are not selected.
 
 ## Changes Tool
 
@@ -395,11 +373,9 @@ are the Top Bar's Connection Status and the Chat Header's Session Stats Bar.
 | Canonical name | Implementation | Responsibility |
 |---|---|---|
 | Providers | `panels/ProvidersSettings.tsx` → `ProvidersSettings` | In-app provider auth |
-| GitHub | `panels/GithubSettings.tsx` → `GithubSettings` | Local GitHub connection status |
 | Appearance | `panels/AppearanceSettings.tsx` → `AppearanceSettings` | Theme picker |
 | Layout | `shell/LayoutSettings.tsx` → `LayoutSettings` (injected into the dialog) | Default/apply/capture workbench presets and side-group limit |
 | Terminal | `panels/TerminalSettings.tsx` → `TerminalSettings` | Terminal replay budget |
-| Templates | `panels/TemplatesSettings.tsx` → `TemplatesSettings` | Global / project prompt templates (`template-row`, `template-starters`) |
 | General | dimmed nav item | "Soon" placeholder |
 
 ---
@@ -430,8 +406,6 @@ App-level dialog/popover instances built on those primitives:
 | New Workspace Dialog | `panels/NewWorkspaceDialog.tsx` → `NewWorkspaceDialog` | Dialog | Start-working surface (mode fork: isolated worktree / project folder) |
 | Confirm Dialog | `panels/ConfirmDialog.tsx` → `ConfirmDialog` | Dialog | Modal yes/no with no stable anchor (init a repo, close project, remove workspace) |
 | Notice Dialog | `panels/NoticeDialog.tsx` → `NoticeDialog` | Dialog | Single-button info modal for failures |
-| Confirm Popover | `panels/ConfirmPopover.tsx` → `ConfirmPopover` | Popover | Anchored yes/no from a dedicated action control (template delete) |
-| Template Editor Dialog | `chat/TemplateEditorDialog.tsx` → `TemplateEditorDialog` | Dialog | Create/edit a prompt template |
 | Skills Dialog | `chat/SkillsDialog.tsx` → `SkillsDialog` | Dialog | Skills manager (chat + project modes) |
 | Ext-UI Dialog | `chat/ExtUiDialog.tsx` → `ExtUiDialog` | Dialog | `pi.extensionUi` bridge dialog |
 | Login Dialog | `auth/` → `LoginDialog` | Dialog | Provider OAuth / API-key login |
@@ -488,34 +462,32 @@ its alternatives in parentheses.
 
 - **Center Workbench** (alts: Center Tabbed Area, Editor Area).
 - **Center Group**, **Group Header**, **Tab Strip**, **Tab**, **Tab Close**, **Split Separator**.
-- Tab kinds: **File tab**, **Chat tab**, **Diff tab**, **Document tab**, **Terminal tab**.
+- Tab kinds: **File tab**, **Chat tab**, **Diff tab**, **Terminal tab**.
 - **Editor Pane**, **Workspace-Ready Receipt**.
 - **File Pane** (**Code Editor** / **Markdown Preview**), **Diff Pane** (**Monaco Diff** /
-  **Rendered Diff**), **Document Pane**, **Terminal Body**.
+  **Rendered Diff**), **Terminal Body**.
 - **Chat-History Menu**, **New-Chat Button**.
 
 **Chat**
 
 - **Chat View** — the whole conversation surface.
-- **Chat Header** — its top bar. **Plan Strip**, **Session Stats Bar**, **Skills Button**.
+- **Chat Header** — its top bar. **Session Stats Bar**, **Skills Button**.
 - **Message List** (alt: Transcript). Units: **Turn** (pi message), **Row** (derived render unit).
 - Row renderers: **User Message**, **Assistant Markdown**, **System Notice**, **Error Turn**,
   **Retry Indicator**, **Tool Card**, **Activity Group**, **Turn Divider** (with **Artifact Chip** /
   **Artifact List**), **Stream Indicator**.
 - **Tool Card** (frame) / **Tool Renderer** (body): **Bash Card**, **Read Card**, **Write Card**,
-  **Edit Card**, **Ask-User-Question Card**, **Visualization Card**, **Web Card**, **Default Tool
+  **Edit Card**, **Ask-User-Question Card**, **Web Card**, **Default Tool
   Renderer**.
 - **Composer** — the prompt input. **Model Selector**, **Thinking Selector**, **Slash-Command Menu**,
   **Send Button**, **History-Open Button**, **Slot Hint Chip**.
 - **History Overlay** — **Results List**, **Preview Pane**, **Scope Picker**, **Jump Action**,
-  **Save-as-Template Action**.
-- **Chat Plan** — **Plan Strip** + **Plan Popover** + **Todo List**.
 
 **Sides**
 
 - **Left Side**, **Right Side**, **Side Group**, **Hidden-Side Rail**.
-- Singleton tools: **Projects**, **Specs**, **All files**, **Changes**, **Review**.
-- **Specs Panel**, **All Files Panel** (alt: File Tree), **Changes Panel**, **Review Panel**.
+- Singleton tools: **Projects**, **All files**, **Changes**.
+- **All Files Panel** (alt: File Tree), **Changes Panel**.
 - **Changes Header** (no component): **Changes Scope Menu**, **Branch Picker**, **Changes View Toggle**.
 - **Changes List** / **Changes Tree**, **Change-Row Actions**, **Tree Row**, **Diff-Stat Badge**.
 
@@ -526,15 +498,14 @@ its alternatives in parentheses.
 
 **Settings**
 
-- **Settings Dialog** with sections: **Providers**, **GitHub**, **Appearance**, **Layout**,
-  **Terminal**, **Templates**, **Privacy**.
+- **Settings Dialog** with sections: **Providers**, **Appearance**, **Layout**, **Terminal**.
 
 **Shared primitives**
 
 - **Modal** = the **Dialog** primitive. **Dropdown Menu**, **Context Menu**, **Popover**, **Command**,
   **Tooltip**, **Toast**, **Resizable**, **Error Boundary**.
-- App dialogs: **New Workspace Dialog**, **Confirm Dialog**, **Notice Dialog**, **Confirm Popover**,
-  **Template Editor Dialog**, **Skills Dialog**, **Ext-UI Dialog**, **Login Dialog**.
+- App dialogs: **New Workspace Dialog**, **Confirm Dialog**, **Notice Dialog**, **Skills Dialog**,
+  **Ext-UI Dialog**, **Login Dialog**.
 
 **Terms that do NOT map to a Mewa Code region (avoid or use only as noted)**
 

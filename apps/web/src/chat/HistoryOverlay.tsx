@@ -1,5 +1,5 @@
 import type { HistoryScope, MessageHit, PromptHit } from "@mewa-code/contracts";
-import { Check, CornerUpRight, Save, Trash2 } from "lucide-react";
+import { Check, CornerUpRight, Trash2 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
 	DropdownMenu,
@@ -7,7 +7,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { platformShortcutLabel, relativeTime } from "@/lib";
+import { relativeTime } from "@/lib";
 import {
 	type ChatLocationRequest,
 	type HistorySearchState,
@@ -30,8 +30,6 @@ const SCOPE_MENU_LABELS: Record<HistoryScope["kind"], string> = {
 	project: "Project",
 	all: "Everywhere",
 };
-
-const SAVE_SHORTCUT_LABEL = platformShortcutLabel("S");
 
 function escapeRegExp(term: string): string {
 	return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -102,7 +100,6 @@ function PromptRow({
 	workspaceName,
 	isSelected,
 	onPick,
-	onSaveAsTemplate,
 	onOpenMessage,
 	onDeleteChat,
 }: {
@@ -112,7 +109,6 @@ function PromptRow({
 	workspaceName: string | undefined;
 	isSelected: boolean;
 	onPick: () => void;
-	onSaveAsTemplate: () => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
 	onDeleteChat: (workspaceId: string, sessionId: string) => void;
 }) {
@@ -146,29 +142,6 @@ function PromptRow({
 				<span className="shrink-0 text-text-muted tr-text-metadata">
 					{relativeTime(hit.timestamp)}
 				</span>
-			</button>
-			{isSelected ? (
-				<span
-					data-testid="history-save-shortcut"
-					className="shrink-0 text-text-muted tr-text-metadata"
-				>
-					{SAVE_SHORTCUT_LABEL}
-				</span>
-			) : null}
-			<button
-				type="button"
-				data-testid="history-save-template"
-				aria-label="Save as template"
-				title={`Save as template (${SAVE_SHORTCUT_LABEL})`}
-				onClick={(e) => {
-					e.stopPropagation();
-					onSaveAsTemplate();
-				}}
-				className={`flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] p-xs text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-text-default group-hover:opacity-100 ${
-					isSelected ? "opacity-100" : ""
-				}`}
-			>
-				<Save className="size-3.5" />
 			</button>
 			{target ? (
 				<>
@@ -322,7 +295,6 @@ export interface HistoryOverlayProps {
 	onInsert: (hit: PromptHit) => void;
 	onInsertAndSend: (hit: PromptHit) => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
-	onSaveAsTemplate: (hit: PromptHit) => void;
 	onDeleteChat: (workspaceId: string, sessionId: string) => void;
 	onSetScope: (kind: HistoryScope["kind"]) => void;
 }
@@ -337,7 +309,6 @@ export function HistoryOverlay({
 	onInsert,
 	onInsertAndSend,
 	onOpenMessage,
-	onSaveAsTemplate,
 	onDeleteChat,
 	onSetScope,
 }: HistoryOverlayProps) {
@@ -384,12 +355,6 @@ export function HistoryOverlay({
 	if (!open) return null;
 
 	const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-		if ((e.metaKey || e.ctrlKey) && e.code === "KeyS") {
-			e.preventDefault();
-			const item = resolveHistorySelection(stage, result, selected);
-			if (item?.kind === "prompt") onSaveAsTemplate(item.hit);
-			return;
-		}
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
 			onMoveSelection(1);
@@ -463,7 +428,6 @@ export function HistoryOverlay({
 									workspaceName={hit.workspaceId ? workspaceNames[hit.workspaceId] : undefined}
 									isSelected={i === selected}
 									onPick={() => onInsert(hit)}
-									onSaveAsTemplate={() => onSaveAsTemplate(hit)}
 									onOpenMessage={onOpenMessage}
 									onDeleteChat={onDeleteChat}
 								/>

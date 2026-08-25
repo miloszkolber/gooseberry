@@ -120,7 +120,6 @@ export interface SessionSummary {
 	messageCount: number;
 	updatedAt: number;
 	live: boolean;
-	openTodos?: number;
 	lastSettlement?: AgentSettlement | null;
 	queue?: SessionQueueState;
 }
@@ -142,7 +141,7 @@ export interface SlashCommandInfo {
 	sourceInfo: SlashCommandSourceInfo;
 }
 
-export type SkillDecision = "load" | "untrusted" | "pending-ack" | "disabled";
+export type SkillDecision = "load" | "untrusted" | "disabled";
 
 export interface SkillCatalogEntry {
 	name: string;

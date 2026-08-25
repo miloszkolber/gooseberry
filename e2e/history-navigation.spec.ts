@@ -64,9 +64,7 @@ test("Back returns to a deep-linked chat entry", async ({ page }) => {
 	await expect(chatTabs(page).first()).toHaveAttribute("data-active", "true");
 });
 
-test("Back to a just-closed chat wins over the close's delayed layout acceptance", async ({
-	page,
-}) => {
+test("Back to a just-closed chat wins over the close's delayed persistence", async ({ page }) => {
 	const holds = new Map<string, { requestId: string | null; response: string | null }>();
 	let sendHeld: ((raw: string) => void) | null = null;
 	const arm = (method: string) => holds.set(method, { requestId: null, response: null });
@@ -104,7 +102,6 @@ test("Back to a just-closed chat wins over the close's delayed layout acceptance
 
 	const { chat1Hash, chat2Hash } = await openTwoChats(page);
 
-	arm("layout.replace");
 	await chatTabs(page).last().getByTestId("editor-tab-close").click();
 	await expect(chatTabs(page)).toHaveCount(1);
 	await expect.poll(() => currentHash(page)).toBe(chat1Hash);
@@ -112,7 +109,6 @@ test("Back to a just-closed chat wins over the close's delayed layout acceptance
 	arm("session.list");
 	await page.goBack();
 	await expect.poll(() => currentHash(page)).toBe(chat2Hash);
-	release("layout.replace");
 	await page.waitForTimeout(100);
 	release("session.list");
 

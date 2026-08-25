@@ -2,7 +2,6 @@ import { type ComponentProps, type ReactNode, useEffect, useState } from "react"
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { highlightCode } from "@/lib/highlighter";
-import { MermaidView } from "./tools/visualize/MermaidView";
 
 const CHAT_PROSE =
 	"tr-prose-chat max-w-none break-words [&_a]:text-primary [&_a]:underline [&_li]:my-0.5 [&_ol]:my-sm [&_ol]:list-decimal [&_ol]:pl-lg [&_p]:my-sm [&_table]:border-collapse [&_td]:border [&_td]:border-border-muted [&_td]:px-sm [&_td]:py-xs [&_th]:border [&_th]:border-border-muted [&_th]:px-sm [&_th]:py-xs [&_th]:text-left [&_ul]:my-sm [&_ul]:list-disc [&_ul]:pl-lg";
@@ -60,7 +59,6 @@ function CodeBlock({
 }) {
 	const lang = /language-(\w+)/.exec(className ?? "")?.[1];
 	const code = String(children ?? "").replace(/\n$/, "");
-	if (lang === "mermaid") return <MermaidBlock code={code} />;
 	if (!lang) {
 		if (!code.includes("\n")) {
 			return (
@@ -76,22 +74,6 @@ function CodeBlock({
 		);
 	}
 	return <ShikiBlock code={code} lang={lang} />;
-}
-
-function MermaidBlock({ code }: { code: string }) {
-	const [settled, setSettled] = useState<string | null>(null);
-	useEffect(() => {
-		const timer = setTimeout(() => setSettled(code), 200);
-		return () => clearTimeout(timer);
-	}, [code]);
-
-	const source = <ShikiBlock code={code} lang="mermaid" />;
-	if (settled !== code) return source;
-	return (
-		<div className="whitespace-normal">
-			<MermaidView source={code} fallback={source} />
-		</div>
-	);
 }
 
 function ShikiBlock({ code, lang }: { code: string; lang: string }) {

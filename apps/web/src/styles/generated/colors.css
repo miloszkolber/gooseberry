@@ -13,7 +13,7 @@
 	--text-disabled: color-mix(in srgb, var(--text) 60%, transparent); /* disabled non-control text = the default text colour at the `strong` (60%) alpha step — a disabled element inherits its enabled semantic colour, dimmed at the token level, never a dedicated disabled palette value */
 	--text-on-primary: var(--on-accent);
 	--text-link: var(--info); /* global.css `a {}` is the only consumer; no component styles a bare link */
-	--container-workspace-bg: var(--background); /* the app surface, and with it the opened-document canvas — a document reads as part of the workspace (Monaco's EDITOR_THEME, the markdown/spec preview, the chat column, the tab strip) */
+	--container-workspace-bg: var(--background); /* the app surface, and with it the opened-document canvas — a document reads as part of the workspace (Monaco's EDITOR_THEME, the markdown preview, the chat column, the tab strip) */
 	--container-sidebar-bg: var(--sidebar);
 	--container-terminal-bg: var(--sidebar);
 	--container-header-bg: var(--header);
@@ -53,7 +53,6 @@
 	--bubble-user-border: color-mix(in srgb, var(--bubble-accent) 40%, transparent);
 	--selection-text: var(--selection-foreground, inherit); /* nullable in the manifest (high contrast keeps the native foreground) */
 	--selection-bg: var(--selection); /* native ::selection in global.css; not a utility */
-	--selection-bg-muted: color-mix(in srgb, var(--selection) 40%, transparent); /* the content canvas's ::selection (markdown preview): translucent, so the unselected remainder of a line box reads as a soft edge, not a black hole punched in an opaque wash */
 	--editor-selection-bg: var(--editor-selection);
 	--editor-selection-text: var(--editor-selection-foreground); /* read by Monaco and xterm through getComputedStyle; a utility would be dead weight */
 }

@@ -237,7 +237,7 @@ The target is met when all of the following are true:
 
 ## Current foundation gap
 
-The ThinkRail-derived branch is much larger than this baseline. It currently couples retained files, editor, terminal, worktree, web-access, and Pi session capabilities to a dockable workbench, spec graph, review, workflow, website, packaging, compatibility, visualization, and todo systems. Its test suite primarily proves that inherited product. Retained capabilities must be extracted from that coupling rather than deleted with it. The isolated pre-import `mewa-browser` and memory integration are currently missing and must be restored or rebuilt.
+The ThinkRail-derived product systems and dockable shared layout have been removed. The retained project, session, chat, file, editor, diff, terminal, worktree, browser, web-access, memory, goal, and subagent surfaces now form the focused Mewa baseline. Release readiness still requires an enforceable protected-state boundary for child subagents and arbitrary in-process Pi extensions, plus built-image inspection proving the final controller and browser contents satisfy the container acceptance criteria.
 
 ## Decision trace
 

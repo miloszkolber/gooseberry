@@ -23,13 +23,13 @@ This path contains the likely baseline seam, but each package still includes beh
 
 ## Inherited coupled surfaces
 
-The current server composes projects, workspaces, Git, GitHub metadata, reviews, terminals, editor support, layouts, templates, todos, spec graphs, skill compatibility, history, auth, and Pi sessions. The web client contains matching IDE panels, shared layout persistence, editor, terminal, review, spec, todo, and workflow presentation.
+The server composes projects, workspaces, Git, terminals, editor support, layouts, native Pi skill admission, history, auth, and Pi sessions. The web client contains matching project and workspace navigation, shared layout persistence, editor, terminal, chat, and retained web-tool presentation.
 
-Development and compiled modes currently inject or bundle `pi-web-access`, `pi-visualize`, `pi-spec-graph`, `pi-mewa-code-workflow`, and `pi-todos`. Web access is retained but needs a smaller explicit contract. Visualization, spec graph, workflow, and todos are removal targets. Some server and UI modules import extension cores directly, so removal must include their host and UI consumers.
+Development and compiled modes inject the retained `pi-web-access` extension together with the curated subagent profile, protected-state guard, and optional Signet connector. Visualization, spec graph, workflow, todo, review, template, and GitHub feature extensions and consumers have been removed. Web access remains behind its explicit contract.
 
 The current project model gives Git worktrees first-class status and carries a default-workspace exception for the repository's normal working tree. Pi session identity is coupled to the exact working directory. The baseline reverses that emphasis: the normal repository working tree is primary and worktrees remain an explicit optional capability.
 
-The current repository also includes an unpublished website, deferred desktop launcher, binary build actions, extensive release-era code, and broad inherited unit and end-to-end suites. None of those are baseline requirements. The pre-import isolated `mewa-browser` service and memory connector are absent from the current tree.
+The current repository retains a deferred desktop launcher and broad inherited unit and end-to-end suites for historical context. The unpublished website, binary build actions, and other release-era surfaces were removed because none are baseline requirements. The isolated `mewa-browser` service and current Pi browser extension are restored. The protected-state guard rejects Pi tool paths and shell references into Pi or Mewa state roots, while project and workspace file roots reject protected state roots. The curated subagent and env-gated Signet memory extensions are integrated with matching web renderers.
 
 ## Simplification reading rule
 

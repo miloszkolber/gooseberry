@@ -1,7 +1,6 @@
-import { mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { realpathSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import { TodoStore } from "pi-todos/core";
 import { defaultWorkspaceRow, enterDefaultWorkspace, openFixtureProject } from "./fixtures/app";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 import { seedWorkspaceSession } from "./fixtures/sessions";
@@ -9,13 +8,6 @@ import { seedWorkspaceSession } from "./fixtures/sessions";
 const BASE_TS = 1_700_400_000_000;
 
 const repoCwd = () => realpathSync(E2E_FIXTURE_REPO);
-
-function seedOpenTodo(sessionId: string, title: string): void {
-	const contextDir = join(repoCwd(), ".mewa-code", "context");
-	mkdirSync(contextDir, { recursive: true });
-	writeFileSync(join(contextDir, ".gitignore"), "*\n");
-	new TodoStore(repoCwd(), sessionId).add({ title });
-}
 
 async function failGetMessagesFor(page: Page, sessionId: () => string): Promise<void> {
 	await page.routeWebSocket(/\/ws(\?|$)/, (ws) => {
@@ -58,14 +50,12 @@ test("a transcript that fails to load says so and stays in history", async ({ pa
 	});
 	unreadableId = unreadable.id;
 	utimesSync(unreadable.path, new Date(BASE_TS), new Date(BASE_TS));
-	seedOpenTodo(unreadable.id, "finish the unreadable work");
 
 	const readable = seedWorkspaceSession(repoCwd(), {
 		name: "the readable chat",
 		messages: [{ role: "user", text: "load me fine", timestamp: BASE_TS + 1_000 }],
 	});
 	utimesSync(readable.path, new Date(BASE_TS + 1_000), new Date(BASE_TS + 1_000));
-	seedOpenTodo(readable.id, "finish the readable work");
 
 	await expect(defaultWorkspaceRow(page)).toBeVisible();
 	await enterDefaultWorkspace(page);

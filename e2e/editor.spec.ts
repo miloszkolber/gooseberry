@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createWorkspaceViaDialog, openFixtureProject } from "./fixtures/app";
 
-test("opens a file in a center Monaco tab, focuses on re-open, and closes", async ({ page }) => {
+test("opens a file in an editor Monaco tab, focuses on re-open, and closes", async ({ page }) => {
 	await openFixtureProject(page);
 
 	await createWorkspaceViaDialog(page);
@@ -35,25 +35,6 @@ test("opens a file in a center Monaco tab, focuses on re-open, and closes", asyn
 	await expect(page.getByTestId("workspace-ready")).toContainText(
 		"Files, chats, changes, and terminals are scoped to this workspace",
 	);
-});
-
-test("hides YAML frontmatter in the rendered view but shows it in source", async ({ page }) => {
-	await openFixtureProject(page);
-	await createWorkspaceViaDialog(page);
-	await page.getByTestId("tab-files").click();
-
-	const spec = page.getByTestId("file-node").filter({ hasText: "SPEC.md" });
-	await expect(spec).toBeVisible();
-	await spec.dblclick();
-
-	const preview = page.getByTestId("markdown-preview");
-	await expect(preview).toContainText("Goal");
-	await expect(preview).not.toContainText("goal-and-requirements");
-	await expect(preview).not.toContainText("id: sample-root");
-
-	await page.getByTestId("md-toggle-source").click();
-	await expect(page.getByTestId("markdown-preview")).toHaveCount(0);
-	await expect(page.getByTestId("editor-pane")).toContainText("id: sample-root");
 });
 
 test("opens a non-markdown file straight to Monaco with no rendered-view toggle", async ({

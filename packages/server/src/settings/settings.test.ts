@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CONFIG } from "@mewa-code/contracts";
+import { DEFAULT_CONFIG, DEFAULT_PI_PROFILE_SETTINGS } from "@mewa-code/contracts";
 import { getConfig, resetConfigCache, setSettingsPublisher, updateConfig } from "./settings";
 
 let dataDir: string;
@@ -65,26 +65,35 @@ test("an older host preserves unknown top-level config extensions when updating 
 	expect(onDisk.futureSetting).toEqual({ mode: "new" });
 });
 
-test("loadConfig normalizes nested layout fields independently", () => {
+test("loadConfig drops the removed shared layout setting", () => {
 	writeFileSync(
 		join(dataDir, "config.json"),
-		JSON.stringify({
-			theme: "acme.persisted",
-			layout: {
-				defaultPresetId: "review",
-				customPresets: "corrupt",
-				maxSideGroups: 0,
-			},
-		}),
+		JSON.stringify({ ...DEFAULT_CONFIG, layout: { defaultPresetId: "balanced" } }),
 	);
 	resetConfigCache();
-	expect(getConfig()).toEqual({
-		...DEFAULT_CONFIG,
-		theme: "acme.persisted",
-		layout: {
-			defaultPresetId: "review",
-			customPresets: [],
-			maxSideGroups: DEFAULT_CONFIG.layout.maxSideGroups,
-		},
+	expect(getConfig()).toEqual(DEFAULT_CONFIG);
+});
+
+test("defaults the curated Pi profile to enabled non-safety capabilities", () => {
+	expect(getConfig().piProfile).toEqual(DEFAULT_PI_PROFILE_SETTINGS);
+});
+
+test("persists nested Pi profile choices without creating a disable switch for the safety guard", () => {
+	const next = updateConfig({ piProfile: { browser: false, goals: false } });
+	expect(next.piProfile).toEqual({
+		...DEFAULT_PI_PROFILE_SETTINGS,
+		browser: false,
+		goals: false,
+	});
+	expect(JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8")).piProfile).toEqual({
+		...DEFAULT_PI_PROFILE_SETTINGS,
+		browser: false,
+		goals: false,
+	});
+	resetConfigCache();
+	expect(getConfig().piProfile).toEqual({
+		...DEFAULT_PI_PROFILE_SETTINGS,
+		browser: false,
+		goals: false,
 	});
 });

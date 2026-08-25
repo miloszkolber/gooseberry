@@ -1,6 +1,5 @@
 import { ChevronRight, GitBranch, Settings } from "lucide-react";
-import { useEffect, useRef } from "react";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
+import { useEffect } from "react";
 import { ProjectTree } from "../panels/ProjectTree";
 import { SettingsDialog } from "../panels/SettingsDialog";
 import { Toaster } from "../panels/Toaster";
@@ -14,11 +13,7 @@ import {
 import { applyTheme, writeThemeHint } from "../themes";
 import type { ConnectionStatus } from "../transport";
 import { BrandLogo } from "./BrandLogo";
-import { CollapsedPanelRail } from "./CollapsedPanelRail";
-import { LayoutSettings } from "./LayoutSettings";
-import { useCollapsibleRegion } from "./useCollapsibleRegion";
 import { useGlobalHotkeys } from "./useGlobalHotkeys";
-import { openReviewLabel, useOpenBranchReview } from "./useOpenBranchReview";
 import { WorkspaceWorkbench } from "./WorkspaceWorkbench";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -38,41 +33,29 @@ export function Shell() {
 	const activeWorkspaceId = useAppStore((s) => s.activeWorkspaceId);
 	const activeWorkspace = useAppStore(selectActiveWorkspace);
 	const contextProject = useAppStore(selectContextProject);
-	const openReview = useOpenBranchReview(activeWorkspace, status);
 	const hasActiveWorkspace = activeWorkspaceId != null;
-
-	const welcomeCenterRef = useRef<HTMLDivElement>(null);
-	const welcomeProjects = useCollapsibleRegion(welcomeCenterRef, "welcome-left");
-
 	const theme = useAppStore((s) => s.theme);
+
 	useEffect(() => {
 		applyTheme(theme);
 		writeThemeHint(theme);
 	}, [theme]);
+
 	useGlobalHotkeys({
-		onProjects: hasActiveWorkspace
-			? () => {
-					if (!activeWorkspaceId) return;
-					useAppStore.getState().enqueueLayoutIntent({
-						kind: "toggle-side",
-						workspaceId: activeWorkspaceId,
-						side: "left",
-					});
-				}
-			: welcomeProjects.focusOrCollapse,
+		onProjects: () => {
+			(document.querySelector('[data-testid="left-nav"]') as HTMLElement | null)?.focus();
+		},
 		...(hasActiveWorkspace
 			? {
 					onWorkspace: () => {
-						if (!activeWorkspaceId) return;
-						useAppStore.getState().enqueueLayoutIntent({
-							kind: "toggle-side",
-							workspaceId: activeWorkspaceId,
-							side: "right",
-						});
+						(
+							document.querySelector('[data-testid="activity-tabs"]') as HTMLElement | null
+						)?.focus();
 					},
 				}
 			: {}),
 	});
+
 	return (
 		<div data-testid="shell" className="grid h-full grid-rows-[auto_1fr]">
 			<header className="flex items-center justify-between border-b border-border-default bg-container-header-bg px-lg py-sm">
@@ -110,15 +93,6 @@ export function Shell() {
 											· from {activeWorkspace.baseBranch}
 										</span>
 									)}
-									{openReview ? (
-										<span
-											data-testid="scope-review"
-											data-kind={openReview.kind}
-											className="shrink-0 text-text-muted"
-										>
-											· {openReviewLabel(openReview)}
-										</span>
-									) : null}
 								</>
 							) : null}
 						</div>
@@ -148,72 +122,24 @@ export function Shell() {
 						<Settings className="size-4" />
 					</button>
 				</div>
-				<SettingsDialog layoutSettings={<LayoutSettings />} />
+				<SettingsDialog />
 			</header>
 			{hasActiveWorkspace && activeWorkspaceId ? (
-				<div data-testid="workspace-shell-layout" className="h-full min-h-0 min-w-0">
+				<div data-testid="workspace-shell" className="h-full min-h-0 min-w-0">
 					<WorkspaceWorkbench key={activeWorkspaceId} workspaceId={activeWorkspaceId} />
 				</div>
 			) : (
-				<div
-					data-testid="welcome-shell-layout"
-					data-left-collapsed={welcomeProjects.collapsed}
-					className="flex h-full min-h-0 min-w-0"
-				>
-					{welcomeProjects.collapsed ? (
-						<CollapsedPanelRail
-							ref={welcomeProjects.railRef}
-							side="left"
-							label="Projects"
-							shortcutKey="B"
-							onOpen={welcomeProjects.openAndFocus}
-						/>
-					) : null}
-					<ResizablePanelGroup
-						direction="horizontal"
-						autoSaveId="mewa-code-shell-welcome"
-						className="min-h-0 min-w-0 flex-1"
+				<div data-testid="welcome-shell" className="flex h-full min-h-0 min-w-0">
+					<aside
+						data-testid="left-nav"
+						tabIndex={-1}
+						className="w-[clamp(12rem,20vw,16rem)] shrink-0 overflow-auto border-border-default border-r bg-container-sidebar-bg p-md outline-none"
 					>
-						<ResizablePanel
-							ref={welcomeProjects.panelRef}
-							id="left"
-							order={1}
-							defaultSize={18}
-							minSize={12}
-							collapsedSize={0}
-							collapsible
-							onCollapse={welcomeProjects.onCollapse}
-							onExpand={welcomeProjects.onExpand}
-						>
-							<aside
-								ref={welcomeProjects.contentRef}
-								data-testid="left-nav"
-								tabIndex={-1}
-								aria-hidden={welcomeProjects.collapsed || undefined}
-								inert={welcomeProjects.collapsed ? true : undefined}
-								className="h-full overflow-auto bg-container-sidebar-bg p-md outline-none"
-							>
-								<ProjectTree />
-							</aside>
-						</ResizablePanel>
-						<ResizableHandle
-							direction="horizontal"
-							data-testid="resize-left"
-							aria-hidden={welcomeProjects.collapsed}
-							tabIndex={welcomeProjects.collapsed ? -1 : 0}
-							onDragging={welcomeProjects.onDragging}
-							{...(welcomeProjects.collapsed ? { className: "hidden" } : {})}
-						/>
-						<ResizablePanel id="welcome" order={2} defaultSize={82} minSize={40}>
-							<div
-								ref={welcomeCenterRef}
-								tabIndex={-1}
-								className="h-full min-h-0 bg-container-content-bg outline-none"
-							>
-								<WelcomePanel />
-							</div>
-						</ResizablePanel>
-					</ResizablePanelGroup>
+						<ProjectTree />
+					</aside>
+					<main className="min-h-0 min-w-0 flex-1 bg-container-content-bg">
+						<WelcomePanel />
+					</main>
 				</div>
 			)}
 			<Toaster />
