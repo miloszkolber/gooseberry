@@ -43,6 +43,7 @@ jobs:
           bun install --frozen-lockfile
           bun --filter @mewa-code/web typography:generate
           bun --filter @mewa-code/web colors:generate
+          bun run format
           bun run check:deps
           bun run lint
           bun run typecheck
