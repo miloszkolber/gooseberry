@@ -46,31 +46,11 @@ COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/pi-mewa-browser/package.json packages/pi-mewa-browser/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY packages/shared/package.json packages/shared/package.json
+\
+COPY scripts/prune-runtime-dependencies.sh /tmp/prune-runtime-dependencies.sh
 RUN bun install --frozen-lockfile --production --filter '@mewa-code/server' \
-    && rm -rf packages/server/node_modules/@mewa-code \
-    && mkdir -p /runtime/node_modules \
-    && cp -aL packages/server/node_modules/. /runtime/node_modules/ \
-    && rm -rf /runtime/node_modules/.bin \
-	&& mkdir -p /runtime/licenses \
-	&& for package in pi-web-access; do \
-		for legal in LICENSE NOTICE; do \
-			source="packages/server/node_modules/$${package}/$${legal}"; \
-			if [ -f "$${source}" ]; then cp -aL "$${source}" "/runtime/licenses/$${legal}-$${package}"; fi; \
-		done; \
-	done \
-	&& rm -rf /runtime/node_modules/@mewa-code \
-	&& rm -rf /runtime/node_modules/pi-web-access \
-	&& find /runtime/node_modules -type f '(' -name '*.test.js' -o -name '*.test.mjs' -o -name '*.test.ts' ')' -delete \
-	&& find /runtime/node_modules -type d '(' \
-		-iname test -o -iname tests -o -iname __tests__ -o -iname fixture -o -iname fixtures \
-		-o -iname __fixtures__ -o -iname example -o -iname examples -o -iname doc -o -iname docs \
-		-o -iname documentation -o -iname benchmark -o -iname benchmarks -o -iname coverage \
-		-o -iname .cache -o -iname cache -o -iname __pycache__ -o -iname .pytest_cache \
-	')' -exec find '{}' -type f \
-		! -iname 'license' ! -iname 'license.*' ! -iname 'license-*' \
-		! -iname 'notice' ! -iname 'notice.*' ! -iname 'notice-*' -delete ';' \
-	&& find /runtime/node_modules -type f -exec sh -c 'for path do base=$$(basename "$$path"); lower=$$(printf "%s" "$$base" | tr "[:upper:]" "[:lower:]"); case "$$lower" in license|license.*|license-*|notice|notice.*|notice-*) : ;; readme*|changelog*|history*|contributing*|security*|code_of_conduct*|*.md|*.markdown|*.rst|*.adoc|*.map|*.d.ts|*.ts|*.tsx|*.mts|*.cts|*.test.*|*.spec.*|*.log|.npmrc|.yarnrc*|.pnp.*|.yarn-integrity|.package-lock.json|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lockb) rm -f -- "$$path" ;; esac; done' sh '{}' + \
-	&& find /runtime/node_modules -depth -type d -empty -delete
+    && sh /tmp/prune-runtime-dependencies.sh packages/server/node_modules /runtime \
+    && rm -f /tmp/prune-runtime-dependencies.sh
 
 FROM ${BUN_IMAGE} AS controller
 ARG BUN_VERSION
