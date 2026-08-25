@@ -58,14 +58,6 @@ import {
 	setProjectTrust,
 } from "../projects";
 import { updateConfig } from "../settings";
-import {
-	attachTerminal,
-	closeTerminalTab,
-	closeWorkspaceTerminals,
-	listTerminals,
-	resizeTerminal,
-	writeTerminal,
-} from "../terminal";
 import { ensureWatch, stopWatch } from "../watch";
 import {
 	createWorkspace,
@@ -143,7 +135,6 @@ const handlers: Record<string, Handler> = {
 		const ws = forgetWorkspace(id);
 		if (ws) {
 			stopWatch(ws.id);
-			closeWorkspaceTerminals(ws.id);
 			void archiveTeardown(ws);
 		}
 		return { ok: true } as const;
@@ -195,33 +186,6 @@ const handlers: Record<string, Handler> = {
 		return gitDiffFile(p.workspaceId, p.path, p.scope);
 	},
 	"git.listCommits": (params) => listCommits((params as { workspaceId: string }).workspaceId),
-	"terminal.attach": (params, ctx) => {
-		const p = params as {
-			workspaceId: string;
-			tabKey: string;
-			title?: string;
-			cols?: number;
-			rows?: number;
-		};
-		return attachTerminal(p.workspaceId, p.tabKey, ctx.clientKey, p);
-	},
-	"terminal.list": (params) => ({
-		tabs: listTerminals((params as { workspaceId: string }).workspaceId),
-	}),
-	"terminal.write": (params, ctx) => {
-		const p = params as { id: string; data: string };
-		writeTerminal(p.id, p.data, ctx.clientKey);
-		return { ok: true } as const;
-	},
-	"terminal.resize": (params, ctx) => {
-		const p = params as { id: string; cols: number; rows: number };
-		resizeTerminal(p.id, p.cols, p.rows, ctx.clientKey);
-		return { ok: true } as const;
-	},
-	"terminal.close": (params) => {
-		const p = params as { workspaceId: string; tabKey: string; force?: boolean };
-		return closeTerminalTab(p.workspaceId, p.tabKey, p.force ?? false);
-	},
 	"skill.list": (params) => {
 		const { projectId } = params as { projectId: string };
 		const project = listProjects().find((candidate) => candidate.id === projectId);

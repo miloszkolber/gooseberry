@@ -2,7 +2,7 @@
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"$id": "urn:mewa-code:schema:theme",
 	"title": "Mewa Code theme manifest",
-	"description": "A complete, declarative Mewa Code UI, terminal, and syntax palette. Selected-text foreground overrides may be null to retain native behavior.",
+	"description": "A complete, declarative Mewa Code UI and syntax palette. Selected-text foreground overrides may be null to retain native behavior.",
 	"type": "object",
 	"additionalProperties": false,
 	"required": [

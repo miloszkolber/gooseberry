@@ -338,7 +338,7 @@ export function NewWorkspaceDialog({
 					<DialogTitle>{isolated ? "Create workspace" : "Work in project folder"}</DialogTitle>
 					<DialogDescription>
 						{isolated
-							? "A separate checkout on its own new branch. Files, chats, changes, and terminals stay scoped to it."
+							? "A separate checkout on its own new branch. Files, chats, and changes stay scoped to it."
 							: "Runs directly in your project folder — no isolation. Changes land on the current branch."}
 					</DialogDescription>
 				</DialogHeader>

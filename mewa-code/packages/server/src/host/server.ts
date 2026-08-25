@@ -1,11 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join, normalize } from "node:path";
-import type {
-	ServerWelcome,
-	SessionDeletedPayload,
-	TerminalTabsPush,
-	WorkspaceFsChangedPayload,
-} from "@mewa-code/contracts";
+import type { ServerWelcome, SessionDeletedPayload, WorkspaceFsChangedPayload } from "@mewa-code/contracts";
 import { isCodeToken, PROTOCOL_VERSION, WS_CHANNELS } from "@mewa-code/contracts";
 import { errorCodeOf } from "@mewa-code/shared/codedError";
 import {
@@ -27,14 +22,6 @@ import {
 } from "../projects";
 import { getConfig, setSettingsPublisher } from "../settings";
 import {
-	closeAllTerminals,
-	persistTerminalSessions,
-	resumeClientTerminals,
-	reviveTerminalSessions,
-	setTerminalPublisher,
-	setTerminalTabsPublisher,
-} from "../terminal";
-import {
 	setRepoMetaPublisher,
 	setSkillPathClassifier,
 	setWatchPublisher,
@@ -50,7 +37,6 @@ import {
 import { setFsNudgePublisher } from "./fsNudge";
 import { handleRequest } from "./handlers";
 import { RequestReplayCache } from "./requestReplayCache";
-import { terminalDeliveryForSendStatus } from "./terminalSend";
 import {
 	authorizeWebSocketUpgrade,
 	isAuthorizedHttpRequest,
@@ -184,7 +170,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	const sockets = new Map<string, Bun.ServerWebSocket<SocketData>>();
 	const reapTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	const requestReplays = new RequestReplayCache<string>();
-	const terminalBackpressured = new Set<string>();
 	let stopping = false;
 
 	const armClientReap = (clientKey: string): void => {
@@ -256,7 +241,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				const replaced = sockets.get(ws.data.clientKey);
 				sockets.set(ws.data.clientKey, ws);
 				if (replaced && replaced !== ws) replaced.close();
-				terminalBackpressured.delete(ws.data.clientKey);
 				const pendingReap = reapTimers.get(ws.data.clientKey);
 				if (pendingReap !== undefined) {
 					clearTimeout(pendingReap);
@@ -267,7 +251,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				ws.subscribe(WS_CHANNELS.sessionDeleted);
 				ws.subscribe(WS_CHANNELS.providerLogin);
 				ws.subscribe(WS_CHANNELS.projectUpdated);
-				ws.subscribe(WS_CHANNELS.terminalTabs);
 				ws.subscribe(WS_CHANNELS.workspaceCreated);
 				ws.subscribe(WS_CHANNELS.workspaceUpdated);
 				ws.subscribe(WS_CHANNELS.workspaceRemoved);
@@ -280,18 +263,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 					config: getConfig(),
 					...(appVersion ? { appVersion } : {}),
 				};
-				const welcomeStatus = ws.send(
-					JSON.stringify({ channel: WS_CHANNELS.serverWelcome, data: welcome }),
-				);
-				const welcomeDelivery = terminalDeliveryForSendStatus(welcomeStatus);
-				if (welcomeDelivery === "unavailable") {
+				if (
+					ws.send(JSON.stringify({ channel: WS_CHANNELS.serverWelcome, data: welcome })) === 0
+				) {
 					ws.close();
-					return;
 				}
-				if (welcomeDelivery === "backpressured") {
-					terminalBackpressured.add(ws.data.clientKey);
-				}
-				resumeClientTerminals(ws.data.clientKey);
 			},
 			async message(ws, message) {
 				const raw = typeof message === "string" ? message : message.toString();
@@ -358,37 +334,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 					if (ws.send(JSON.stringify({ id: requestId, ok: false, error })) === 0) ws.close();
 				}
 			},
-			drain(ws) {
-				if (sockets.get(ws.data.clientKey) !== ws) return;
-				terminalBackpressured.delete(ws.data.clientKey);
-				resumeClientTerminals(ws.data.clientKey);
-			},
 			close(ws) {
 				if (stopping) return;
 				const { clientKey } = ws.data;
 				if (sockets.get(clientKey) === ws) {
 					sockets.delete(clientKey);
-					terminalBackpressured.delete(clientKey);
 				}
 				if (sockets.has(clientKey) || reapTimers.has(clientKey)) return;
 				armClientReap(clientKey);
 			},
 		},
-	});
-
-	setTerminalPublisher((clientKey, channel, data) => {
-		if (terminalBackpressured.has(clientKey)) return "unavailable";
-		const ws = sockets.get(clientKey);
-		if (!ws) return "unavailable";
-		try {
-			const delivery = terminalDeliveryForSendStatus(ws.send(JSON.stringify({ channel, data })));
-			if (delivery !== "delivered") terminalBackpressured.add(clientKey);
-			return delivery;
-		} catch {
-			terminalBackpressured.add(clientKey);
-			ws.close();
-			return "unavailable";
-		}
 	});
 
 	setSkillAdmissionResolver((workspaceId) => {
@@ -410,14 +365,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		server.publish(
 			WS_CHANNELS.projectUpdated,
 			JSON.stringify({ channel: WS_CHANNELS.projectUpdated, data: project }),
-		);
-	});
-
-	setTerminalTabsPublisher((workspaceId, tabs) => {
-		const data: TerminalTabsPush = { workspaceId, tabs };
-		server.publish(
-			WS_CHANNELS.terminalTabs,
-			JSON.stringify({ channel: WS_CHANNELS.terminalTabs, data }),
 		);
 	});
 
@@ -490,7 +437,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		);
 	});
 
-	reviveTerminalSessions();
 
 	if (projectPath) {
 		try {
@@ -514,10 +460,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			for (const timer of reapTimers.values()) clearTimeout(timer);
 			reapTimers.clear();
 			sockets.clear();
-			terminalBackpressured.clear();
 			requestReplays.clear();
-			persistTerminalSessions();
-			closeAllTerminals();
 			setSettingsPublisher(null);
 			server.stop(true);
 		},

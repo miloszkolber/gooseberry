@@ -15,7 +15,6 @@
 	--text-link: var(--info); /* global.css `a {}` is the only consumer; no component styles a bare link */
 	--container-workspace-bg: var(--background); /* the app surface, and with it the opened-document canvas — a document reads as part of the workspace (Monaco's EDITOR_THEME, the markdown preview, the chat column, the tab strip) */
 	--container-sidebar-bg: var(--sidebar);
-	--container-terminal-bg: var(--sidebar);
 	--container-header-bg: var(--header);
 	--container-content-bg: var(--content); /* the recessed read-a-diff/read-code canvas, NOT the document canvas (that is workspace): the Changes diff (Monaco THEME), rendered diffs, Shiki code blocks, and the center-column backdrop behind them */
 	--container-elevated-bg: var(--elevated); /* every raised surface: dialogs, popovers, menus, toasts, cards, code blocks */
@@ -54,7 +53,7 @@
 	--selection-text: var(--selection-foreground, inherit); /* nullable in the manifest (high contrast keeps the native foreground) */
 	--selection-bg: var(--selection); /* native ::selection in global.css; not a utility */
 	--editor-selection-bg: var(--editor-selection);
-	--editor-selection-text: var(--editor-selection-foreground); /* read by Monaco and xterm through getComputedStyle; a utility would be dead weight */
+	--editor-selection-text: var(--editor-selection-foreground); /* read by Monaco through getComputedStyle; a utility would be dead weight */
 }
 
 /* Appearance-level effects. The theme engine stamps `data-theme-appearance` before React mounts, so
@@ -83,7 +82,6 @@
 	--color-text-on-primary: var(--text-on-primary);
 	--color-container-workspace-bg: var(--container-workspace-bg);
 	--color-container-sidebar-bg: var(--container-sidebar-bg);
-	--color-container-terminal-bg: var(--container-terminal-bg);
 	--color-container-header-bg: var(--container-header-bg);
 	--color-container-content-bg: var(--container-content-bg);
 	--color-container-elevated-bg: var(--container-elevated-bg);

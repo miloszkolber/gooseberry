@@ -35,4 +35,4 @@ scripts/          development and controller image helpers
 
 The separate [`../mewa-browser/`](../mewa-browser/) service keeps Chromium away from Pi credentials and repository mounts.
 
-In Compose, `MEWA_WORKSPACE_PATH` is mounted at its exact host path and must be listed in `MEWA_MOUNT_ROOTS`. Files, Git, and worktrees use that local mount. Pi bash and browser terminals use the controller's read-only SSH key and known-hosts mounts to reach the configured host account.
+In Compose, `MEWA_WORKSPACE_PATH` is mounted at its exact host path and must be listed in `MEWA_MOUNT_ROOTS`. Files, Git, and worktrees use that local mount. Pi bash uses the controller's read-only SSH key and known-hosts mounts to reach the configured host account.

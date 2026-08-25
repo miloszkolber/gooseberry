@@ -36,10 +36,6 @@ function normalizeConfig(value: AppConfig): AppConfig {
 	return {
 		...value,
 		theme: typeof value.theme === "string" ? value.theme : DEFAULT_CONFIG.theme,
-		terminalReplayKb:
-			typeof value.terminalReplayKb === "number" && Number.isFinite(value.terminalReplayKb)
-				? value.terminalReplayKb
-				: DEFAULT_CONFIG.terminalReplayKb,
 		piProfile: normalizeProfileSettings(value.piProfile),
 	};
 }

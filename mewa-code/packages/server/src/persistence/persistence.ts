@@ -95,21 +95,6 @@ function isWorkspaceList(value: unknown): value is Workspace[] {
 	);
 }
 
-function isTerminalSessions(value: unknown): value is PersistedTerminalSessions {
-	if (!isRecord(value)) return false;
-	return Object.values(value).every(
-		(tabs) =>
-			Array.isArray(tabs) &&
-			tabs.every(
-				(tab) =>
-					isRecord(tab) &&
-					typeof tab.tabKey === "string" &&
-					(tab.title === undefined || typeof tab.title === "string") &&
-					(tab.recorded === undefined || typeof tab.recorded === "string"),
-			),
-	);
-}
-
 function readJsonFile<T>(file: string, validate: JsonValidator<T>): ReadJsonResult<T> | null {
 	try {
 		const stats = statSync(file);
@@ -209,22 +194,6 @@ export function saveWorkspaces(workspaces: Workspace[]): void {
 	writeJson("workspaces.json", workspaces, isWorkspaceList);
 }
 
-export interface PersistedTerminalTab {
-	tabKey: string;
-	title: string;
-	recorded?: string;
-}
-
-export type PersistedTerminalSessions = Record<string, PersistedTerminalTab[]>;
-
-export function loadTerminalSessions(): PersistedTerminalSessions {
-	return readJson<PersistedTerminalSessions>("terminals.json", {}, isTerminalSessions);
-}
-
-export function saveTerminalSessions(sessions: PersistedTerminalSessions): void {
-	writeJson("terminals.json", sessions, isTerminalSessions);
-}
-
 export function loadConfig(): AppConfig {
 	const raw = readJson<Record<string, unknown>>("config.json", {}, isRecord);
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return structuredClone(DEFAULT_CONFIG);
@@ -251,10 +220,6 @@ export function loadConfig(): AppConfig {
 	return {
 		...extensions,
 		theme: typeof value.theme === "string" ? value.theme : DEFAULT_CONFIG.theme,
-		terminalReplayKb:
-			typeof value.terminalReplayKb === "number" && Number.isFinite(value.terminalReplayKb)
-				? value.terminalReplayKb
-				: DEFAULT_CONFIG.terminalReplayKb,
 		piProfile,
 	};
 }

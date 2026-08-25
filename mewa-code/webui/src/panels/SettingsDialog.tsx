@@ -4,7 +4,6 @@ import {
 	Palette,
 	PlugZap,
 	SlidersHorizontal,
-	SquareTerminal,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib";
@@ -12,13 +11,11 @@ import { SettingsSection, useAppStore } from "@/store";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { PiProfileSettings } from "./PiProfileSettings";
 import { ProvidersSettings } from "./ProvidersSettings";
-import { TerminalSettings } from "./TerminalSettings";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
 	{ id: SettingsSection.Providers, label: "Providers", icon: KeyRound },
 	{ id: SettingsSection.Extensions, label: "Pi profile", icon: PlugZap },
 	{ id: SettingsSection.Appearance, label: "Appearance", icon: Palette },
-	{ id: SettingsSection.Terminal, label: "Terminal", icon: SquareTerminal },
 ];
 const SOON: { label: string; icon: LucideIcon }[] = [{ label: "General", icon: SlidersHorizontal }];
 
@@ -86,8 +83,6 @@ export function SettingsDialog() {
 							<ProvidersSettings />
 						) : section === SettingsSection.Extensions ? (
 							<PiProfileSettings />
-						) : section === SettingsSection.Terminal ? (
-							<TerminalSettings />
 						) : (
 							<AppearanceSettings />
 						)}

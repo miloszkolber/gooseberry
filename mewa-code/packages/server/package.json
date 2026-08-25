@@ -22,7 +22,6 @@
 		"@mewa-code/shared": "workspace:*",
 		"@signetai/connector-pi": "0.157.3",
 		"@stroncium/procfs": "1.2.1",
-		"bun-pty": "0.4.10",
 		"pi-web-access": "0.13.0",
 		"trash": "10.1.1",
 		"typebox": "catalog:"

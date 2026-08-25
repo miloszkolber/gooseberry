@@ -75,25 +75,6 @@ afterEach(() => {
 });
 
 describe("WsTransport channel replay", () => {
-	test("does not replay a stale terminal takeover to a late terminal body", () => {
-		const transport = new WsTransport({ url: "ws://localhost:24242/ws" });
-		transport.connect();
-		const socket = TestWebSocket.instances[0];
-		socket?.open();
-		socket?.message(
-			JSON.stringify({
-				channel: WS_CHANNELS.terminalDetached,
-				data: { workspaceId: "w1", tabKey: "terminal-1" },
-			}),
-		);
-
-		const received: unknown[] = [];
-		transport.subscribe(WS_CHANNELS.terminalDetached, (payload) => received.push(payload));
-		expect(received).toEqual([]);
-	});
-});
-
-describe("controller token bootstrap", () => {
 	test("captures a fragment token, stores it for the tab, and removes the address fragment", () => {
 		const values = new Map<string, string>();
 		const addresses: string[] = [];

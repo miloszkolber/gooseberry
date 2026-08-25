@@ -45,7 +45,7 @@ export function WelcomePanel() {
 			primary
 			icon={House}
 			title="Work in project folder"
-			subtitle="Chats, changes, and terminals run directly in your project folder — no isolation."
+			subtitle="Chats and changes run directly in your project folder — no isolation."
 			onClick={() => void enterDefaultWorkspace(projectId)}
 		/>
 	);

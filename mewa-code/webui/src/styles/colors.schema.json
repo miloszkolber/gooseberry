@@ -62,7 +62,7 @@
 					},
 					"publish": {
 						"type": "boolean",
-						"description": "true → a Tailwind utility. false → read directly by Monaco/xterm/global.css."
+						"description": "true → a Tailwind utility. false → read directly by Monaco/global.css."
 					},
 					"note": {
 						"type": "string"

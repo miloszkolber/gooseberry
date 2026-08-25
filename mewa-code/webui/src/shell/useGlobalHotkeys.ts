@@ -2,16 +2,11 @@ import { useEffect, useRef } from "react";
 import { hasPlatformModifier } from "../lib";
 import { selectHistoryTarget, useAppStore } from "../store";
 
-const TERMINAL_ROOT_SELECTOR = ".xterm";
 
 type GlobalHotkeyActions = {
 	onProjects: () => void;
 	onWorkspace?: () => void;
 };
-
-function isInTerminal(target: EventTarget | null): boolean {
-	return target instanceof Element && target.closest(TERMINAL_ROOT_SELECTOR) !== null;
-}
 
 export function useGlobalHotkeys(actions: GlobalHotkeyActions): void {
 	const actionsRef = useRef(actions);
@@ -43,7 +38,6 @@ export function useGlobalHotkeys(actions: GlobalHotkeyActions): void {
 			) {
 				return;
 			}
-			if (isInTerminal(event.target)) return;
 			event.preventDefault();
 			event.stopPropagation();
 			const target = selectHistoryTarget(useAppStore.getState());

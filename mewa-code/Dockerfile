@@ -48,22 +48,17 @@ COPY packages/server/package.json packages/server/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN bun install --frozen-lockfile --production --filter '@mewa-code/server' \
     && rm -rf packages/server/node_modules/@mewa-code \
-    && mkdir -p /runtime/node_modules /runtime/pty \
+    && mkdir -p /runtime/node_modules \
     && cp -aL packages/server/node_modules/. /runtime/node_modules/ \
     && rm -rf /runtime/node_modules/.bin \
-	&& case "${TARGETARCH}" in \
-        amd64) cp packages/server/node_modules/bun-pty/rust-pty/target/release/librust_pty.so /runtime/pty/librust_pty.so ;; \
-        arm64) cp packages/server/node_modules/bun-pty/rust-pty/target/release/librust_pty_arm64.so /runtime/pty/librust_pty.so ;; \
-        *) echo "unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
 	&& mkdir -p /runtime/licenses \
-	&& for package in bun-pty pi-web-access; do \
+	&& for package in pi-web-access; do \
 		for legal in LICENSE NOTICE; do \
 			source="packages/server/node_modules/$${package}/$${legal}"; \
 			if [ -f "$${source}" ]; then cp -aL "$${source}" "/runtime/licenses/$${legal}-$${package}"; fi; \
 		done; \
 	done \
-	&& rm -rf /runtime/node_modules/bun-pty /runtime/node_modules/@mewa-code \
+	&& rm -rf /runtime/node_modules/@mewa-code \
 	&& rm -rf /runtime/node_modules/pi-web-access \
 	&& find /runtime/node_modules -type f \( -name '*.test.js' -o -name '*.test.mjs' -o -name '*.test.ts' \) -delete \
 	&& find /runtime/node_modules -type d \( \
@@ -94,12 +89,11 @@ ENV NODE_ENV=production \
     HOME=/home/bun \
     MEWA_CODE_DATA_DIR=/var/lib/mewa \
 	MEWA_CODE_STATIC_DIR=/app/web \
-	BUN_PTY_LIB=/usr/local/lib/mewa/librust_pty.so \
 	MEWA_CODE_BROWSER_EXTENSION_PATH=/app/extensions/mewa-browser.js \
 	MEWA_CODE_WEB_ACCESS_EXTENSION_PATH=/app/extensions/mewa-web-access.js
 
 WORKDIR /app
-RUN mkdir -p /app/extensions /var/lib/mewa /home/bun/.pi /workspace /usr/local/lib/mewa \
+RUN mkdir -p /app/extensions /var/lib/mewa /home/bun/.pi /workspace \
     && chown -R bun:bun /app /var/lib/mewa /home/bun/.pi /workspace
 
 COPY --from=build --chown=bun:bun /work/apps/controller/dist/index.js /app/mewa-code.js
@@ -108,7 +102,6 @@ COPY --from=build --chown=bun:bun /runtime/extensions/mewa-browser.js /app/exten
 COPY --from=build --chown=bun:bun /runtime/extensions/mewa-web-access.js /app/extensions/mewa-web-access.js
 COPY --from=production-dependencies /runtime/node_modules /app/node_modules
 COPY --from=production-dependencies /runtime/licenses /app/licenses
-COPY --from=production-dependencies /runtime/pty/librust_pty.so /usr/local/lib/mewa/librust_pty.so
 COPY scripts/check-controller-runtime.sh /tmp/check-controller-runtime.sh
 
 RUN bash /tmp/check-controller-runtime.sh /app \

@@ -38,7 +38,7 @@ export type ExistingWorktreeCandidate =
 export interface EditorInfo {
 	id: string;
 	label: string;
-	kind: "gui" | "terminal";
+	kind: "gui";
 }
 
 export type WorkspaceSkillChange = "none" | "detected" | "unknown";
@@ -209,7 +209,6 @@ export type ThemeId = string;
 
 export interface AppConfig {
 	theme: ThemeId;
-	terminalReplayKb: number;
 	piProfile?: PiProfileSettings;
 }
 
@@ -217,7 +216,6 @@ export type AppConfigPatch = Omit<Partial<AppConfig>, "piProfile"> & {
 	piProfile?: PiProfileSettingsPatch;
 };
 
-export const TERMINAL_REPLAY_KB = { min: 0, max: 1024, default: 64 } as const;
 
 export const DEFAULT_PI_PROFILE_SETTINGS: Required<PiProfileSettings> = {
 	browser: true,
@@ -229,7 +227,6 @@ export const DEFAULT_PI_PROFILE_SETTINGS: Required<PiProfileSettings> = {
 
 export const DEFAULT_CONFIG = {
 	theme: "dark",
-	terminalReplayKb: TERMINAL_REPLAY_KB.default,
 	piProfile: DEFAULT_PI_PROFILE_SETTINGS,
 } satisfies AppConfig;
 

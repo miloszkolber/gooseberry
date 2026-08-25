@@ -30,8 +30,6 @@ beforeEach(() => {
 		activeTabByWorkspace: { w1: null },
 		previewTabByWorkspace: {},
 		closedChatsByWorkspace: {},
-		terminalsByWorkspace: {},
-		activeTerminalByWorkspace: {},
 		activeActivityByWorkspace: {},
 		sessions: {},
 		deletedSessionsByWorkspace: {},
@@ -69,17 +67,6 @@ test("activity requests select the fixed activity panel", () => {
 		workspaceId: "w1",
 		path: "src/a.ts",
 	});
-});
-
-test("terminals are local fixed activity tabs", () => {
-	useAppStore.getState().addTerminal("w1");
-	const first = useAppStore.getState().terminalsByWorkspace.w1?.[0];
-	if (!first) throw new Error("terminal was not created");
-	useAppStore.getState().addTerminal("w1");
-	useAppStore.getState().setActiveTerminalTab("w1", first.tabKey);
-	expect(useAppStore.getState().activeTerminalByWorkspace.w1).toBe(first.tabKey);
-	useAppStore.getState().closeTerminalTab("w1", first.tabKey);
-	expect(useAppStore.getState().terminalsByWorkspace.w1).toHaveLength(1);
 });
 
 test("route chat activation advances the local navigation tick", () => {

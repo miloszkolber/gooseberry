@@ -169,11 +169,6 @@ export function ProjectTree() {
 	};
 
 	const openWorkspaceIn = (workspace: Workspace, editor: EditorInfo) => {
-		if (editor.kind === "terminal") {
-			useAppStore.getState().activateWorkspace(workspace);
-			useAppStore.getState().addTerminal(workspace.id, `${editor.id} .`);
-			return;
-		}
 		void getTransport()
 			.request("workspace.openIn", { id: workspace.id, editor: editor.id })
 			.catch((err) => toast.error(errorText(err, `Failed to open in ${editor.label}`)));
@@ -605,14 +600,14 @@ function WorkspaceRow({
 					description={
 						isExternal ? (
 							<>
-								Removes this workspace's Mewa Code chats and terminals. The existing checkout,
+								Removes this workspace's Mewa Code chats. The existing checkout,
 								files, and branch{" "}
 								<span className="tr-text-emphasis text-text-default">{workspace.branch}</span> stay
 								untouched.
 							</>
 						) : (
 							<>
-								Deletes this workspace's chats, terminals, and its worktree. The git branch{" "}
+								Deletes this workspace's chats and its worktree. The git branch{" "}
 								<span className="tr-text-emphasis text-text-default">{workspace.branch}</span> is
 								kept.
 							</>

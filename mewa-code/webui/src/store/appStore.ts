@@ -14,7 +14,6 @@ import type {
 	SessionStats,
 	SessionSummary,
 	SlashCommandInfo,
-	TerminalTabInfo,
 	ThemeId,
 	ThinkingLevel,
 	UserMessage,
@@ -86,7 +85,7 @@ export interface DiffTab {
 	loadedTick?: number;
 }
 export type EditorTab = FileTab | ChatTab | DiffTab;
-export type WorkspaceActivity = "files" | "changes" | "terminal";
+export type WorkspaceActivity = "files" | "changes";
 
 export function chatTabId(workspaceId: string, sessionId: string): string {
 	return tupleKey("chat", workspaceId, sessionId);
@@ -138,7 +137,6 @@ export const SettingsSection = {
 	Providers: "providers",
 	Extensions: "extensions",
 	Appearance: "appearance",
-	Terminal: "terminal",
 } as const;
 export type SettingsSection = (typeof SettingsSection)[keyof typeof SettingsSection];
 
@@ -150,14 +148,6 @@ export interface Toast {
 }
 
 const MAX_TOASTS = 5;
-
-export interface TerminalTab {
-	tabKey: string;
-	workspaceId: string;
-	title: string;
-	initialCommand?: string;
-	attachPending?: true;
-}
 
 export interface ClosedChat {
 	sessionId: string;
@@ -526,8 +516,6 @@ interface AppState {
 	navTickByWorkspace: Record<string, number>;
 	closedChatsByWorkspace: Record<string, ClosedChat[]>;
 	deletedSessionsByWorkspace: Record<string, Record<string, true>>;
-	terminalsByWorkspace: Record<string, TerminalTab[]>;
-	activeTerminalByWorkspace: Record<string, string | null>;
 	activeActivityByWorkspace: Record<string, WorkspaceActivity>;
 	sessions: Record<string, SessionRuntime>;
 	models: WireModel[];
@@ -549,7 +537,6 @@ interface AppState {
 	settingsSection: SettingsSection;
 	piProfile: PiProfileDescriptor | null;
 	theme: ThemeId;
-	terminalReplayKb: number;
 	toasts: Toast[];
 	setStatus: (status: ConnectionStatus) => void;
 	installWelcomeSnapshot: (
@@ -603,12 +590,6 @@ interface AppState {
 		loadedTarget: string,
 	) => void;
 	clearWorkspaceTabs: (workspaceId: string) => void;
-	addTerminal: (workspaceId: string, initialCommand?: string) => void;
-	setWorkspaceTerminals: (workspaceId: string, tabs: TerminalTabInfo[]) => void;
-	settleTerminalAttach: (workspaceId: string, tabKey: string) => void;
-	consumeTerminalInitialCommand: (workspaceId: string, tabKey: string) => void;
-	closeTerminalTab: (workspaceId: string, tabKey: string) => void;
-	setActiveTerminalTab: (workspaceId: string, tabKey: string) => void;
 	setActiveActivity: (workspaceId: string, activity: WorkspaceActivity) => void;
 	openChatSession: (
 		workspaceId: string,
@@ -681,7 +662,6 @@ function sortProjects(projects: Project[]): Project[] {
 function configPatch(config: AppConfig) {
 	return {
 		theme: config.theme,
-		terminalReplayKb: config.terminalReplayKb,
 	};
 }
 
@@ -901,13 +881,6 @@ function foldLoginFrame(state: LoginState, frame: LoginFrame): LoginState {
 	}
 }
 
-function nextTerminalTitle(list: TerminalTab[]): string {
-	const used = list
-		.map((tab) => Number.parseInt(/^Terminal (\d+)$/.exec(tab.title)?.[1] ?? "", 10))
-		.filter((n) => Number.isInteger(n));
-	return `Terminal ${Math.max(0, ...used) + 1}`;
-}
-
 export const useAppStore = create<AppState>((set, get) => ({
 	status: "connecting",
 	connectionGeneration: 0,
@@ -928,8 +901,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	navTickByWorkspace: {},
 	closedChatsByWorkspace: {},
 	deletedSessionsByWorkspace: Object.create(null) as Record<string, Record<string, true>>,
-	terminalsByWorkspace: {},
-	activeTerminalByWorkspace: {},
 	activeActivityByWorkspace: {},
 	sessions: {},
 	models: [],
@@ -949,7 +920,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	settingsSection: SettingsSection.Providers,
 	piProfile: null,
 	theme: DEFAULT_CONFIG.theme,
-	terminalReplayKb: DEFAULT_CONFIG.terminalReplayKb,
 	toasts: [],
 	setStatus: (status) =>
 		set((state) => ({
@@ -1353,113 +1323,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 				previewTabByWorkspace: omitKey(s.previewTabByWorkspace, workspaceId),
 				navTickByWorkspace: omitKey(s.navTickByWorkspace, workspaceId),
 				closedChatsByWorkspace: omitKey(s.closedChatsByWorkspace, workspaceId),
-				terminalsByWorkspace: omitKey(s.terminalsByWorkspace, workspaceId),
-				activeTerminalByWorkspace: omitKey(s.activeTerminalByWorkspace, workspaceId),
 				activeActivityByWorkspace: omitKey(s.activeActivityByWorkspace, workspaceId),
 				sessions,
 				skillsSyncedTickBySession,
 			};
 		}),
-	addTerminal: (workspaceId, initialCommand) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const list = s.terminalsByWorkspace[workspaceId] ?? [];
-			const tabKey = randomId("terminal");
-			const tab: TerminalTab = {
-				tabKey,
-				workspaceId,
-				title: nextTerminalTitle(list),
-				attachPending: true,
-				...(initialCommand ? { initialCommand } : {}),
-			};
-			return {
-				terminalsByWorkspace: { ...s.terminalsByWorkspace, [workspaceId]: [...list, tab] },
-				activeTerminalByWorkspace: { ...s.activeTerminalByWorkspace, [workspaceId]: tabKey },
-			};
-		}),
-	setWorkspaceTerminals: (workspaceId, tabs) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const local = s.terminalsByWorkspace[workspaceId] ?? [];
-			const known = new Set(tabs.map((tab) => tab.tabKey));
-			const pending = local.filter((tab) => !known.has(tab.tabKey) && tab.attachPending);
-			const merged: TerminalTab[] = [
-				...tabs.map((tab) => {
-					const existing = local.find((candidate) => candidate.tabKey === tab.tabKey);
-					return {
-						tabKey: tab.tabKey,
-						workspaceId,
-						title: tab.title,
-						...(existing?.initialCommand ? { initialCommand: existing.initialCommand } : {}),
-					};
-				}),
-				...pending,
-			];
-			const active = s.activeTerminalByWorkspace[workspaceId] ?? null;
-			const activeSurvives = merged.some((tab) => tab.tabKey === active);
-			return {
-				terminalsByWorkspace: { ...s.terminalsByWorkspace, [workspaceId]: merged },
-				activeTerminalByWorkspace: {
-					...s.activeTerminalByWorkspace,
-					[workspaceId]: activeSurvives ? active : (merged.at(-1)?.tabKey ?? null),
-				},
-			};
-		}),
-	settleTerminalAttach: (workspaceId, tabKey) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const list = s.terminalsByWorkspace[workspaceId] ?? [];
-			if (!list.some((t) => t.tabKey === tabKey && t.attachPending)) return s;
-			return {
-				terminalsByWorkspace: {
-					...s.terminalsByWorkspace,
-					[workspaceId]: list.map(({ attachPending, ...rest }) =>
-						rest.tabKey === tabKey
-							? rest
-							: { ...rest, ...(attachPending ? { attachPending } : {}) },
-					),
-				},
-			};
-		}),
-	consumeTerminalInitialCommand: (workspaceId, tabKey) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const list = s.terminalsByWorkspace[workspaceId] ?? [];
-			if (!list.some((t) => t.tabKey === tabKey && t.initialCommand)) return s;
-			return {
-				terminalsByWorkspace: {
-					...s.terminalsByWorkspace,
-					[workspaceId]: list.map(({ initialCommand, ...rest }) =>
-						rest.tabKey === tabKey
-							? rest
-							: { ...rest, ...(initialCommand ? { initialCommand } : {}) },
-					),
-				},
-			};
-		}),
-	closeTerminalTab: (workspaceId, tabKey) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const list = (s.terminalsByWorkspace[workspaceId] ?? []).filter((t) => t.tabKey !== tabKey);
-			const wasActive = s.activeTerminalByWorkspace[workspaceId] === tabKey;
-			return {
-				terminalsByWorkspace: { ...s.terminalsByWorkspace, [workspaceId]: list },
-				activeTerminalByWorkspace: {
-					...s.activeTerminalByWorkspace,
-					[workspaceId]: wasActive
-						? (list.at(-1)?.tabKey ?? null)
-						: (s.activeTerminalByWorkspace[workspaceId] ?? null),
-				},
-			};
-		}),
-	setActiveTerminalTab: (workspaceId, tabKey) =>
-		set((s) =>
-			s.removedWorkspaceIds[workspaceId]
-				? {}
-				: {
-						activeTerminalByWorkspace: { ...s.activeTerminalByWorkspace, [workspaceId]: tabKey },
-					},
-		),
 	setActiveActivity: (workspaceId, activity) =>
 		set((s) =>
 			s.removedWorkspaceIds[workspaceId]

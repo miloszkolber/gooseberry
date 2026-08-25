@@ -159,9 +159,6 @@ export function remoteBashCommand(command: string, cwd: string): string {
 	return `bash -lc ${shellQuote(`cd -- ${shellQuote(cwd)} && ${command}`)}`;
 }
 
-export function remoteTerminalCommand(cwd: string): string {
-	return remoteBashCommand("exec bash -l", cwd);
-}
 
 export function buildSshArgs(
 	config: SshConfig,

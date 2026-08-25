@@ -37,33 +37,7 @@ import type {
 	WireModel,
 } from "./piProtocol";
 
-export interface TerminalDataPush {
-	id: string;
-	data: string;
-	truncated?: boolean;
-}
-
-export interface TerminalExitPush {
-	id: string;
-	exitCode: number;
-}
-
-export interface TerminalDetachedPush {
-	workspaceId: string;
-	tabKey: string;
-}
-
-export interface TerminalTabInfo {
-	tabKey: string;
-	title: string;
-}
-
-export interface TerminalTabsPush {
-	workspaceId: string;
-	tabs: TerminalTabInfo[];
-}
-
-export const PROTOCOL_VERSION = 49;
+export const PROTOCOL_VERSION = 50;
 
 export interface ServerWelcome {
 	protocolVersion: number;
@@ -111,11 +85,6 @@ export const WS_METHODS = {
 	gitStatus: "git.status",
 	gitDiffFile: "git.diffFile",
 	gitListCommits: "git.listCommits",
-	terminalAttach: "terminal.attach",
-	terminalList: "terminal.list",
-	terminalWrite: "terminal.write",
-	terminalResize: "terminal.resize",
-	terminalClose: "terminal.close",
 	dialogSelectDirectory: "dialog.selectDirectory",
 	skillList: "skill.list",
 	skillsState: "skills.state",
@@ -161,10 +130,6 @@ export const WS_CHANNELS = {
 	piExtensionUi: "pi.extensionUi",
 	sessionDeleted: "session.deleted",
 	providerLogin: "provider.login",
-	terminalData: "terminal.data",
-	terminalExit: "terminal.exit",
-	terminalDetached: "terminal.detached",
-	terminalTabs: "terminal.tabs",
 	workspaceCreated: "workspace.created",
 	workspaceUpdated: "workspace.updated",
 	workspaceRemoved: "workspace.removed",
@@ -261,20 +226,6 @@ export interface WsMethodMap {
 		result: { original: string; modified: string };
 	};
 	"git.listCommits": { params: { workspaceId: string }; result: { commits: GitCommit[] } };
-	"terminal.attach": {
-		params: { workspaceId: string; tabKey: string; title?: string; cols?: number; rows?: number };
-		result: { id: string; created: boolean; replay?: string };
-	};
-	"terminal.list": {
-		params: { workspaceId: string };
-		result: { tabs: TerminalTabInfo[] };
-	};
-	"terminal.write": { params: { id: string; data: string }; result: Ack };
-	"terminal.resize": { params: { id: string; cols: number; rows: number }; result: Ack };
-	"terminal.close": {
-		params: { workspaceId: string; tabKey: string; force?: boolean };
-		result: { closed: boolean; busy: boolean };
-	};
 	"dialog.selectDirectory": { params: Record<string, never>; result: { path: string | null } };
 	"skill.list": { params: { projectId: string }; result: SlashCommandInfo[] };
 	"skills.state": { params: { workspaceId: string }; result: SkillCatalogEntry[] };

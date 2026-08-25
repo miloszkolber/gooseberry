@@ -6,11 +6,9 @@ import { DEFAULT_CONFIG, type Project, type Workspace } from "@mewa-code/contrac
 import {
 	loadConfig,
 	loadProjects,
-	loadTerminalSessions,
 	loadWorkspaces,
 	saveConfig,
 	saveProjects,
-	saveTerminalSessions,
 	saveWorkspaces,
 } from "./persistence";
 
@@ -62,12 +60,6 @@ test("each core JSON store replaces in place and recovers a valid backup", () =>
 	writeFileSync(join(root, "workspaces.json"), "[] trailing");
 	expect(loadWorkspaces()).toEqual(firstWorkspace);
 
-	const firstTerminal = { "workspace-1": [{ tabKey: "tab-1", title: "First" }] };
-	const secondTerminal = { "workspace-1": [{ tabKey: "tab-2", title: "Second" }] };
-	saveTerminalSessions(firstTerminal);
-	saveTerminalSessions(secondTerminal);
-	writeFileSync(join(root, "terminals.json"), "null");
-	expect(loadTerminalSessions()).toEqual(firstTerminal);
 
 	saveConfig({ ...DEFAULT_CONFIG, theme: "first" });
 	saveConfig({ ...DEFAULT_CONFIG, theme: "second" });

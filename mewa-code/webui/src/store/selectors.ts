@@ -1,6 +1,6 @@
 import type { GitDiffScope, Project, WireModel, Workspace } from "@mewa-code/contracts";
 import { isAbsolutePath, normalizePath } from "../lib";
-import type { ClosedChat, EditorTab, RouteChatTarget, TerminalTab } from "./appStore";
+import type { ClosedChat, EditorTab, RouteChatTarget } from "./appStore";
 
 interface ConnectionGenerationState {
 	status: string;
@@ -216,24 +216,6 @@ export function selectSkillsStale(
 		(state.skillChangeTickByWorkspace[workspaceId] ?? 0) >
 		(state.skillsSyncedTickBySession[sessionId] ?? 0)
 	);
-}
-
-export interface TerminalState {
-	activeWorkspaceId: string | null;
-	terminalsByWorkspace: Record<string, TerminalTab[]>;
-	activeTerminalByWorkspace: Record<string, string | null>;
-}
-
-const NO_TERMINALS: TerminalTab[] = [];
-
-export function selectWorkspaceTerminals(state: TerminalState): TerminalTab[] {
-	if (!state.activeWorkspaceId) return NO_TERMINALS;
-	return state.terminalsByWorkspace[state.activeWorkspaceId] ?? NO_TERMINALS;
-}
-
-export function selectActiveTerminalId(state: TerminalState): string | null {
-	if (!state.activeWorkspaceId) return null;
-	return state.activeTerminalByWorkspace[state.activeWorkspaceId] ?? null;
 }
 
 export function selectLastOpenChatSession(

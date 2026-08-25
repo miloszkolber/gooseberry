@@ -24,7 +24,6 @@ const JETBRAINS_CANDIDATES: { label: string; bin: string }[] = [
 
 const JETBRAINS_ID = "jetbrains";
 
-const TERMINAL_CANDIDATE = { id: "vim", label: "Vim", bin: "vim" };
 
 export type WhichFn = (bin: string) => string | null;
 
@@ -44,9 +43,6 @@ export function listAvailableEditors(which: WhichFn = defaultWhich): EditorInfo[
 	}
 	const jetbrains = JETBRAINS_CANDIDATES.find((c) => which(c.bin));
 	if (jetbrains) editors.push({ id: JETBRAINS_ID, label: jetbrains.label, kind: "gui" });
-	if (which(TERMINAL_CANDIDATE.bin)) {
-		editors.push({ id: TERMINAL_CANDIDATE.id, label: TERMINAL_CANDIDATE.label, kind: "terminal" });
-	}
 	return editors;
 }
 
