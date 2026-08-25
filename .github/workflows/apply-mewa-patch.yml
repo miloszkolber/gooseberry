@@ -38,9 +38,9 @@ jobs:
           rm -f .github/.mewa-patch-* .github/workflows/apply-mewa-patch.yml
           git add -A
 
-      - name: Install locked dependencies
+      - name: Refresh locked dependencies
         working-directory: mewa-code
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Validate controller and Web UI
         working-directory: mewa-code
@@ -76,6 +76,7 @@ jobs:
       - name: Commit validated rewrite
         run: |
           set -euo pipefail
+          git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "refactor: simplify the Mewa product shell"
