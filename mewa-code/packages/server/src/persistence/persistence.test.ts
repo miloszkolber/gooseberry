@@ -60,7 +60,6 @@ test("each core JSON store replaces in place and recovers a valid backup", () =>
 	writeFileSync(join(root, "workspaces.json"), "[] trailing");
 	expect(loadWorkspaces()).toEqual(firstWorkspace);
 
-
 	saveConfig({ ...DEFAULT_CONFIG, theme: "first" });
 	saveConfig({ ...DEFAULT_CONFIG, theme: "second" });
 	writeFileSync(join(root, "config.json"), "not json");

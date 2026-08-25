@@ -365,14 +365,7 @@ export function validate(t: Typography): string[] {
 	for (const { id, style } of allStyles(t)) {
 		if (!(style.fontFamily in (t.fontFamilies ?? {}))) continue;
 		const isMono = resolveFamily(t, style.fontFamily).kind === "monospace";
-		if (isMono && !isCodeStyleId(t, id))
-			fail(`${id}: monospace family on a non-code semantic style`);
 		if (!isMono && isCodeStyleId(t, id)) fail(`${id}: code style must use a monospace family`);
-	}
-	if (isRef(t.rootStyle) && rawStyle(t, t.rootStyle.$ref)) {
-		const rootFamily = resolveStyle(t, t.rootStyle.$ref).fontFamily;
-		if (rootFamily in (t.fontFamilies ?? {}) && resolveFamily(t, rootFamily).kind === "monospace")
-			fail("rootStyle: the document base must be proportional");
 	}
 
 	if (!(PROSE_STRONG_WEIGHT in (t.fontWeights ?? {})))

@@ -24,11 +24,11 @@ The branch already provides several pieces worth keeping:
 The current foundation still includes behavior outside the baseline:
 
 - Web UI terminal and PTY runtime have been removed; remaining work should not reintroduce terminal surfaces.
-- Monaco editor/save behavior and workbench/layout concepts;
+- Monaco and file editing have been removed; the remaining workspace shell still needs to collapse into the focused project/session layout;
 - branch/worktree management controls rather than observational Git projection;
 - repository/workspace identity coupled too tightly to one working tree;
-- theme registry/settings and multiple font families;
-- skills and Pi-profile management UI;
+- theme registry/settings and extra font families have been removed; the UI now follows the system color scheme with one bundled mono face;
+- skills and Pi-profile controls have been removed from active chat/settings; inherited worktree creation code still carries obsolete controls and will be deleted with worktree management;
 - configurable toggles for capabilities that should be part of the fixed Mewa profile;
 - direct provider/model IDs in the current subagent tool rather than typed roles and model groups;
 - a single generic child role rather than scout/builder/strategist/auditor policy;

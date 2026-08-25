@@ -1,63 +1,66 @@
 # Mewa Code
 
-Mewa Code is a focused web interface for the Pi Coding Agent.
+Mewa Code is a focused Web UI and ACP host for the Pi Coding Agent.
 
-Read these files first:
+Read these files before changing the product:
 
-1. `docs/product-baseline.md` is the canonical product baseline.
-2. `docs/foundation-inventory.md` inventories the imported implementation and its coupling.
+1. `docs/product-baseline.md` is the canonical product definition.
+2. `docs/architecture.md` defines the intended boundaries.
+3. `docs/current-state.md` records implementation reality and remaining conflicts.
+4. `docs/implementation-plan.md` defines the ordered rewrite phases.
 
-Product and engineering documentation belongs under `docs/`. Runtime prompt assets may remain beside their loaders.
+Product and engineering documentation belongs under `docs/`. Runtime prompt text may remain beside the small extension or loader that owns it.
 
 ## Current priority
 
-Simplify the ThinkRail-derived foundation. Delete features, dependencies, tests, and documents outside the product baseline.
+Simplify the ThinkRail-derived foundation into the baseline. Delete features, dependencies, tests, protocol methods, state, and documents outside the retained product.
 
-Do not preserve code because an inherited spec or test describes it. Update or delete that material with its feature.
-
-Keep changes aligned with the baseline implementation order. Avoid unrelated redesigns while removing a feature.
+Do not preserve code because an inherited abstraction or test describes it. Update or delete that material with its feature. Prefer a focused vertical slice over adapting a generic workbench.
 
 ## Pi boundary
 
 - Run Pi in-process through its public SDK.
-- Keep Pi authoritative for prompts, tools, providers, models, settings, extensions, retries, compaction, usage, cost, and JSONL sessions.
-- Do not build duplicate provider, model, credential, session, or usage registries.
-- Ship the documented Mewa Pi profile with browser QA, web search, memory, goals, subagents, and the protected-state guard.
-- Keep defaults visible and preserve explicit Pi user settings.
-- Integrate each retained Pi tool with a clear web UI renderer or control.
-- Keep the complete Pi package family on one exact stable version.
-- Never bundle provider runtime code into the browser client.
+- Keep Pi authoritative for providers, models, credentials, normal prompts and tools, explicit user settings, retry, compaction, project trust, usage/cost, and canonical JSONL sessions.
+- Do not build competing provider, model, credential, session, usage, or tool registries.
+- Push Pi softly through small SDK extensions rather than patching its core behavior.
+- Keep the complete Pi package family on one exact stable version and automate atomic updates.
+- Never bundle provider runtime implementations into the browser client.
 
 ## Product boundary
 
-- Treat a local Git repository as a project.
-- Use the repository's normal working tree by default.
-- Keep optional worktrees, lightweight files, text editing, and terminals.
-- Group persistent Pi sessions by repository.
-- Keep Git behavior local. Do not add GitHub requirements.
-- Keep website, desktop, release, workflow, spec-graph, review, and forced worktree-first systems outside baseline scope.
-- Restore isolated `mewa-browser` behavior. Never run Chromium with Pi credentials or repository mounts.
-- Protect Pi and Mewa state roots from project-scoped browsing and tools.
+- A project is one or more admitted directory roots. It may contain zero, one, or several Git repositories.
+- Group persistent Pi sessions by project, not by one required Git repository or worktree.
+- Keep Git observational: discovery, branch/HEAD, status, changed files, and readable diffs. Agents change Git through Bash.
+- Keep a bounded read-only file tree and Shiki source preview. Do not add editing, Monaco, LSP, debugger, or collaborative IDE behavior.
+- Keep goals/tasks, structured subagents, multi-image turns, Pi-reported usage, isolated browser QA, web access, optional Signet, and provider authentication.
+- Keep Web UI and ACP. Do not add a TUI or Web UI terminal.
+- Use one bundled monospaced font and a simple system light/dark palette. Do not add theme or skills management UI.
+
+## SSH boundary
+
+- Preserve Pi's public `bash` schema and renderer while executing commands through the host SSH account.
+- SSH is infrastructure, not a model-facing tool.
+- Do not add SFTP or a generic remote-workspace framework.
+- Do not forward provider credentials, controller/browser tokens, or unrelated controller state to remote commands.
 
 ## Engineering approach
 
 - Prefer deletion over compatibility for unshipped inherited behavior.
-- Add an abstraction only when retained baseline behavior requires it.
-- Keep the browser-host interface as small as retained behavior permits.
-- Remove dead protocol methods, state, dependencies, and tests with their feature.
-- Preserve user data formats only when current Mewa users can have that data.
-- Keep source comments for non-obvious hazards. Put product decisions in the baseline.
-- Keep final Docker images non-root, read-only, multi-stage, and free of build or test tooling.
+- Add an abstraction only when retained behavior requires it.
+- Keep browser-host and ACP contracts as small as the baseline permits.
+- Remove dead protocol methods, state, dependencies, generated assets, and tests with their feature.
+- Preserve user data formats only when real current users may have that data.
+- Keep source comments for non-obvious hazards; keep product decisions in `docs/`.
+- Keep final Docker images non-root, read-only, multi-stage, and free of source, tests, compilers, caches, and unused native runtimes.
 
 ## Verification
 
 - Run the narrowest relevant check during development.
-- Test observable retained behavior and meaningful failures.
+- Test observable retained behavior and meaningful security/failure boundaries.
 - Delete tests that exist only for removed features.
-- Use broad end-to-end tests only for changes crossing the real browser-host boundary.
-- Do not require the inherited full suite for an isolated deletion.
-- Review the final diff for stale imports, scripts, documentation, protocol fields, and generated files.
+- Use broader integration/image checks for changes crossing Pi, SSH, browser, ACP, or persistence boundaries.
+- Before committing, review for stale imports, protocol fields, scripts, documentation, generated files, and dependency-lock entries.
 
 ## Current stack
 
-The imported foundation uses Bun, TypeScript, React, Zustand, and an in-process Pi SDK. Treat this as current state, not permanent product scope.
+The foundation uses Bun, TypeScript, React, Zustand, and Pi's in-process SDK. Treat these as current implementation choices, not permanent product scope.

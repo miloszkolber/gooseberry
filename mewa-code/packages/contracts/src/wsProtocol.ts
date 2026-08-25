@@ -3,7 +3,6 @@ import type {
 	AppConfigPatch,
 	BranchList,
 	DiffStats,
-	EditorInfo,
 	ExistingWorktreeCandidate,
 	FileNode,
 	GitCommit,
@@ -37,7 +36,7 @@ import type {
 	WireModel,
 } from "./piProtocol";
 
-export const PROTOCOL_VERSION = 50;
+export const PROTOCOL_VERSION = 51;
 
 export interface ServerWelcome {
 	protocolVersion: number;
@@ -74,14 +73,10 @@ export const WS_METHODS = {
 	workspaceSetSkillOverride: "workspace.setSkillOverride",
 	workspaceSetDiffBase: "workspace.setDiffBase",
 	workspaceWatchReady: "workspace.watchReady",
-	workspaceOpenIn: "workspace.openIn",
-	workspaceReveal: "workspace.reveal",
-	editorList: "editor.list",
 	gitListBranches: "git.listBranches",
 	gitPrefetch: "git.prefetch",
 	fsReadDir: "fs.readDir",
 	fsReadFile: "fs.readFile",
-	fsWriteFile: "fs.writeFile",
 	gitStatus: "git.status",
 	gitDiffFile: "git.diffFile",
 	gitListCommits: "git.listCommits",
@@ -209,17 +204,10 @@ export interface WsMethodMap {
 		params: { workspaceId: string; prewarm?: boolean };
 		result: WorkspaceWatchReadyResult;
 	};
-	"workspace.openIn": { params: { id: string; editor: string }; result: Ack };
-	"workspace.reveal": { params: { id: string }; result: Ack };
-	"editor.list": { params: Record<string, never>; result: EditorInfo[] };
 	"git.listBranches": { params: { projectId: string }; result: BranchList };
 	"git.prefetch": { params: { projectId: string; ref: string }; result: { ok: boolean } };
 	"fs.readDir": { params: { workspaceId: string; path: string }; result: FileNode[] };
 	"fs.readFile": { params: { workspaceId: string; path: string }; result: { content: string } };
-	"fs.writeFile": {
-		params: { workspaceId: string; path: string; content: string };
-		result: Ack;
-	};
 	"git.status": { params: { workspaceId: string; scope?: GitDiffScope }; result: GitStatus };
 	"git.diffFile": {
 		params: { workspaceId: string; path: string; scope?: GitDiffScope };

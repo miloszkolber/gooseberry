@@ -3,7 +3,7 @@
  * Regenerate with `bun run colors:generate`; `colors:check` fails when this file is stale.
  *
  * The semantic roles, then the Tailwind utility map. The palette they read is written to the
- * document root by `themes/runtime.ts` before React mounts.
+ * document root by the fixed system palette before React mounts.
  */
 
 :root {
@@ -13,10 +13,10 @@
 	--text-disabled: color-mix(in srgb, var(--text) 60%, transparent); /* disabled non-control text = the default text colour at the `strong` (60%) alpha step — a disabled element inherits its enabled semantic colour, dimmed at the token level, never a dedicated disabled palette value */
 	--text-on-primary: var(--on-accent);
 	--text-link: var(--info); /* global.css `a {}` is the only consumer; no component styles a bare link */
-	--container-workspace-bg: var(--background); /* the app surface, and with it the opened-document canvas — a document reads as part of the workspace (Monaco's EDITOR_THEME, the markdown preview, the chat column, the tab strip) */
+	--container-workspace-bg: var(--background); /* the focused session surface shared by chat, read-only previews, and project context */
 	--container-sidebar-bg: var(--sidebar);
 	--container-header-bg: var(--header);
-	--container-content-bg: var(--content); /* the recessed read-a-diff/read-code canvas, NOT the document canvas (that is workspace): the Changes diff (Monaco THEME), rendered diffs, Shiki code blocks, and the center-column backdrop behind them */
+	--container-content-bg: var(--content); /* the recessed read-only code and diff canvas used by Shiki previews and changed-file inspection */
 	--container-elevated-bg: var(--elevated); /* every raised surface: dialogs, popovers, menus, toasts, cards, code blocks */
 	--control-bg: var(--input);
 	--control-bg-hovered: var(--hover);
@@ -53,24 +53,25 @@
 	--selection-text: var(--selection-foreground, inherit); /* nullable in the manifest (high contrast keeps the native foreground) */
 	--selection-bg: var(--selection); /* native ::selection in global.css; not a utility */
 	--editor-selection-bg: var(--editor-selection);
-	--editor-selection-text: var(--editor-selection-foreground); /* read by Monaco through getComputedStyle; a utility would be dead weight */
+	--editor-selection-text: var(--editor-selection-foreground); /* read directly by Shiki and selection CSS; a utility would be dead weight */
 }
 
-/* Appearance-level effects. The theme engine stamps `data-theme-appearance` before React mounts, so
- * these need no JavaScript — they are constants, not palette derivations. */
-:root[data-theme-appearance="dark"] {
+/* Appearance-level effects follow the system color scheme with no JavaScript theme runtime. */
+:root {
 	--sunken: rgba(0, 0, 0, 0.12);
 	--overlay: rgba(0, 0, 0, 0.5);
 	--shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
 	--shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
 	--shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.4);
 }
-:root[data-theme-appearance="light"] {
-	--sunken: rgba(0, 0, 0, 0.05);
-	--overlay: rgba(0, 0, 0, 0.5);
-	--shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.1);
-	--shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
-	--shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.14);
+@media (prefers-color-scheme: light) {
+	:root {
+		--sunken: rgba(0, 0, 0, 0.05);
+		--overlay: rgba(0, 0, 0, 0.5);
+		--shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.1);
+		--shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+		--shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.14);
+	}
 }
 
 @theme inline {

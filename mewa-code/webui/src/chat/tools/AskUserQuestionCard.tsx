@@ -287,7 +287,6 @@ function focusTargetKind(active: Element | null, card: HTMLElement): QuestionFoc
 	if (card.contains(active)) return "non-editing";
 	if (!(active instanceof HTMLElement)) return "editing";
 	if (active.closest(MODAL_SURFACES)) return "modal";
-	if (active.closest(".monaco-editor")) return "editing";
 	if (active.isContentEditable || active.closest('[contenteditable="true"]')) return "editing";
 	const control = active.closest("input, textarea, select, iframe");
 	if (!control) return "non-editing";

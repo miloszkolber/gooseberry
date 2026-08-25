@@ -1,6 +1,6 @@
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
-import { MEWA_CODE_SHIKI_THEME, MEWA_CODE_SHIKI_THEME_NAME } from "@/themes";
+import { MEWA_CODE_SHIKI_THEME, MEWA_CODE_SHIKI_THEME_NAME } from "./shikiTheme";
 
 const CANONICAL = new Set([
 	"typescript",
@@ -29,6 +29,35 @@ const ALIAS: Record<string, string> = {
 	md: "markdown",
 	yml: "yaml",
 };
+
+const EXTENSION_LANGUAGE: Record<string, string> = {
+	ts: "typescript",
+	tsx: "tsx",
+	js: "javascript",
+	jsx: "jsx",
+	mjs: "javascript",
+	cjs: "javascript",
+	json: "json",
+	jsonc: "json",
+	sh: "bash",
+	bash: "bash",
+	zsh: "bash",
+	py: "python",
+	css: "css",
+	html: "html",
+	htm: "html",
+	md: "markdown",
+	mdx: "markdown",
+	yaml: "yaml",
+	yml: "yaml",
+};
+
+export function languageForPath(path: string): string {
+	const name = path.split("/").at(-1)?.toLowerCase() ?? "";
+	if (["dockerfile", "containerfile"].includes(name)) return "bash";
+	const extension = name.includes(".") ? (name.split(".").at(-1) ?? "") : "";
+	return EXTENSION_LANGUAGE[extension] ?? "text";
+}
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 function getHighlighter(): Promise<HighlighterCore> {

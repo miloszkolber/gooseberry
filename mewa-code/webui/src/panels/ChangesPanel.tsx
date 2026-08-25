@@ -1,39 +1,32 @@
-import type { GitStatus } from "@mewa-code/contracts";
+import type { GitDiffScope, GitStatus } from "@mewa-code/contracts";
+import { GitBranch, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	matchesWorktreePath,
 	selectActiveEditorTab,
-	selectDiffBaseRef,
-	selectDiffScope,
-	selectWorkspaceById,
 	type TabIntent,
 	toast,
 	useAppStore,
 } from "../store";
-import { errorText, getTransport, wsErrorCode } from "../transport";
-import { BranchPicker } from "./BranchPicker";
-import { useBranchList } from "./branches";
+import { errorText, getTransport } from "../transport";
 import { ChangeRowActions } from "./ChangeRowActions";
-import { ChangesScopeMenu } from "./ChangesScopeMenu";
 import { ChangesTree } from "./ChangesTree";
-import { scopeKey, splitPath, statusNameClass } from "./changesModel";
+import { splitPath, statusNameClass } from "./changesModel";
 import { DiffStatBadge } from "./DiffStatBadge";
 import { openDiffInTab } from "./openTabs";
 import { ToggleSegment } from "./ToggleSegment";
 import { useWorkspaceRead } from "./useWorkspaceRead";
+
+const SCOPE: GitDiffScope = { kind: "uncommitted" };
 
 export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 	const [status, setStatus] = useState<GitStatus | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const warnedRef = useRef(false);
 	const [highlighted, setHighlighted] = useState<string | null>(null);
-	const changesRequest = useAppStore((s) => s.changesRequest);
-	const changesView = useAppStore((s) => s.changesView);
-	const setChangesView = useAppStore((s) => s.setChangesView);
-	const setDiffScope = useAppStore((s) => s.setDiffScope);
-	const scope = useAppStore((s) => selectDiffScope(s, workspaceId));
-	const workspace = useAppStore((s) => selectWorkspaceById(s, workspaceId));
-	const baseRef = useAppStore((s) => selectDiffBaseRef(s, workspaceId));
+	const changesRequest = useAppStore((state) => state.changesRequest);
+	const changesView = useAppStore((state) => state.changesView);
+	const setChangesView = useAppStore((state) => state.setChangesView);
 	const activeDiffTab = useAppStore((state) => {
 		const tab = selectActiveEditorTab(state, workspaceId);
 		return tab?.kind === "diff" ? tab : null;
@@ -41,7 +34,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 
 	const { reload } = useWorkspaceRead(
 		workspaceId,
-		(id) => getTransport().request("git.status", { workspaceId: id, scope }),
+		(id) => getTransport().request("git.status", { workspaceId: id, scope: SCOPE }),
 		{
 			onResult: (result) => {
 				setStatus(result);
@@ -49,11 +42,6 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 				warnedRef.current = false;
 			},
 			onFailure: (_id, failure) => {
-				if (wsErrorCode(failure) === "UNKNOWN_COMMIT") {
-					setDiffScope(workspaceId, { kind: "branch" });
-					toast.info("That commit is no longer in this branch — showing all changes.");
-					return;
-				}
 				if (status && !warnedRef.current) {
 					warnedRef.current = true;
 					toast.error(`Could not refresh the changes: ${errorText(failure)}`);
@@ -67,78 +55,50 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 				warnedRef.current = false;
 			},
 		},
-		`${scopeKey(scope)}:${baseRef}`,
 	);
-
-	const {
-		branches,
-		refreshing: branchesRefreshing,
-		refresh: refreshBranches,
-	} = useBranchList(workspace?.projectId ?? null);
-
-	const pointAt = async (ref: string) => {
-		try {
-			await getTransport().request("workspace.setDiffBase", { id: workspaceId, ref });
-		} catch (error) {
-			toast.error(`Could not change the target branch: ${errorText(error)}`);
-		}
-	};
 
 	const openDiff = useCallback(
 		(path: string, intent: TabIntent) => {
 			setHighlighted(path);
-			void openDiffInTab(workspaceId, scope, path, intent);
+			void openDiffInTab(workspaceId, SCOPE, path, intent);
 		},
-		[workspaceId, scope],
+		[workspaceId],
 	);
 
 	useEffect(() => {
 		if (!status || changesRequest?.workspaceId !== workspaceId) return;
 		if (useAppStore.getState().changesRequest !== changesRequest) return;
-		const want = changesRequest.path;
-		const match = status.changes.find((c) => matchesWorktreePath(want, c.path));
+		const match = status.changes.find((change) =>
+			matchesWorktreePath(changesRequest.path, change.path),
+		);
 		if (match) openDiff(match.path, "preview");
-		else setHighlighted(want);
+		else setHighlighted(changesRequest.path);
 		useAppStore.getState().clearChangesRequest();
-	}, [changesRequest, status, workspaceId, openDiff]);
+	}, [changesRequest, openDiff, status, workspaceId]);
 
 	useEffect(() => {
 		if (activeDiffTab) setHighlighted(null);
 	}, [activeDiffTab]);
 
 	const isActive = (path: string) =>
-		activeDiffTab
-			? activeDiffTab.path === path && scopeKey(activeDiffTab.scope) === scopeKey(scope)
-			: highlighted === path;
+		activeDiffTab?.path === path || (!activeDiffTab && highlighted === path);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			<div
-				data-testid="changes-view-toggle"
-				role="toolbar"
-				aria-label="Changes scope and view"
-				className="flex h-panel-header-row shrink-0 items-center gap-xs overflow-clip border-border-default border-b px-sm"
-			>
-				<div className="mr-auto flex min-w-0 items-center gap-xs">
-					<ChangesScopeMenu
-						key={`${workspaceId}:${baseRef}`}
-						workspaceId={workspaceId}
-						scope={scope}
-						onSelectScope={(next) => setDiffScope(workspaceId, next)}
-					/>
-					{workspace ? (
-						<BranchPicker
-							branches={branches}
-							selected={baseRef}
-							refreshing={branchesRefreshing}
-							label="vs"
-							testid="changes-target-picker"
-							triggerClassName="flex h-6 min-w-0 max-w-[200px] items-center gap-xs rounded-[var(--radius-sm)] px-xs outline-none transition-colors hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary data-[open=true]:bg-control-bg-selected"
-							onSelect={(ref) => void pointAt(ref)}
-							onRefresh={refreshBranches}
-						/>
-					) : null}
+			<div className="flex h-panel-header-row shrink-0 items-center gap-xs border-border-default border-b px-sm">
+				<div className="mr-auto flex min-w-0 items-center gap-xs tr-text-metadata text-text-muted">
+					<GitBranch className="size-3.5 shrink-0" />
+					<span className="truncate">{status?.branch || "Git changes"}</span>
 				</div>
+				<button
+					type="button"
+					aria-label="Refresh changes"
+					title="Refresh changes"
+					onClick={reload}
+					className="flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
+				>
+					<RefreshCw className="size-3.5" />
+				</button>
 				<ToggleSegment
 					testid="changes-toggle-list"
 					label="List"
@@ -154,15 +114,14 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 			</div>
 			<div className="min-h-0 flex-1 overflow-auto">
 				{status === null && error !== null ? (
-					<div data-testid="changes-error" className="flex flex-col items-start gap-xs px-sm py-xs">
+					<div className="flex flex-col items-start gap-xs px-sm py-xs">
 						<p className="tr-text-metadata text-feedback-error">
 							Could not read the changes: {error}
 						</p>
 						<button
 							type="button"
-							data-testid="changes-retry"
 							onClick={reload}
-							className="rounded-[var(--radius-sm)] px-xs py-0.5 tr-text-metadata text-text-muted transition-colors hover:bg-control-bg-hovered hover:text-text-default"
+							className="rounded-[var(--radius-sm)] px-xs py-0.5 tr-text-metadata text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 						>
 							Retry
 						</button>
@@ -171,7 +130,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 					<p className="px-sm py-xs tr-text-metadata text-text-muted">Loading…</p>
 				) : status.changes.length === 0 ? (
 					<p data-testid="changes-empty" className="px-sm py-xs tr-text-metadata text-text-muted">
-						No changes in this scope.
+						Working tree is clean.
 					</p>
 				) : changesView === "tree" ? (
 					<ChangesTree changes={status.changes} onOpen={openDiff} isActive={isActive} />
@@ -192,7 +151,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 												onContextMenu={onContextMenu}
 												data-testid="change-item"
 												data-status={change.status}
-												data-active={isActive(change.path) ? true : undefined}
+												data-active={isActive(change.path) || undefined}
 												onClick={() => openDiff(change.path, "preview")}
 												onDoubleClick={() => openDiff(change.path, "keep")}
 												title={change.path}
@@ -200,15 +159,9 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 											>
 												<span className="flex min-w-0 flex-1 items-baseline">
 													{dir ? (
-														<span
-															data-testid="change-path-dir"
-															className="min-w-0 shrink truncate text-text-muted"
-														>
-															{dir}
-														</span>
+														<span className="min-w-0 shrink truncate text-text-muted">{dir}</span>
 													) : null}
 													<span
-														data-testid="change-path-base"
 														className={`max-w-full shrink-0 truncate ${statusNameClass(change.status) || "text-text-muted"}`}
 													>
 														{base}

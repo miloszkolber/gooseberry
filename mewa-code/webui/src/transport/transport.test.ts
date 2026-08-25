@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { encodeCodeTokenProtocol, WS_CHANNELS } from "@mewa-code/contracts";
+import { encodeCodeTokenProtocol } from "@mewa-code/contracts";
 import { CODE_TOKEN_STORAGE_KEY, captureCodeToken, WsTransport } from "./transport";
 
 const controllerToken = "web-controller-token-0123456789abcdef012345";

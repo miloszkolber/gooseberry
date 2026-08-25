@@ -60,10 +60,7 @@ export const MEWA_CODE_SHIKI_THEME: ThemeRegistration = {
 			scope: ["constant", "variable.other.constant"],
 			settings: { foreground: "var(--code-constant)" },
 		},
-		{
-			scope: ["keyword.operator"],
-			settings: { foreground: "var(--code-operator)" },
-		},
+		{ scope: ["keyword.operator"], settings: { foreground: "var(--code-operator)" } },
 		{
 			scope: ["punctuation", "meta.brace", "meta.delimiter"],
 			settings: { foreground: "var(--code-punctuation)" },

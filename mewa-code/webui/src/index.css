@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/palette.css";
 @import "./styles/generated/fonts.css";
 @import "./styles/generated/typography.css";
 @import "./styles/generated/colors.css";
@@ -7,8 +8,8 @@
 
 /*
  * Map the Mewa Code design tokens (tokens.css) onto Tailwind's theme namespaces. `inline` makes the
- * utilities resolve to the live `var(--token)` (not a baked value), so the theme engine's atomic
- * custom-property swap re-themes everything. Colors and spacing don't collide with token names; the
+ * utilities resolve to the live `var(--token)` (not a baked value). The fixed system palette is
+ * defined in `styles/palette.css`. Colors and spacing do not collide with token names; the
  * `--radius-*` tokens DO collide with a Tailwind namespace, so they are referenced as token arbitrary
  * values (e.g. `rounded-[var(--radius-md)]`) instead.
  *

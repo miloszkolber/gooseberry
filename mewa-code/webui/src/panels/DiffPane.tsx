@@ -1,27 +1,19 @@
 import { Check, Copy, Pilcrow } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
-import { copyText, isMarkdownPath } from "@/lib/utils";
+import { useMemo, useState } from "react";
+import { copyText } from "@/lib/utils";
 import type { DiffTab } from "../store";
 import { selectDiffTabTargetRef, useAppStore } from "../store";
 import { getTransport } from "../transport";
 import { splitPath } from "./changesModel";
-import { ToggleSegment } from "./ToggleSegment";
+import { simpleUnifiedDiff } from "./lineDiff";
+import { SourceDiff } from "./SourceDiff";
 import { useLiveTabContent } from "./useLiveTabContent";
 
-const MonacoDiff = lazy(() => import("./MonacoDiff"));
-const RenderedDiff = lazy(() => import("./RenderedDiff"));
-
-const loading = (
-	<div className="flex h-full items-center justify-center text-text-muted">Loading…</div>
-);
-
 export function DiffPane({ tab }: { tab: DiffTab }) {
-	const setDiffTabView = useAppStore((s) => s.setDiffTabView);
-	const setDiffTabRendered = useAppStore((s) => s.setDiffTabRendered);
-	const setDiffTabIgnoreWhitespace = useAppStore((s) => s.setDiffTabIgnoreWhitespace);
+	const setDiffTabIgnoreWhitespace = useAppStore((state) => state.setDiffTabIgnoreWhitespace);
 	const [copied, setCopied] = useState(false);
+	const targetRef = useAppStore((state) => selectDiffTabTargetRef(state, tab));
 
-	const targetRef = useAppStore((s) => selectDiffTabTargetRef(s, tab));
 	useLiveTabContent(
 		tab,
 		{
@@ -51,139 +43,64 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 		tab.loadedTarget,
 	);
 
-	const markdown = isMarkdownPath(tab.path);
-	const view = tab.view ?? "split";
-	const rendered = markdown && (tab.rendered ?? false);
 	const ignoreWhitespace = tab.ignoreWhitespace ?? false;
 	const { dir, base } = splitPath(tab.path);
-	const copy = async () => {
-		if (!(await copyText(tab.modified))) return;
-		setCopied(true);
-		setTimeout(() => setCopied(false), 1500);
-	};
-	const toggles = markdown ? (
-		<>
-			<ToggleSegment
-				testid="diff-toggle-source"
-				label="Source"
-				active={!rendered}
-				onClick={() => setDiffTabRendered(tab.id, false)}
-			/>
-			<ToggleSegment
-				testid="diff-toggle-rendered"
-				label="Rendered"
-				active={rendered}
-				onClick={() => setDiffTabRendered(tab.id, true)}
-			/>
-		</>
-	) : (
-		<>
-			<ToggleSegment
-				testid="diff-toggle-split"
-				label="Split"
-				active={view === "split"}
-				onClick={() => setDiffTabView(tab.id, "split")}
-			/>
-			<ToggleSegment
-				testid="diff-toggle-inline"
-				label="Inline"
-				active={view === "inline"}
-				onClick={() => setDiffTabView(tab.id, "inline")}
-			/>
-		</>
+	const diff = useMemo(
+		() => simpleUnifiedDiff(tab.path, tab.original, tab.modified, ignoreWhitespace),
+		[ignoreWhitespace, tab.modified, tab.original, tab.path],
 	);
+	const copy = async () => {
+		if (!(await copyText(diff))) return;
+		setCopied(true);
+		setTimeout(() => setCopied(false), 1_500);
+	};
+
 	return (
 		<div data-testid="diff-pane" className="flex h-full min-h-0 flex-col">
-			<div
-				data-testid="diff-view-toggle"
-				role="toolbar"
-				aria-label="Diff view mode"
-				className="flex h-8 shrink-0 items-center gap-xs border-border-default border-b bg-container-header-bg px-sm"
-			>
+			<div className="flex h-8 shrink-0 items-center gap-xs border-border-default border-b bg-container-header-bg px-sm">
 				<span
 					data-testid="diff-path"
 					title={tab.path}
 					className="mr-auto flex min-w-0 items-baseline tr-code-text"
 				>
-					{dir ? (
-						<span data-testid="diff-path-dir" className="min-w-0 shrink truncate text-text-muted">
-							{dir}
-						</span>
-					) : null}
-					<span
-						data-testid="diff-path-base"
-						className="max-w-full shrink-0 truncate text-text-muted"
-					>
-						{base}
-					</span>
+					{dir ? <span className="min-w-0 shrink truncate text-text-muted">{dir}</span> : null}
+					<span className="max-w-full shrink-0 truncate text-text-muted">{base}</span>
 				</span>
-				{rendered ? null : (
-					<HeaderIconButton
-						testid="diff-toggle-whitespace"
-						label="Hide whitespace changes"
-						active={ignoreWhitespace}
-						onClick={() => setDiffTabIgnoreWhitespace(tab.id, !ignoreWhitespace)}
-					>
-						<Pilcrow className="size-3.5" />
-					</HeaderIconButton>
-				)}
-				<HeaderIconButton testid="diff-copy" label="Copy file contents" onClick={() => void copy()}>
+				<button
+					type="button"
+					data-testid="diff-toggle-whitespace"
+					data-active={ignoreWhitespace || undefined}
+					aria-pressed={ignoreWhitespace}
+					aria-label="Hide whitespace changes"
+					title="Hide whitespace changes"
+					onClick={() => setDiffTabIgnoreWhitespace(tab.id, !ignoreWhitespace)}
+					className="flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[active]:bg-control-bg-selected data-[active]:text-text-default"
+				>
+					<Pilcrow className="size-3.5" />
+				</button>
+				<button
+					type="button"
+					data-testid="diff-copy"
+					aria-label="Copy file contents"
+					title="Copy file contents"
+					onClick={() => void copy()}
+					className="flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
+				>
 					{copied ? (
 						<Check className="size-3.5 text-feedback-success" />
 					) : (
 						<Copy className="size-3.5" />
 					)}
-				</HeaderIconButton>
-				{toggles}
+				</button>
 			</div>
 			<div className="min-h-0 flex-1">
-				<Suspense fallback={loading}>
-					{rendered ? (
-						<RenderedDiff tab={tab} />
-					) : (
-						<MonacoDiff
-							path={tab.path}
-							original={tab.original}
-							modified={tab.modified}
-							view={markdown ? "split" : view}
-							ignoreWhitespace={ignoreWhitespace}
-						/>
-					)}
-				</Suspense>
+				<SourceDiff
+					path={tab.path}
+					original={tab.original}
+					modified={tab.modified}
+					ignoreWhitespace={ignoreWhitespace}
+				/>
 			</div>
 		</div>
-	);
-}
-
-function HeaderIconButton({
-	testid,
-	label,
-	active,
-	onClick,
-	children,
-}: {
-	testid: string;
-	label: string;
-	active?: boolean;
-	onClick: () => void;
-	children: React.ReactNode;
-}) {
-	return (
-		<button
-			type="button"
-			data-testid={testid}
-			data-active={active}
-			aria-pressed={active}
-			aria-label={label}
-			title={label}
-			onClick={onClick}
-			className={`flex size-6 items-center justify-center rounded-[var(--radius-sm)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary ${
-				active
-					? "bg-container-elevated-bg text-text-default"
-					: "text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
-			}`}
-		>
-			{children}
-		</button>
 	);
 }

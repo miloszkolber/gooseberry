@@ -44,8 +44,7 @@ import {
 } from "../agent";
 import { cancelLogin, getProviderStatus, logoutProvider, resolveLogin, startLogin } from "../auth";
 import { selectDirectory } from "../dialog";
-import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
-import { readDir, readFile, writeFile } from "../fs";
+import { readDir, readFile } from "../fs";
 import { gitDiffFile, gitStatus, listBranches, listCommits, prefetchBranch } from "../git";
 import { clampLimit, getHistoryIndex } from "../history";
 import { clearStoredSessionGoal, sessionGoalState, writeStoredSessionGoal } from "../persistence";
@@ -140,16 +139,6 @@ const handlers: Record<string, Handler> = {
 		return { ok: true } as const;
 	},
 	"workspace.diffStats": (params) => workspaceDiffStats((params as { id: string }).id),
-	"workspace.openIn": (params) => {
-		const p = params as { id: string; editor: string };
-		openEditor(p.editor, getWorkspace(p.id).worktreePath);
-		return { ok: true } as const;
-	},
-	"workspace.reveal": (params) => {
-		revealInFileManager(getWorkspace((params as { id: string }).id).worktreePath);
-		return { ok: true } as const;
-	},
-	"editor.list": () => listAvailableEditors(),
 	"git.listBranches": (params) => listBranches((params as { projectId: string }).projectId),
 	"git.prefetch": async (params) => {
 		const p = params as { projectId: string; ref: string };
@@ -167,12 +156,6 @@ const handlers: Record<string, Handler> = {
 		const p = params as { workspaceId: string; path: string };
 		void ensureWatch(p.workspaceId);
 		return readFile(p.workspaceId, p.path);
-	},
-	"fs.writeFile": (params) => {
-		const p = params as { workspaceId: string; path: string; content: string };
-		void ensureWatch(p.workspaceId);
-		writeFile(p.workspaceId, p.path, p.content);
-		return { ok: true } as const;
 	},
 	"git.status": (params) => {
 		const p = params as { workspaceId: string; scope?: GitDiffScope };

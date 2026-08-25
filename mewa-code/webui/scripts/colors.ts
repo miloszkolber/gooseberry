@@ -4,16 +4,38 @@ import { join } from "node:path";
 export const STYLES_DIR = join(import.meta.dir, "..", "src", "styles");
 export const SOURCE_PATH = join(STYLES_DIR, "colors.json");
 export const GENERATED_CSS_PATH = join(STYLES_DIR, "generated", "colors.css");
-export const THEMES_DIR = join(import.meta.dir, "..", "src", "themes");
-export const THEME_SCHEMA_PATH = join(THEMES_DIR, "schema.ts");
 
 export const paletteVar = (key: string) =>
 	`--${key.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()}`;
 
 export function themeColorKeys(): string[] {
-	const schema = readFileSync(THEME_SCHEMA_PATH, "utf8");
-	const block = /export const THEME_COLOR_KEYS = \[([\s\S]*?)\] as const;/.exec(schema)?.[1] ?? "";
-	return [...block.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1] as string);
+	return [
+		"accent",
+		"accentHover",
+		"accentSolid",
+		"onAccent",
+		"bubbleAccent",
+		"background",
+		"header",
+		"content",
+		"sidebar",
+		"input",
+		"elevated",
+		"hover",
+		"border",
+		"borderStrong",
+		"text",
+		"muted",
+		"hint",
+		"selection",
+		"selectionForeground",
+		"editorSelection",
+		"editorSelectionForeground",
+		"info",
+		"success",
+		"danger",
+		"warning",
+	];
 }
 
 export interface Role {
@@ -116,15 +138,20 @@ export function renderCss(colors: Colors): string {
 			return `\t${roleVar(name)}: ${derive(colors, role)};${note}`;
 		});
 
-	const effectBlocks = ["dark", "light"].map((appearance) =>
+	const effectBlocks = [
 		[
-			`:root[data-theme-appearance="${appearance}"] {`,
-			...Object.entries(colors.effects).map(
-				([n, e]) => `\t--${n}: ${e[appearance as "dark" | "light"]};`,
-			),
+			":root {",
+			...Object.entries(colors.effects).map(([name, effect]) => `\t--${name}: ${effect.dark};`),
 			"}",
 		].join("\n"),
-	);
+		[
+			"@media (prefers-color-scheme: light) {",
+			"\t:root {",
+			...Object.entries(colors.effects).map(([name, effect]) => `\t\t--${name}: ${effect.light};`),
+			"\t}",
+			"}",
+		].join("\n"),
+	];
 
 	const themeLines = [
 		// The built-in-palette reset must precede our entries. A reset in a later block would wipe them too.
@@ -136,14 +163,13 @@ export function renderCss(colors: Colors): string {
 	return [
 		HEADER(
 			colors.metadata.version,
-			"The semantic roles, then the Tailwind utility map. The palette they read is written to the\n * document root by `themes/runtime.ts` before React mounts.",
+			"The semantic roles, then the Tailwind utility map. The palette they read is written to the\n * document root by the fixed system palette before React mounts.",
 		),
 		":root {",
 		...rootLines,
 		"}",
 		"",
-		"/* Appearance-level effects. The theme engine stamps `data-theme-appearance` before React mounts, so",
-		" * these need no JavaScript — they are constants, not palette derivations. */",
+		"/* Appearance-level effects follow the system color scheme with no JavaScript theme runtime. */",
 		...effectBlocks,
 		"",
 		"@theme inline {",

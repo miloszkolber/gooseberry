@@ -5,11 +5,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initNavigation } from "./navigation";
 import { initProjectExpansionPersistence } from "./panels/projectExpansion";
 import { Shell } from "./shell/Shell";
-import { applyTheme, initializeBundledThemes, readThemeHint } from "./themes";
 import { initTransport } from "./transport";
 
-initializeBundledThemes();
-applyTheme(readThemeHint());
 initTransport();
 initProjectExpansionPersistence();
 initNavigation();

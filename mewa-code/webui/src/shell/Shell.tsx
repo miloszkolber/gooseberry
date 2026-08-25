@@ -1,5 +1,4 @@
 import { ChevronRight, GitBranch, Settings } from "lucide-react";
-import { useEffect } from "react";
 import { ProjectTree } from "../panels/ProjectTree";
 import { SettingsDialog } from "../panels/SettingsDialog";
 import { Toaster } from "../panels/Toaster";
@@ -10,7 +9,6 @@ import {
 	selectContextProject,
 	useAppStore,
 } from "../store";
-import { applyTheme, writeThemeHint } from "../themes";
 import type { ConnectionStatus } from "../transport";
 import { BrandLogo } from "./BrandLogo";
 import { useGlobalHotkeys } from "./useGlobalHotkeys";
@@ -34,13 +32,6 @@ export function Shell() {
 	const activeWorkspace = useAppStore(selectActiveWorkspace);
 	const contextProject = useAppStore(selectContextProject);
 	const hasActiveWorkspace = activeWorkspaceId != null;
-	const theme = useAppStore((s) => s.theme);
-
-	useEffect(() => {
-		applyTheme(theme);
-		writeThemeHint(theme);
-	}, [theme]);
-
 	useGlobalHotkeys({
 		onProjects: () => {
 			(document.querySelector('[data-testid="left-nav"]') as HTMLElement | null)?.focus();

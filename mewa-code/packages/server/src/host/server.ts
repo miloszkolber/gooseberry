@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join, normalize } from "node:path";
-import type { ServerWelcome, SessionDeletedPayload, WorkspaceFsChangedPayload } from "@mewa-code/contracts";
+import type {
+	ServerWelcome,
+	SessionDeletedPayload,
+	WorkspaceFsChangedPayload,
+} from "@mewa-code/contracts";
 import { isCodeToken, PROTOCOL_VERSION, WS_CHANNELS } from "@mewa-code/contracts";
 import { errorCodeOf } from "@mewa-code/shared/codedError";
 import {
@@ -263,9 +267,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 					config: getConfig(),
 					...(appVersion ? { appVersion } : {}),
 				};
-				if (
-					ws.send(JSON.stringify({ channel: WS_CHANNELS.serverWelcome, data: welcome })) === 0
-				) {
+				if (ws.send(JSON.stringify({ channel: WS_CHANNELS.serverWelcome, data: welcome })) === 0) {
 					ws.close();
 				}
 			},
@@ -436,7 +438,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			JSON.stringify({ channel: WS_CHANNELS.providerLogin, data: push }),
 		);
 	});
-
 
 	if (projectPath) {
 		try {

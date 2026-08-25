@@ -13,8 +13,5 @@
  * browser's synthetic bold/oblique. Every unicode subset stays declared — each is its own
  * `@font-face` with a `unicode-range`, so a document downloads only the ranges it renders.
  */
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist/wght-italic.css";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource-variable/geist-mono/wght-italic.css";
-@import "@fontsource-variable/orbitron";

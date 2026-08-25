@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { hasPlatformModifier } from "../lib";
 import { selectHistoryTarget, useAppStore } from "../store";
 
-
 type GlobalHotkeyActions = {
 	onProjects: () => void;
 	onWorkspace?: () => void;

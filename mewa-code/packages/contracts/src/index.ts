@@ -11,7 +11,6 @@ export {
 	normalizeSessionGoal,
 	REQUEST_IMAGE_BASE64_BUDGET,
 	SESSION_GOAL_MAX_LENGTH,
-	TERMINAL_REPLAY_KB,
 } from "./domain";
 export type * from "./piProtocol";
 export { isTranscriptMessageRole } from "./piProtocol";

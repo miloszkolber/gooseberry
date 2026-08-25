@@ -1,14 +1,10 @@
-import type { Workspace } from "@mewa-code/contracts";
-import { FolderOpen, House, type LucideIcon, Rocket } from "lucide-react";
-import { type ComponentPropsWithoutRef, forwardRef, useState } from "react";
+import { FolderOpen, House, type LucideIcon } from "lucide-react";
+import { type ComponentPropsWithoutRef, forwardRef } from "react";
 import { cn } from "@/lib/utils";
 import { PRODUCT_NAME } from "../constants/branding";
 import { useAppStore } from "../store";
-import { getTransport } from "../transport";
 import { AddProjectMenu } from "./AddProjectMenu";
 import { enterDefaultWorkspace } from "./defaultWorkspace";
-import { NewWorkspaceDialog } from "./NewWorkspaceDialog";
-import { ProjectSkillsNotice } from "./ProjectSkillsNotice";
 import { ProviderWarningBanner } from "./ProviderWarningBanner";
 import { useOpenProject } from "./useOpenProject";
 
@@ -16,64 +12,10 @@ export function WelcomePanel() {
 	const projects = useAppStore((s) => s.projects);
 	const recentProjects = useAppStore((s) => s.recentProjects);
 	const selectedProjectId = useAppStore((s) => s.selectedProjectId);
-	const [dialog, setDialog] = useState<{
-		projectId: string;
-		prompt: string;
-		target?: "worktree" | "default";
-	} | null>(null);
-
-	const project = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null;
+	const project = projects.find((item) => item.id === selectedProjectId) ?? projects[0] ?? null;
 
 	const { openProject, pickAndOpen, dialogs } = useOpenProject((opened) =>
 		useAppStore.getState().selectProject(opened.id, { reveal: true }),
-	);
-
-	const onWorkspaceCreated = async (ws: Workspace) => {
-		useAppStore
-			.getState()
-			.setWorkspaces(
-				ws.projectId,
-				await getTransport().request("workspace.list", { projectId: ws.projectId }),
-			);
-	};
-
-	const noProjects = project == null;
-
-	const projectFolderCard = (projectId: string) => (
-		<Card
-			cta
-			primary
-			icon={House}
-			title="Work in project folder"
-			subtitle="Chats and changes run directly in your project folder — no isolation."
-			onClick={() => void enterDefaultWorkspace(projectId)}
-		/>
-	);
-
-	const isolatedWorktreeCard = (projectId: string) => (
-		<Card
-			icon={Rocket}
-			title="Start in isolated worktree"
-			subtitle="Create a separate checkout and branch when you need isolated changes."
-			onClick={() => setDialog({ projectId, prompt: "", target: "worktree" })}
-		/>
-	);
-
-	const openProjectCard = () => (
-		<AddProjectMenu
-			recentProjects={recentProjects}
-			onOpen={() => void pickAndOpen()}
-			onOpenRecent={(path) => void openProject(path)}
-			align="start"
-		>
-			<Card
-				cta
-				primary
-				icon={FolderOpen}
-				title="Open project"
-				subtitle="Choose a local git repository to work in."
-			/>
-		</AddProjectMenu>
 	);
 
 	return (
@@ -89,31 +31,34 @@ export function WelcomePanel() {
 			</h1>
 
 			<ProviderWarningBanner />
-			{project ? <ProjectSkillsNotice projectId={project.id} /> : null}
 
 			<div className="mt-xl flex flex-wrap justify-center gap-md">
-				{noProjects ? (
-					openProjectCard()
+				{project ? (
+					<Card
+						cta
+						primary
+						icon={House}
+						title="Continue project"
+						subtitle="Open the project directory and its persistent Pi sessions."
+						onClick={() => void enterDefaultWorkspace(project.id)}
+					/>
 				) : (
-					<>
-						{projectFolderCard(project.id)}
-						{isolatedWorktreeCard(project.id)}
-					</>
+					<AddProjectMenu
+						recentProjects={recentProjects}
+						onOpen={() => void pickAndOpen()}
+						onOpenRecent={(path) => void openProject(path)}
+						align="start"
+					>
+						<Card
+							cta
+							primary
+							icon={FolderOpen}
+							title="Open project"
+							subtitle="Choose an admitted directory. It may contain one or several repositories."
+						/>
+					</AddProjectMenu>
 				)}
 			</div>
-
-			{dialog ? (
-				<NewWorkspaceDialog
-					open
-					projectId={dialog.projectId}
-					initialPrompt={dialog.prompt}
-					{...(dialog.target ? { initialTarget: dialog.target } : {})}
-					onOpenChange={(o) => {
-						if (!o) setDialog(null);
-					}}
-					onCreated={(ws) => void onWorkspaceCreated(ws)}
-				/>
-			) : null}
 			{dialogs}
 		</div>
 	);

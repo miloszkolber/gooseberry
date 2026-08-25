@@ -1,20 +1,15 @@
 import type { SessionStats } from "@mewa-code/contracts";
 import type { ReactNode } from "react";
 import { SessionStatsBar } from "./SessionStatsBar";
-import { SkillsButton } from "./SkillsButton";
 
 export function ChatHeader({
 	stats,
 	statusEntries,
 	left,
-	onOpenSkills,
-	skillsStale,
 }: {
 	stats: SessionStats | null;
 	statusEntries: [string, string][];
 	left?: ReactNode;
-	onOpenSkills?: () => void;
-	skillsStale?: boolean;
 }) {
 	return (
 		<div
@@ -30,9 +25,6 @@ export function ChatHeader({
 				))}
 				<SessionStatsBar stats={stats} />
 			</div>
-			{onOpenSkills ? (
-				<SkillsButton onOpen={onOpenSkills} testId="open-skills" stale={skillsStale ?? false} />
-			) : null}
 		</div>
 	);
 }

@@ -56,8 +56,6 @@ export interface FileTab {
 	name: string;
 	path: string;
 	content: string;
-	savedContent?: string;
-	dirty?: boolean;
 	view?: "rendered" | "source";
 	loadedTick?: number;
 }
@@ -68,7 +66,6 @@ export interface ChatTab {
 	name: string;
 	sessionId: string;
 }
-export type DiffTabView = "split" | "inline";
 export interface DiffTab {
 	kind: "diff";
 	id: string;
@@ -79,8 +76,6 @@ export interface DiffTab {
 	loadedTarget: string;
 	original: string;
 	modified: string;
-	view?: DiffTabView;
-	rendered?: boolean;
 	ignoreWhitespace?: boolean;
 	loadedTick?: number;
 }
@@ -569,8 +564,6 @@ interface AppState {
 	setActiveTab: (id: string, intent?: TabIntent) => void;
 	noteNavigation: (workspaceId: string) => void;
 	setFileTabView: (id: string, view: "rendered" | "source") => void;
-	setDiffTabView: (id: string, view: DiffTabView) => void;
-	setDiffTabRendered: (id: string, rendered: boolean) => void;
 	setDiffTabIgnoreWhitespace: (id: string, ignoreWhitespace: boolean) => void;
 	changesView: "list" | "tree";
 	setChangesView: (view: "list" | "tree") => void;
@@ -579,8 +572,6 @@ interface AppState {
 	noteFsChanged: (payload: WorkspaceFsChangedPayload) => void;
 	markSkillsSynced: (sessionId: string, syncedTick: number) => void;
 	updateFileTabContent: (workspaceId: string, id: string, content: string, tick: number) => void;
-	setFileTabContent: (workspaceId: string, id: string, content: string) => void;
-	markFileTabSaved: (workspaceId: string, id: string, content: string) => void;
 	updateDiffTabContent: (
 		workspaceId: string,
 		id: string,
@@ -1205,8 +1196,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 				},
 			};
 		}),
-	setDiffTabView: (id, view) => set((s) => patchDiffTab(s, id, { view })),
-	setDiffTabRendered: (id, rendered) => set((s) => patchDiffTab(s, id, { rendered })),
 	setDiffTabIgnoreWhitespace: (id, ignoreWhitespace) =>
 		set((s) => patchDiffTab(s, id, { ignoreWhitespace })),
 	setChangesView: (view) => set({ changesView: view }),
@@ -1246,49 +1235,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 			};
 		}),
 	updateFileTabContent: (workspaceId, id, content, tick) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const tabs = s.tabsByWorkspace[workspaceId] ?? [];
+		set((state) => {
+			if (state.removedWorkspaceIds[workspaceId]) return {};
+			const tabs = state.tabsByWorkspace[workspaceId] ?? [];
 			if (!tabs.some((tab) => tab.id === id && tab.kind === "file")) return {};
 			return {
 				tabsByWorkspace: {
-					...s.tabsByWorkspace,
+					...state.tabsByWorkspace,
 					[workspaceId]: tabs.map((tab) =>
-						tab.id === id && tab.kind === "file"
-							? tab.dirty
-								? { ...tab, loadedTick: tick }
-								: { ...tab, content, savedContent: content, dirty: false, loadedTick: tick }
-							: tab,
-					),
-				},
-			};
-		}),
-	setFileTabContent: (workspaceId, id, content) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const tabs = s.tabsByWorkspace[workspaceId] ?? [];
-			return {
-				tabsByWorkspace: {
-					...s.tabsByWorkspace,
-					[workspaceId]: tabs.map((tab) => {
-						if (tab.id !== id || tab.kind !== "file" || tab.content === content) return tab;
-						const savedContent = tab.savedContent ?? tab.content;
-						return { ...tab, content, dirty: content !== savedContent };
-					}),
-				},
-			};
-		}),
-	markFileTabSaved: (workspaceId, id, content) =>
-		set((s) => {
-			if (s.removedWorkspaceIds[workspaceId]) return {};
-			const tabs = s.tabsByWorkspace[workspaceId] ?? [];
-			return {
-				tabsByWorkspace: {
-					...s.tabsByWorkspace,
-					[workspaceId]: tabs.map((tab) =>
-						tab.id === id && tab.kind === "file" && tab.content === content
-							? { ...tab, savedContent: content, dirty: false }
-							: tab,
+						tab.id === id && tab.kind === "file" ? { ...tab, content, loadedTick: tick } : tab,
 					),
 				},
 			};

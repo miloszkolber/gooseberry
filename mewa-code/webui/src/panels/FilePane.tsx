@@ -1,13 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { lazy, Suspense } from "react";
 import { isMarkdownPath } from "@/lib/utils";
 import type { FileTab } from "../store";
 import { useAppStore } from "../store";
-import { errorText, getTransport } from "../transport";
+import { getTransport } from "../transport";
+import { SourcePreview } from "./SourcePreview";
 import { ToggleSegment } from "./ToggleSegment";
 import { useLiveTabContent } from "./useLiveTabContent";
 
-const MonacoEditor = lazy(() => import("./MonacoEditor"));
 const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
 
 const loading = (
@@ -15,19 +14,7 @@ const loading = (
 );
 
 export function FilePane({ tab }: { tab: FileTab }) {
-	const setFileTabView = useAppStore((s) => s.setFileTabView);
-	const setFileTabContent = useAppStore((s) => s.setFileTabContent);
-	const markFileTabSaved = useAppStore((s) => s.markFileTabSaved);
-	const [saving, setSaving] = useState(false);
-	const [saveError, setSaveError] = useState<string | null>(null);
-	const tabIdRef = useRef(tab.id);
-
-	useEffect(() => {
-		if (tabIdRef.current === tab.id) return;
-		tabIdRef.current = tab.id;
-		setSaving(false);
-		setSaveError(null);
-	}, [tab.id]);
+	const setFileTabView = useAppStore((state) => state.setFileTabView);
 
 	useLiveTabContent(tab, {
 		read: () =>
@@ -38,67 +25,15 @@ export function FilePane({ tab }: { tab: FileTab }) {
 			useAppStore.getState().updateFileTabContent(tab.workspaceId, tab.id, tab.content, tick),
 	});
 
-	const save = useCallback(async () => {
-		if (!tab.dirty || saving) return;
-		const content = tab.content;
-		setSaving(true);
-		setSaveError(null);
-		try {
-			await getTransport().request("fs.writeFile", {
-				workspaceId: tab.workspaceId,
-				path: tab.path,
-				content,
-			});
-			markFileTabSaved(tab.workspaceId, tab.id, content);
-		} catch (error) {
-			setSaveError(errorText(error, "Could not save file."));
-		} finally {
-			setSaving(false);
-		}
-	}, [markFileTabSaved, saving, tab.content, tab.dirty, tab.id, tab.path, tab.workspaceId]);
-
-	const editor = (
-		<div className="flex h-full min-h-0 flex-col">
-			<div
-				data-testid="file-editor-toolbar"
-				data-dirty={tab.dirty === true}
-				className="flex h-8 shrink-0 items-center gap-sm border-border-default border-b bg-container-header-bg px-sm"
-			>
-				<span
-					data-testid="file-save-status"
-					aria-live="polite"
-					className={`min-w-0 flex-1 truncate tr-text-metadata ${saveError ? "text-feedback-error" : "text-text-muted"}`}
-				>
-					{saveError ?? (tab.dirty ? "Unsaved changes" : "Saved")}
-				</span>
-				<Button
-					data-testid="file-save"
-					variant="outline"
-					size="sm"
-					disabled={!tab.dirty || saving}
-					onClick={() => void save()}
-				>
-					{saving ? "Saving…" : "Save"}
-				</Button>
-			</div>
-			<div className="min-h-0 flex-1">
-				<Suspense fallback={loading}>
-					<MonacoEditor
-						path={tab.path}
-						content={tab.content}
-						onChange={(value) => {
-							setSaveError(null);
-							setFileTabContent(tab.workspaceId, tab.id, value ?? "");
-						}}
-						onSave={() => void save()}
-					/>
-				</Suspense>
-			</div>
-		</div>
-	);
-
 	if (!isMarkdownPath(tab.path)) {
-		return editor;
+		return (
+			<div className="flex h-full min-h-0 flex-col">
+				<ReadOnlyToolbar path={tab.path} />
+				<div className="min-h-0 flex-1">
+					<SourcePreview path={tab.path} content={tab.content} />
+				</div>
+			</div>
+		);
 	}
 
 	const view = tab.view ?? "rendered";
@@ -108,8 +43,15 @@ export function FilePane({ tab }: { tab: FileTab }) {
 				data-testid="markdown-view-toggle"
 				role="toolbar"
 				aria-label="Markdown view mode"
-				className="flex h-8 shrink-0 items-center justify-end gap-xs border-border-default border-b bg-container-header-bg px-sm"
+				className="flex h-8 shrink-0 items-center gap-xs border-border-default border-b bg-container-header-bg px-sm"
 			>
+				<span
+					className="mr-auto min-w-0 truncate text-text-muted tr-text-metadata"
+					title={tab.path}
+				>
+					{tab.path}
+				</span>
+				<span className="text-text-subtle tr-text-metadata">Read-only</span>
 				<ToggleSegment
 					testid="md-toggle-preview"
 					label="Preview"
@@ -129,9 +71,20 @@ export function FilePane({ tab }: { tab: FileTab }) {
 						<MarkdownPreview content={tab.content} workspaceId={tab.workspaceId} path={tab.path} />
 					</Suspense>
 				) : (
-					editor
+					<SourcePreview path={tab.path} content={tab.content} />
 				)}
 			</div>
+		</div>
+	);
+}
+
+function ReadOnlyToolbar({ path }: { path: string }) {
+	return (
+		<div className="flex h-8 shrink-0 items-center gap-sm border-border-default border-b bg-container-header-bg px-sm">
+			<span className="min-w-0 flex-1 truncate text-text-muted tr-text-metadata" title={path}>
+				{path}
+			</span>
+			<span className="text-text-subtle tr-text-metadata">Read-only</span>
 		</div>
 	);
 }

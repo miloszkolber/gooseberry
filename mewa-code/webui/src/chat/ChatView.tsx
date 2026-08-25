@@ -1,21 +1,8 @@
-import type {
-	AskUserQuestionResult,
-	PromptHit,
-	QueueLane,
-	ThinkingLevel,
-	WireModel,
-} from "@mewa-code/contracts";
+import type { AskUserQuestionResult, PromptHit, QueueLane } from "@mewa-code/contracts";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import {
-	EMPTY_RUNTIME,
-	selectCatalogModel,
-	selectSkillsStale,
-	selectWorkspaceById,
-	toast,
-	useAppStore,
-} from "@/store";
+import { EMPTY_RUNTIME, selectWorkspaceById, toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 import { AskStatesContext, deriveAskStates } from "./askState";
 import { type ChatActions, ChatActionsContext } from "./ChatActions";
@@ -31,9 +18,7 @@ import { HistoryOverlay } from "./HistoryOverlay";
 import { QueueStrip } from "./QueueStrip";
 import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
 import { SessionGoalControl } from "./SessionGoalControl";
-import { SkillsDialog } from "./SkillsDialog";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./StreamIndicator";
-import { useModelCatalog } from "./useModelCatalog";
 import "./tools/register";
 import { ChatTurnView } from "./turns";
 import type { ChatAttachment, ChatTurn } from "./types";
@@ -80,15 +65,12 @@ export default function ChatView({
 	workspaceId: string;
 }) {
 	const runtime = useAppStore((s) => s.sessions[sessionId]) ?? EMPTY_RUNTIME;
-	const { models, refreshing: modelsRefreshing, refresh: onRefreshModels } = useModelCatalog();
 	const projectId = useAppStore(
-		(s) =>
-			Object.values(s.workspaces)
+		(state) =>
+			Object.values(state.workspaces)
 				.flat()
-				.find((w) => w.id === workspaceId)?.projectId,
+				.find((workspace) => workspace.id === workspaceId)?.projectId,
 	);
-	const [skillsOpen, setSkillsOpen] = useState(false);
-	const skillsStale = useAppStore((s) => selectSkillsStale(s, workspaceId, sessionId));
 	const workspaceRoot = useAppStore(
 		(s) => selectWorkspaceById(s, workspaceId)?.worktreePath ?? undefined,
 	);
@@ -116,7 +98,12 @@ export default function ChatView({
 		thinkingLevel,
 	} = runtime;
 
-	const currentModel = selectCatalogModel(models, sessionModel) ?? sessionModel;
+	const headerStatusEntries = useMemo<[string, string][]>(() => {
+		const entries = Object.entries(extUiStatus);
+		if (sessionModel) entries.push(["mewa-model", sessionModel.name || sessionModel.id]);
+		entries.push(["mewa-reasoning", thinkingLevel]);
+		return entries;
+	}, [extUiStatus, sessionModel, thinkingLevel]);
 
 	const rows = useMemo(
 		() => deriveRows(turns, toolResults, isStreaming),
@@ -211,20 +198,6 @@ export default function ChatView({
 	}, [mentionQuery, workspaceId]);
 
 	const onMentionQuery = useCallback((q: string | null) => setMentionQuery(q), []);
-
-	const onSelectModel = (model: WireModel) => {
-		useAppStore.getState().setCurrentModel(sessionId, model);
-		getTransport()
-			.request("session.setModel", { sessionId, model })
-			.catch(() => {});
-	};
-
-	const onSelectThinking = (level: ThinkingLevel) => {
-		useAppStore.getState().setThinkingLevel(sessionId, level);
-		getTransport()
-			.request("session.setThinkingLevel", { sessionId, level })
-			.catch(() => {});
-	};
 
 	const restoreTextToDraft = (text: string) => {
 		if (!text.trim()) return;
@@ -419,10 +392,8 @@ export default function ChatView({
 					<div className="shrink-0">
 						<ChatHeader
 							stats={stats}
-							statusEntries={Object.entries(extUiStatus)}
+							statusEntries={headerStatusEntries}
 							left={<SessionGoalControl workspaceId={workspaceId} sessionId={sessionId} />}
-							skillsStale={skillsStale}
-							{...(projectId ? { onOpenSkills: () => setSkillsOpen(true) } : {})}
 						/>
 					</div>
 					<div
@@ -496,14 +467,7 @@ export default function ChatView({
 							commands={mergedCommands}
 							mentionCandidates={mentionCandidates}
 							recentPrompts={recentPrompts}
-							models={models}
-							modelsRefreshing={modelsRefreshing}
-							onRefreshModels={onRefreshModels}
-							currentModel={currentModel}
-							thinkingLevel={thinkingLevel}
 							onMentionQuery={onMentionQuery}
-							onSelectModel={onSelectModel}
-							onSelectThinking={onSelectThinking}
 							onSubmit={onSubmit}
 							onAbort={onAbort}
 							onHistoryOpen={onHistoryOpen}
@@ -511,21 +475,6 @@ export default function ChatView({
 					</div>
 					{pendingExtUi ? (
 						<ExtUiDialog key={pendingExtUi.id} request={pendingExtUi} onReply={onExtUiReply} />
-					) : null}
-					{projectId ? (
-						<SkillsDialog
-							projectId={projectId}
-							workspace={{
-								workspaceId,
-								sessionId,
-								streaming: isStreaming,
-								stale: skillsStale,
-								onReloaded: (syncedTick) =>
-									useAppStore.getState().markSkillsSynced(sessionId, syncedTick),
-							}}
-							open={skillsOpen}
-							onOpenChange={setSkillsOpen}
-						/>
 					) : null}
 				</div>
 			</AskStatesContext.Provider>

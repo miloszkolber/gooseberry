@@ -159,7 +159,6 @@ export function remoteBashCommand(command: string, cwd: string): string {
 	return `bash -lc ${shellQuote(`cd -- ${shellQuote(cwd)} && ${command}`)}`;
 }
 
-
 export function buildSshArgs(
 	config: SshConfig,
 	options: { remoteCommand?: string; allocatePty?: boolean } = {},

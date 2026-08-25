@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PiProfileDescriptor, Workspace } from "@mewa-code/contracts";
+import type { PiProfileDescriptor } from "@mewa-code/contracts";
 import { resetConfigCache } from "../settings";
 import { stopAllWatches } from "../watch";
 import { handleRequest } from "./handlers";
@@ -62,37 +62,4 @@ test("settings.profile exposes the curated state without configuration secrets",
 		"protectedStateGuard",
 	]);
 	expect(JSON.stringify(profile)).not.toContain("SIGNET_DAEMON_URL");
-});
-
-test("fs.writeFile stays inside the selected worktree and replaces content safely", async () => {
-	const rows = (await handleRequest("workspace.list", { projectId: "p1" }, context)) as Workspace[];
-	const workspace = rows[0];
-	if (!workspace) throw new Error("expected a workspace");
-
-	await expect(
-		handleRequest(
-			"fs.writeFile",
-			{ workspaceId: workspace.id, path: "README.md", content: "# updated\n" },
-			context,
-		),
-	).resolves.toEqual({ ok: true });
-	expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("# updated\n");
-
-	const outside = join(dataDir, "outside");
-	mkdirSync(outside);
-	symlinkSync(outside, join(repo, "link"), "dir");
-	await expect(
-		handleRequest(
-			"fs.writeFile",
-			{ workspaceId: workspace.id, path: "../outside/escape.txt", content: "nope" },
-			context,
-		),
-	).rejects.toThrow("Path escapes the worktree");
-	await expect(
-		handleRequest(
-			"fs.writeFile",
-			{ workspaceId: workspace.id, path: "link/escape.txt", content: "nope" },
-			context,
-		),
-	).rejects.toThrow("Path escapes the worktree");
 });

@@ -35,12 +35,6 @@ export type ExistingWorktreeCandidate =
 	| { path: string; branch: string; status: "available" }
 	| { path: string; status: "detached" };
 
-export interface EditorInfo {
-	id: string;
-	label: string;
-	kind: "gui";
-}
-
 export type WorkspaceSkillChange = "none" | "detected" | "unknown";
 
 export interface WorkspaceFsChangedPayload {
@@ -215,7 +209,6 @@ export interface AppConfig {
 export type AppConfigPatch = Omit<Partial<AppConfig>, "piProfile"> & {
 	piProfile?: PiProfileSettingsPatch;
 };
-
 
 export const DEFAULT_PI_PROFILE_SETTINGS: Required<PiProfileSettings> = {
 	browser: true,

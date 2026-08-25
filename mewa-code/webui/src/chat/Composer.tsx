@@ -1,9 +1,4 @@
-import {
-	REQUEST_IMAGE_BASE64_BUDGET,
-	type SlashCommandInfo,
-	type ThinkingLevel,
-	type WireModel,
-} from "@mewa-code/contracts";
+import { REQUEST_IMAGE_BASE64_BUDGET, type SlashCommandInfo } from "@mewa-code/contracts";
 import { ArrowUp, ChevronUp, FileIcon, FolderIcon, History, Square, X } from "lucide-react";
 import {
 	type ClipboardEvent,
@@ -20,13 +15,11 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FileChip } from "./FileChip";
 import { type AttachedImage, fileToAttachedImage } from "./imageAttachment";
-import { ModelSelector } from "./ModelSelector";
 import {
 	SlashCommandMenu,
 	selectedSlashCommandValue,
 	useSlashCommandCompletion,
 } from "./SlashCommandCompletion";
-import { ThinkingSelector } from "./ThinkingSelector";
 import type { ChatAttachment } from "./types";
 
 export type SubmitBehavior = "send" | "steer" | "followUp" | "interrupt";
@@ -85,14 +78,7 @@ interface ComposerProps {
 	commands: SlashCommandInfo[];
 	mentionCandidates: MentionCandidate[];
 	recentPrompts: string[];
-	models: WireModel[];
-	modelsRefreshing: boolean;
-	onRefreshModels: (force: boolean) => void;
-	currentModel: WireModel | null;
-	thinkingLevel: ThinkingLevel;
 	onMentionQuery: (query: string | null) => void;
-	onSelectModel: (model: WireModel) => void;
-	onSelectThinking: (level: ThinkingLevel) => void;
 	onSubmit: (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => void;
 	onAbort: () => void;
 	onHistoryOpen?: () => void;
@@ -113,14 +99,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		commands,
 		mentionCandidates,
 		recentPrompts,
-		models,
-		modelsRefreshing,
-		onRefreshModels,
-		currentModel,
-		thinkingLevel,
 		onMentionQuery,
-		onSelectModel,
-		onSelectThinking,
 		onSubmit,
 		onAbort,
 		onHistoryOpen,
@@ -473,20 +452,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					/>
 				</div>
 				<div className="flex flex-wrap items-center gap-sm">
-					<div className="flex min-w-0 flex-1 flex-wrap items-center gap-sm">
-						<ModelSelector
-							models={models}
-							current={currentModel}
-							refreshing={modelsRefreshing}
-							onRefresh={onRefreshModels}
-							onSelect={onSelectModel}
-						/>
-						<ThinkingSelector
-							level={thinkingLevel}
-							levels={currentModel?.thinkingLevels ?? []}
-							onSelect={onSelectThinking}
-						/>
-					</div>
+					<div className="min-w-0 flex-1" />
 					<div className="flex shrink-0 items-center gap-sm">
 						<button
 							type="button"

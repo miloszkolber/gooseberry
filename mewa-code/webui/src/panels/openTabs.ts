@@ -119,8 +119,6 @@ export function openFileInTab(
 			path,
 			name: baseName(path),
 			content,
-			savedContent: content,
-			dirty: false,
 			loadedTick,
 		}),
 	);
