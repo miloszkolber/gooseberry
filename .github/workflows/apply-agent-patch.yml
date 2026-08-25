@@ -5,7 +5,6 @@ on:
     branches:
       - rewrite/mewa-code-implementation
     paths:
-      - .agent-patch
       - .agent-message
 
 permissions:
@@ -29,11 +28,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s .agent-patch
           test -s .agent-message
+          ls .agent-patch.part-* >/dev/null
           cp .agent-message /tmp/agent-message
-          git apply --index --whitespace=error .agent-patch
-          rm -f .agent-patch .agent-message .snapshot-trigger
+          cat .agent-patch.part-* | base64 --decode > /tmp/agent.patch
+          git apply --index --whitespace=error /tmp/agent.patch
+          rm -f .agent-patch.part-* .agent-message .snapshot-trigger
           git add -A
       - name: Validate source
         shell: bash
