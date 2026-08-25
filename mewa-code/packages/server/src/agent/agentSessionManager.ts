@@ -18,6 +18,7 @@ import type {
 	AskUserQuestionResult,
 	ImageContent,
 	Model,
+	ModelReference,
 	QueueLane,
 	RefreshedModels,
 	RemovedQueuedMessage,
@@ -31,9 +32,10 @@ import type {
 	TranscriptMessage,
 	WireModel,
 } from "@mewa-code/contracts";
-import { isTranscriptMessageRole } from "@mewa-code/contracts";
+import { isTranscriptMessageRole, modelReferenceKey } from "@mewa-code/contracts";
 import { assertMountedDirectory } from "../pathAdmission";
 import { clearStoredSessionGoal, clearStoredSessionGoalsForWorkspace } from "../persistence";
+import { getConfig, updateConfig } from "../settings";
 import { ANSWERABILITY_ERRORS, assessAnswerability, buildAnswersMessage } from "./askUserQuestion";
 import { buildResourceLoader, toSkillCommands } from "./extensions";
 import {
@@ -199,14 +201,28 @@ export interface CreateSessionResult {
 	thinkingLevel: ThinkingLevel;
 }
 
-export function toWireModel(model: Model<string>): WireModel {
+export function toWireModel(
+	model: Model<string>,
+	options: { available?: boolean; hidden?: boolean } = {},
+): WireModel {
 	return {
 		id: model.id,
 		name: model.name,
 		provider: model.provider,
 		contextWindow: model.contextWindow,
+		maxTokens: model.maxTokens,
 		reasoning: model.reasoning,
 		thinkingLevels: getSupportedThinkingLevels(model),
+		input: [...model.input],
+		cost: {
+			input: model.cost.input,
+			output: model.cost.output,
+			cacheRead: model.cost.cacheRead,
+			cacheWrite: model.cost.cacheWrite,
+			...(model.cost.tiers ? { tiers: model.cost.tiers.map((tier) => ({ ...tier })) } : {}),
+		},
+		available: options.available ?? true,
+		hidden: options.hidden ?? false,
 	};
 }
 
@@ -1067,17 +1083,72 @@ export function getSessionCommands(sessionId: string): SlashCommandInfo[] {
 export async function listAvailableModels(): Promise<WireModel[]> {
 	const runtime = await getPiRuntime();
 	void refreshCatalogs(runtime);
-	return readAvailableWireModels(runtime);
+	return readModelCatalog(runtime);
 }
 
 export async function refreshAvailableModels(force = false): Promise<RefreshedModels> {
 	const runtime = await getPiRuntime();
 	const { completed } = await refreshCatalogs(runtime, { force });
-	return { models: readAvailableWireModels(runtime), complete: completed };
+	return { models: readModelCatalog(runtime), complete: completed };
 }
 
-function readAvailableWireModels(runtime: Awaited<ReturnType<typeof getPiRuntime>>): WireModel[] {
-	return settledAvailableModels(runtime).map((m) => toWireModel(m as unknown as Model<string>));
+export function readModelCatalog(
+	runtime: Pick<Awaited<ReturnType<typeof getPiRuntime>>, "getModels" | "getAvailableSnapshot">,
+): WireModel[] {
+	const available = new Set(
+		settledAvailableModels(runtime).map((model) =>
+			modelReferenceKey({ provider: model.provider, id: model.id }),
+		),
+	);
+	const hidden = new Set((getConfig().hiddenModels ?? []).map(modelReferenceKey));
+	return runtime
+		.getModels()
+		.map((model) => {
+			const key = modelReferenceKey({ provider: model.provider, id: model.id });
+			return toWireModel(model as unknown as Model<string>, {
+				available: available.has(key),
+				hidden: hidden.has(key),
+			});
+		})
+		.sort(
+			(a, b) =>
+				a.provider.localeCompare(b.provider) ||
+				a.name.localeCompare(b.name) ||
+				a.id.localeCompare(b.id),
+		);
+}
+
+function modelReference(provider: string, id: string): ModelReference {
+	if (!provider || !id || provider.includes("\0") || id.includes("\0")) {
+		throw new Error("Invalid model reference");
+	}
+	return { provider, id };
+}
+
+export async function setModelVisibility(
+	provider: string,
+	id: string,
+	hidden: boolean,
+): Promise<WireModel[]> {
+	const runtime = await getPiRuntime();
+	const ref = modelReference(provider, id);
+	if (!runtime.getModel(provider, id)) throw new Error(`Unknown model: ${provider}/${id}`);
+	const key = modelReferenceKey(ref);
+	const current = getConfig().hiddenModels ?? [];
+	const next = current.filter((candidate) => modelReferenceKey(candidate) !== key);
+	if (hidden) next.push(ref);
+	updateConfig({ hiddenModels: next });
+	return readModelCatalog(runtime);
+}
+
+export async function setAllModelVisibility(hidden: boolean): Promise<WireModel[]> {
+	const runtime = await getPiRuntime();
+	updateConfig({
+		hiddenModels: hidden
+			? runtime.getModels().map((model) => ({ provider: model.provider, id: model.id }))
+			: [],
+	});
+	return readModelCatalog(runtime);
 }
 
 export interface DefaultModelResult {

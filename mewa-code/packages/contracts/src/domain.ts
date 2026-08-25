@@ -128,6 +128,8 @@ export interface ProviderStatus {
 	canOAuth?: boolean;
 	canApiKey?: boolean;
 	canLogout?: boolean;
+	modelCount: number;
+	availableModelCount: number;
 }
 
 export interface ProviderStatusReport {
@@ -201,9 +203,39 @@ export interface LoginReply {
 
 export type ThemeId = string;
 
+export interface ModelReference {
+	provider: string;
+	id: string;
+}
+
+export function modelReferenceKey(ref: Pick<ModelReference, "provider" | "id">): string {
+	return JSON.stringify([ref.provider, ref.id]);
+}
+
+export function normalizeModelReferences(value: unknown): ModelReference[] {
+	if (!Array.isArray(value)) return [];
+	const result: ModelReference[] = [];
+	const seen = new Set<string>();
+	for (const candidate of value) {
+		if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) continue;
+		const provider = Reflect.get(candidate, "provider");
+		const id = Reflect.get(candidate, "id");
+		if (typeof provider !== "string" || typeof id !== "string") continue;
+		if (!provider || !id || provider.includes("\0") || id.includes("\0")) continue;
+		const ref = { provider, id };
+		const key = modelReferenceKey(ref);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		result.push(ref);
+	}
+	return result;
+}
+
 export interface AppConfig {
 	theme: ThemeId;
 	piProfile?: PiProfileSettings;
+	/** Models hidden from Mewa catalog and selection surfaces. */
+	hiddenModels?: ModelReference[];
 }
 
 export type AppConfigPatch = Omit<Partial<AppConfig>, "piProfile"> & {
@@ -221,6 +253,7 @@ export const DEFAULT_PI_PROFILE_SETTINGS: Required<PiProfileSettings> = {
 export const DEFAULT_CONFIG = {
 	theme: "dark",
 	piProfile: DEFAULT_PI_PROFILE_SETTINGS,
+	hiddenModels: [],
 } satisfies AppConfig;
 
 export const IMAGE_MAX_BASE64_BYTES = 4.5 * 1024 * 1024;

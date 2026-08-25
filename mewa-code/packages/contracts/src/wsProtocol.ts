@@ -36,7 +36,7 @@ import type {
 	WireModel,
 } from "./piProtocol";
 
-export const PROTOCOL_VERSION = 51;
+export const PROTOCOL_VERSION = 52;
 
 export interface ServerWelcome {
 	protocolVersion: number;
@@ -108,6 +108,8 @@ export const WS_METHODS = {
 	modelRefresh: "model.refresh",
 	modelDefault: "model.default",
 	modelClampThinking: "model.clampThinking",
+	modelSetVisibility: "model.setVisibility",
+	modelSetAllVisibility: "model.setAllVisibility",
 	providerStatus: "provider.status",
 	providerLoginStart: "provider.loginStart",
 	providerLoginReply: "provider.loginReply",
@@ -277,6 +279,14 @@ export interface WsMethodMap {
 	"model.default": {
 		params: Record<string, never>;
 		result: { model: WireModel | null; thinkingLevel: ThinkingLevel };
+	};
+	"model.setVisibility": {
+		params: { provider: string; id: string; hidden: boolean };
+		result: WireModel[];
+	};
+	"model.setAllVisibility": {
+		params: { hidden: boolean };
+		result: WireModel[];
 	};
 	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
 	"provider.loginStart": {

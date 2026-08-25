@@ -23,6 +23,7 @@ Do not grant the SSH account privileges agents should not have. Docker-group mem
 - Controller and browser authentication material is separate from provider and SSH credentials.
 - `mewa-browser` receives no SSH material, Pi/provider state, or repository mounts.
 - The Web client never bundles provider runtime implementations or credentials.
+- Provider/model settings receive only sanitized identifiers, capability flags, limits, availability, and Pi-reported pricing metadata. Model visibility is stored in Mewa state and contains no secret material.
 
 The protected-state guard denies direct project-scoped file/search access to Pi and Mewa state roots, resolves existing symlinks, and blocks visible shell references as defense in depth. It is not a complete shell sandbox; filesystem layout and least-privilege host permissions are the stronger boundary.
 

@@ -3,7 +3,7 @@ name: CI
 # Fast structural gates for pull requests. Feature changes run focused tests chosen for their behavior.
 on:
   pull_request:
-    branches: [main, "rewrite/mewa-code-foundation"]
+    branches: [main]
     paths:
       - ".github/workflows/**"
       - "compose.yaml"
@@ -11,7 +11,7 @@ on:
       - "mewa-code/**"
       - "mewa-browser/**"
   push:
-    branches: [main, "rewrite/mewa-code-foundation"]
+    branches: [main]
     tags: ["v*"]
     paths:
       - ".github/workflows/**"

@@ -37,13 +37,13 @@ const fauxA = createFauxCore({
 	provider: "fauxa",
 	api: "fauxa",
 	models: [modelDef("fauxa")],
-	tokensPerSecond: 2000,
+	tokensPerSecond: 20_000,
 });
 const fauxB = createFauxCore({
 	provider: "fauxb",
 	api: "fauxb",
 	models: [modelDef("fauxb")],
-	tokensPerSecond: 2000,
+	tokensPerSecond: 20_000,
 });
 
 const cfg = (faux: typeof fauxA, id: string) => ({

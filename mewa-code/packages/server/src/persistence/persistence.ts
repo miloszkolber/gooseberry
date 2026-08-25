@@ -17,6 +17,7 @@ import {
 	type AppConfig,
 	DEFAULT_CONFIG,
 	DEFAULT_PI_PROFILE_SETTINGS,
+	normalizeModelReferences,
 	type Project,
 	type Workspace,
 } from "@mewa-code/contracts";
@@ -221,6 +222,7 @@ export function loadConfig(): AppConfig {
 		...extensions,
 		theme: typeof value.theme === "string" ? value.theme : DEFAULT_CONFIG.theme,
 		piProfile,
+		hiddenModels: normalizeModelReferences(value.hiddenModels),
 	};
 }
 

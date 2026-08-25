@@ -130,8 +130,7 @@ export interface EditorOpenOptions {
 
 export const SettingsSection = {
 	Providers: "providers",
-	Extensions: "extensions",
-	Appearance: "appearance",
+	Models: "models",
 } as const;
 export type SettingsSection = (typeof SettingsSection)[keyof typeof SettingsSection];
 

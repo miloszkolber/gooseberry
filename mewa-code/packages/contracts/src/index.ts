@@ -8,6 +8,8 @@ export {
 	isRetriedAttempt,
 	MAX_HISTORY_LIMIT,
 	MAX_HISTORY_QUERY_LENGTH,
+	modelReferenceKey,
+	normalizeModelReferences,
 	normalizeSessionGoal,
 	REQUEST_IMAGE_BASE64_BUDGET,
 	SESSION_GOAL_MAX_LENGTH,

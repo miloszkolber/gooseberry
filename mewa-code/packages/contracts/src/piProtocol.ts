@@ -15,14 +15,44 @@ export type {
 } from "@earendil-works/pi-ai";
 
 import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, Model, StopReason, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, StopReason, TextContent } from "@earendil-works/pi-ai";
 
-export type WireModel = Pick<
-	Model<string>,
-	"id" | "name" | "provider" | "contextWindow" | "reasoning"
-> & {
+export interface WireModelCostRates {
+	/** USD per one million tokens. */
+	input: number;
+	/** USD per one million tokens. */
+	output: number;
+	/** USD per one million cached input tokens read. */
+	cacheRead: number;
+	/** USD per one million cached input tokens written. */
+	cacheWrite: number;
+}
+
+export interface WireModelCostTier extends WireModelCostRates {
+	/** Apply this request-wide tier when input usage exceeds this threshold. */
+	inputTokensAbove: number;
+}
+
+export interface WireModelCost extends WireModelCostRates {
+	tiers?: WireModelCostTier[];
+}
+
+/** Complete Pi model-catalog entry projected to browser and ACP clients. */
+export interface WireModel {
+	id: string;
+	name: string;
+	provider: string;
+	contextWindow: number;
+	maxTokens: number;
+	reasoning: boolean;
 	thinkingLevels: ThinkingLevel[];
-};
+	input: ("text" | "image")[];
+	cost: WireModelCost;
+	/** Whether Pi can currently run the model with the configured provider credentials. */
+	available: boolean;
+	/** Mewa presentation preference. Hidden models remain in Pi's canonical catalog. */
+	hidden: boolean;
+}
 
 export interface RefreshedModels {
 	models: WireModel[];

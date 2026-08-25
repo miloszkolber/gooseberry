@@ -80,7 +80,18 @@ Acceptance: Pi Bash and `!` commands execute remotely with Pi's normal schema/re
 
 Acceptance: a fresh image is usable after deployment credentials/provider auth, without extension assembly.
 
-## 8. Refactor subagents into typed roles
+## 8. Expose complete provider and model management
+
+- List every provider present in Pi's provider registry, model catalog, or credential store without a Mewa allowlist.
+- Expose Pi-supported OAuth and API-key actions and clearly label providers managed through environment/configuration/extensions.
+- Project the complete Pi model catalog, including unavailable models.
+- Show context/output limits, input modality, reasoning support, availability, and Pi-reported input/output/cache/tiered pricing.
+- Persist individual and bulk model visibility as Mewa presentation state without mutating Pi's canonical catalog.
+- Add focused tests for metadata projection, provider coverage, persistence, filtering, and visibility controls.
+
+Acceptance: every Pi provider/model is inspectable in the Web UI, supported credentials can be configured through Pi, and hidden models remain distinct from unavailable or deleted models.
+
+## 9. Refactor subagents into typed roles
 
 - Add `scout`, `builder`, `strategist`, and `auditor` typed role definitions.
 - Merge worker/specialist behavior into `builder`.
@@ -90,7 +101,7 @@ Acceptance: a fresh image is usable after deployment credentials/provider auth, 
 
 Acceptance: each role behaves according to permissions, and children cannot create grandchildren.
 
-## 9. Add provider-agnostic cost-aware model routing
+## 10. Add provider-agnostic cost-aware model routing
 
 - Add model groups: `economy`, `balanced`, `strong`, `deep`.
 - Keep provider-specific mappings in one routing module.
@@ -101,7 +112,7 @@ Acceptance: each role behaves according to permissions, and children cannot crea
 
 Acceptance: role prompts contain no provider IDs and routing falls back predictably when a preferred model is unavailable.
 
-## 10. Extend goals to lightweight tasks
+## 11. Extend goals to lightweight tasks
 
 - Store one goal plus tasks with pending/active/done states.
 - Add small controller APIs and Web UI controls.
@@ -110,7 +121,7 @@ Acceptance: role prompts contain no provider IDs and routing falls back predicta
 
 Acceptance: state survives restart/resume and both UI and agent see the same objective.
 
-## 11. Automate Pi-family updates
+## 12. Automate Pi-family updates
 
 - Keep exact Pi family versions in the dependency catalog.
 - Add a scheduled workflow that discovers the newest stable family, updates all packages atomically, refreshes the lockfile, runs the focused compatibility suite, and opens an update PR.
@@ -118,7 +129,7 @@ Acceptance: state survives restart/resume and both UI and agent see the same obj
 
 Acceptance: reproducible builds and routine upstream updates coexist.
 
-## 12. Simplify deployment configuration
+## 13. Simplify deployment configuration
 
 - Keep provider authentication in Pi/Web UI.
 - Keep SSH key/known-hosts material and optional Signet enablement/port as the meaningful operator inputs.
@@ -127,7 +138,7 @@ Acceptance: reproducible builds and routine upstream updates coexist.
 
 Acceptance: normal setup does not require assembling extensions or choosing internal policy toggles.
 
-## 13. Prune dependencies and images
+## 14. Prune dependencies and images
 
 - Remove packages made obsolete by terminal/editor/workbench/theme/skills UI deletion.
 - Rebuild production dependency pruning around retained runtime imports.
@@ -135,7 +146,7 @@ Acceptance: normal setup does not require assembling extensions or choosing inte
 
 Acceptance: non-root read-only images build for supported architectures and contain only retained runtime capability.
 
-## 14. Replace inherited tests with the focused contract suite
+## 15. Replace inherited tests with the focused contract suite
 
 Keep tests for startup/transport, projects/multi-repo Git, session persistence/isolation, images, SSH Bash, file preview, goals/tasks, subagent permissions/routing/usage, ACP, browser isolation, Signet degradation, protected paths, and final images.
 

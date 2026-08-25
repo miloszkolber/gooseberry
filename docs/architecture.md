@@ -73,6 +73,19 @@ Built-in extensions are in-process trusted controller code and use Pi's SDK:
 
 The fixed Mewa profile is assembled by the controller. Non-Mewa user/project resources remain Pi-owned and are not managed through a Mewa package UI.
 
+## Providers and models
+
+The controller uses Pi's `ModelRuntime` as the only provider/model source of truth.
+
+- `getProviders()` supplies registered provider definitions and supported authentication actions.
+- `getModels()` supplies the complete catalog, including custom models registered through Pi configuration or extensions.
+- `getAvailableSnapshot()` separately identifies models that can currently be used with the active credentials and provider state.
+- Pi's credential APIs own OAuth/API-key login, logout, and credential persistence.
+
+The controller projects sanitized provider and model metadata to the Web UI: identifiers, display names, availability, context/output limits, text/image input support, reasoning support, and Pi-reported input/output/cache pricing. Credentials, provider runtime implementations, and raw auth state never enter the browser bundle.
+
+Mewa persists hidden model references in its own state. Hidden and unavailable are distinct: a hidden model still exists in Pi's catalog, and an unavailable model may still be shown for inspection. Visibility does not change Pi settings or existing sessions. See [`model-management.md`](model-management.md).
+
 ## Subagents and routing
 
 A child is a normal persistent Pi session in the controller's process-global session registry. It inherits the parent runtime generation, project, admitted working directory, guards, and integrations.
@@ -99,7 +112,7 @@ Mewa owns one optional session goal and a small task list. The state is stored s
 Pi credentials, settings, and canonical sessions stay in Pi-owned storage. Mewa stores only:
 
 - project registry and roots;
-- UI preferences needed by the retained shell;
+- UI preferences needed by the retained shell, including hidden model references;
 - session-to-project presentation metadata;
 - goals/tasks and subagent relationship metadata;
 - optional integration settings such as Signet enablement/endpoint.

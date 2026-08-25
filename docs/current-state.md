@@ -8,7 +8,9 @@ The branch already provides several pieces worth keeping:
 
 - a Bun monorepo with a headless controller, Web UI, shared contracts, and in-process Pi SDK host;
 - browser and ACP as supported interfaces, with no Mewa TUI;
-- persistent Pi sessions, streaming event projection, multi-image handling, Pi-backed model/provider information, and usage/context display;
+- persistent Pi sessions, streaming event projection, multi-image handling, and Pi-backed usage/context display;
+- a complete provider settings surface that lists every Pi-registered/catalogued/credentialed provider and exposes Pi-supported OAuth/API-key actions;
+- a complete model catalog surface with availability, context/output limits, text/image modality, reasoning support, Pi-reported pricing, search, refresh, and persistent hide/show preferences;
 - transparent SSH-backed Pi Bash using Pi's normal public tool definition rather than a model-visible SSH tool;
 - same-path mount admission and protected-state guards;
 - local Git/files/worktree infrastructure inherited from ThinkRail;
@@ -30,7 +32,7 @@ The current foundation still includes behavior outside the baseline:
 - theme registry/settings and extra font families have been removed; the UI now follows the system color scheme with one bundled mono face;
 - skills and Pi-profile controls have been removed from active chat/settings; inherited worktree creation code still carries obsolete controls and will be deleted with worktree management;
 - configurable toggles for capabilities that should be part of the fixed Mewa profile;
-- direct provider/model IDs in the current subagent tool rather than typed roles and model groups;
+- direct provider/model IDs in the current subagent tool rather than typed roles and model groups; model visibility is currently a UI preference and is intentionally separate from this future routing policy;
 - a single generic child role rather than scout/builder/strategist/auditor policy;
 - no lightweight task list alongside the session goal;
 - no scheduled atomic Pi-family update workflow; the inherited release-version helper has been removed and will be replaced with a focused Pi updater;
@@ -45,4 +47,5 @@ Until the simplification is complete:
 - do not add new workbench/editor/terminal dependencies;
 - avoid migrations that make projects more repository-specific;
 - delete obsolete tests with their features;
-- keep documentation aligned with the target rather than the imported foundation.
+- keep documentation aligned with the target rather than the imported foundation;
+- keep Pi authoritative for provider/model registries and credentials while Mewa only projects metadata and model visibility.

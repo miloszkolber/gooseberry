@@ -4,6 +4,8 @@ import { settledAvailableModels, usePiRuntime } from "../agent";
 export interface ProviderStatusSources {
 	modelProviderIds: Set<string>;
 	availableProviders: Set<string>;
+	modelCounts: ReadonlyMap<string, number>;
+	availableModelCounts: ReadonlyMap<string, number>;
 	credentialProviders: string[];
 	oauthProviders: { id: string; name: string }[];
 	credentialType: (id: string) => "oauth" | "api_key" | undefined;
@@ -57,10 +59,12 @@ export function buildProviderReport(sources: ProviderStatusSources): ProviderSta
 			...(canApiKey ? { canApiKey: true } : {}),
 			...(removable.has(id) ? { canLogout: true } : {}),
 		};
-		const configured =
-			sources.availableProviders.has(id) ||
-			(!sources.modelProviderIds.has(id) && sources.hasAuth(id));
-		if (!configured) return { id, name, configured: false, ...login };
+		const modelCount = sources.modelCounts.get(id) ?? 0;
+		const availableModelCount = sources.availableModelCounts.get(id) ?? 0;
+		const configured = sources.hasAuth(id) || sources.availableProviders.has(id);
+		if (!configured) {
+			return { id, name, configured: false, modelCount, availableModelCount, ...login };
+		}
 		const { source, label } = sources.providerAuth(id);
 		const kind = resolveKind(sources.credentialType(id), source);
 		const detail = resolveDetail(source, label);
@@ -70,6 +74,8 @@ export function buildProviderReport(sources: ProviderStatusSources): ProviderSta
 			configured: true,
 			kind,
 			...(detail !== undefined ? { detail } : {}),
+			modelCount,
+			availableModelCount,
 			...login,
 		};
 	});
@@ -84,36 +90,45 @@ export function buildProviderReport(sources: ProviderStatusSources): ProviderSta
 }
 
 export async function getProviderStatus(): Promise<ProviderStatusReport> {
-	return usePiRuntime(async (runtime, generation) => {
-		const providerStatusIds = [...generation.providerStatusIds];
+	return usePiRuntime(async (runtime) => {
+		const registeredProviders = runtime.getProviders();
 		try {
-			await runtime.refresh({ providers: providerStatusIds });
+			await runtime.refresh({ providers: registeredProviders.map((provider) => provider.id) });
 		} catch {
 			throw new Error("Provider status refresh failed");
 		}
 
-		const providerStatusIdSet = new Set(providerStatusIds);
-		const visibleProviders = providerStatusIds.flatMap((id) => {
+		const allModels = runtime.getModels();
+		const available = settledAvailableModels(runtime);
+		const credentials = await runtime.listCredentials();
+		const providerStatusIds = new Set<string>([
+			...registeredProviders.map((provider) => provider.id),
+			...allModels.map((model) => model.provider),
+			...credentials.map((credential) => credential.providerId),
+		]);
+		const visibleProviders = [...providerStatusIds].flatMap((id) => {
 			const provider = runtime.getProvider(id);
 			return provider ? [provider] : [];
 		});
-		const available = settledAvailableModels(runtime).filter((model) =>
-			providerStatusIdSet.has(model.provider),
-		);
-		const credentials = await runtime.listCredentials();
-		const visibleCredentials = credentials.filter((credential) =>
-			providerStatusIdSet.has(credential.providerId),
-		);
 		const credentialTypes = new Map(
-			visibleCredentials.map((credential) => [credential.providerId, credential.type]),
+			credentials.map((credential) => [credential.providerId, credential.type]),
 		);
 
+		const modelCounts = new Map<string, number>();
+		for (const model of allModels) {
+			modelCounts.set(model.provider, (modelCounts.get(model.provider) ?? 0) + 1);
+		}
+		const availableModelCounts = new Map<string, number>();
+		for (const model of available) {
+			availableModelCounts.set(model.provider, (availableModelCounts.get(model.provider) ?? 0) + 1);
+		}
+
 		return buildProviderReport({
-			modelProviderIds: new Set(
-				providerStatusIds.filter((providerId) => runtime.getModels(providerId).length > 0),
-			),
+			modelProviderIds: providerStatusIds,
 			availableProviders: new Set(available.map((model) => model.provider)),
-			credentialProviders: visibleCredentials.map((credential) => credential.providerId),
+			modelCounts,
+			availableModelCounts,
+			credentialProviders: credentials.map((credential) => credential.providerId),
 			oauthProviders: visibleProviders
 				.filter((provider) => provider.auth.oauth)
 				.map((provider) => ({

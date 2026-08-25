@@ -38,6 +38,8 @@ import {
 	removeQueuedSession,
 	removeWorkspaceSessions,
 	resolveExtUi,
+	setAllModelVisibility,
+	setModelVisibility,
 	setSessionModel,
 	setSessionThinkingLevel,
 	steerSession,
@@ -338,6 +340,14 @@ const handlers: Record<string, Handler> = {
 		return refreshAvailableModels(p.force === true);
 	},
 	"model.default": () => getDefaultModel(),
+	"model.setVisibility": (params) => {
+		const p = params as { provider: string; id: string; hidden: boolean };
+		return setModelVisibility(p.provider, p.id, p.hidden === true);
+	},
+	"model.setAllVisibility": (params) => {
+		const p = params as { hidden: boolean };
+		return setAllModelVisibility(p.hidden === true);
+	},
 	"provider.status": () => getProviderStatus(),
 	"provider.loginStart": (params) => {
 		const p = params as { providerId: string; type?: "oauth" | "api_key" };

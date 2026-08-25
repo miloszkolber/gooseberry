@@ -91,3 +91,23 @@ test("a bounded write rejects oversized state without replacing the prior value"
 	expect(loadProjects()).toEqual(initial);
 	expect(existsSync(join(root, ".projects.json"))).toBe(false);
 });
+
+test("model visibility preferences are normalized and persist independently of Pi state", () => {
+	writeFileSync(
+		join(root, "config.json"),
+		JSON.stringify({
+			theme: "dark",
+			hiddenModels: [
+				{ provider: "alpha", id: "one" },
+				{ provider: "alpha", id: "one" },
+				{ provider: "beta", id: "two" },
+				{ provider: "", id: "invalid" },
+			],
+		}),
+	);
+
+	expect(loadConfig().hiddenModels).toEqual([
+		{ provider: "alpha", id: "one" },
+		{ provider: "beta", id: "two" },
+	]);
+});

@@ -3,6 +3,7 @@ import {
 	type AppConfigPatch,
 	DEFAULT_CONFIG,
 	DEFAULT_PI_PROFILE_SETTINGS,
+	normalizeModelReferences,
 	type PiProfileSettings,
 } from "@mewa-code/contracts";
 import { loadConfig, saveConfig } from "../persistence";
@@ -37,6 +38,7 @@ function normalizeConfig(value: AppConfig): AppConfig {
 		...value,
 		theme: typeof value.theme === "string" ? value.theme : DEFAULT_CONFIG.theme,
 		piProfile: normalizeProfileSettings(value.piProfile),
+		hiddenModels: normalizeModelReferences(value.hiddenModels),
 	};
 }
 

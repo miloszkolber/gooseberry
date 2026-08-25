@@ -8,7 +8,7 @@ The product should make Pi convenient for repository and multi-repository coding
 
 ## Core principles
 
-1. **Pi is the engine.** Mewa uses Pi's public SDK and extension mechanisms. It does not replace Pi's provider registry, model catalog, session format, built-in tools, retry, compaction, project trust, usage accounting, or normal prompt behavior.
+1. **Pi is the engine.** Mewa uses Pi's public SDK and extension mechanisms. Pi remains authoritative for the provider registry, model catalog, authentication, session format, built-in tools, retry, compaction, project trust, usage accounting, and normal prompt behavior. Mewa projects those registries into the Web UI and stores only product preferences such as model visibility.
 2. **Mewa is thin and opinionated.** It supplies a small fixed integration profile, projects Pi state into Web UI and ACP, and owns only product concepts Pi does not own.
 3. **SSH is hidden infrastructure.** Pi's public `bash` tool keeps its normal schema and renderer while command execution happens through the host SSH account. Agents do not receive an `ssh` tool.
 4. **The host is the development environment.** Language runtimes, package managers, Docker, system services, and project tooling stay on the host rather than being bundled into the controller image.
@@ -43,6 +43,19 @@ Git is observational rather than managerial.
 - The browser reconstructs sessions from controller/Pi state and is not the canonical transcript store.
 - Streaming text, thinking, tool calls/results, retries, compaction, errors, completion, model identity, reasoning level, token use, context use, and cost come from Pi state/events.
 - A message may include several images in one turn with previews, removal before send, and clear validation failures.
+
+### Providers and models
+
+Provider and model management is a first-class Web UI surface backed by Pi.
+
+- The provider page lists every provider present in Pi's runtime registry, model catalog, or credential store. There is no Mewa allowlist of preferred providers.
+- OAuth and API-key actions are exposed when the provider's Pi adapter supports them. Providers configured through the environment, `models.json`, or an extension remain visible and are marked as Pi-managed.
+- The model page lists Pi's complete catalog, including models that are currently unavailable because credentials or provider connectivity are missing.
+- Each model shows provider, identifier, context window, maximum output, supported input modalities, reasoning support, availability, and Pi-reported input/output/cache pricing. Tiered pricing is shown when Pi supplies it.
+- Users may hide individual models, hide all, or show all. Hiding is a Mewa presentation preference; it does not delete the model, rewrite Pi's catalog, invalidate existing sessions, or alter provider credentials.
+- Catalog and provider refresh use Pi's runtime. Mewa does not scrape or maintain a competing pricing/model database.
+
+The detailed contract is documented in [`model-management.md`](model-management.md).
 
 ### Files
 
@@ -102,9 +115,10 @@ The normal image ships preconfigured with:
 - subagents — available;
 - Signet memory — optional.
 
-The ordinary product settings surface contains only:
+The ordinary product settings surface contains:
 
-- Pi/provider authentication actions;
+- the complete Pi provider registry with supported authentication actions;
+- the complete Pi model catalog with availability, capabilities, limits, pricing, and Mewa visibility preferences;
 - Signet enabled/disabled;
 - Signet address/port where needed.
 
@@ -125,7 +139,9 @@ The product shell is centered on:
 - Pi-reported usage/context/cost;
 - discovered Git repositories, branches, changes, and diffs;
 - read-only file tree and preview;
-- provider authentication and optional Signet status.
+- complete provider configuration/status;
+- complete model catalog, metadata, cost, availability, and visibility controls;
+- optional Signet status.
 
 The entire interface uses one bundled monospaced font. A simple system light/dark treatment is acceptable; a theme registry is not.
 
@@ -157,6 +173,7 @@ High-value contracts include:
 - read-only file preview;
 - goal/task persistence and Pi context/tool integration;
 - subagent permissions, no recursion, routing, progress, and usage attribution;
+- complete provider/model projection and persistent model visibility;
 - isolated browser operation;
 - Signet enabled/disabled behavior;
 - protected state and credential boundaries;

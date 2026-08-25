@@ -1,6 +1,6 @@
 # Mewa Code
 
-Mewa Code is a focused Web UI and ACP host for the Pi Coding Agent. It is intended to replace the parts of OpenChamber that are useful for day-to-day coding: directory-based projects, persistent sessions, goals and tasks, integrated subagents, multi-image prompts, Pi-reported usage, local Git visibility, and read-only file browsing.
+Mewa Code is a focused Web UI and ACP host for the Pi Coding Agent. It is intended to replace the parts of OpenChamber that are useful for day-to-day coding: directory-based projects, persistent sessions, goals and tasks, integrated subagents, multi-image prompts, Pi-reported usage, complete provider/model management, local Git visibility, and read-only file browsing.
 
 Pi remains the agent runtime. Mewa adds a small product shell and a curated set of SDK extensions without replacing Pi's normal provider, model, session, tool, retry, compaction, or trust behavior.
 
@@ -10,6 +10,7 @@ Pi remains the agent runtime. Mewa adds a small product shell and a curated set 
 - Pi's normal `bash` tool executes transparently through SSH on the development host.
 - Repository files, Git status and diffs, and file previews use approved same-path mounts.
 - Chromium runs in the separate `mewa-browser` service.
+- Provider and model settings project Pi's complete registries, supported authentication actions, capabilities, limits, availability, and pricing; model hiding remains a Mewa-only preference.
 - Browser and ACP are the supported interfaces. There is no TUI or Web UI terminal.
 
 ## Development status
@@ -25,7 +26,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-The controller binds to loopback by default. Provider authentication is completed through Pi. Signet memory is optional.
+The controller binds to loopback by default. Provider authentication and model visibility are managed from the Web UI through Pi-backed APIs. Signet memory is optional.
 
 ## License
 
