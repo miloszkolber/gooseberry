@@ -41,6 +41,8 @@ jobs:
           set -euo pipefail
           cd mewa-code
           bun install --frozen-lockfile
+          bun --filter @mewa-code/web typography:generate
+          bun --filter @mewa-code/web colors:generate
           bun run check:deps
           bun run lint
           bun run typecheck
@@ -50,6 +52,8 @@ jobs:
           cd ../mewa-browser
           bun run check
           bun run test
+          cd ..
+          git add -A
       - name: Commit validated patch
         shell: bash
         run: |
