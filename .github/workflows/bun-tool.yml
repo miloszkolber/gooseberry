@@ -1,0 +1,29 @@
+name: Bun tool
+
+on:
+  push:
+    branches:
+      - automation/source-snapshot
+  pull_request:
+    branches:
+      - rewrite/mewa-code-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Package Bun
+        run: |
+          cp "$(command -v bun)" /tmp/bun
+          chmod +x /tmp/bun
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bun-linux-x64
+          path: /tmp/bun
+          retention-days: 1
