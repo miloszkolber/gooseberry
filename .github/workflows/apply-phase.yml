@@ -1,0 +1,35 @@
+name: Apply rewrite phase
+
+on:
+  push:
+    branches:
+      - automation/source-snapshot
+    paths:
+      - .phase.patch.gz.b64
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-rewrite-phase
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Apply phase to rewrite branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .phase.patch.gz.b64 /tmp/phase.patch.gz.b64
+          git fetch origin rewrite/mewa-code-foundation
+          git checkout -B apply origin/rewrite/mewa-code-foundation
+          base64 --decode /tmp/phase.patch.gz.b64 | gzip --decompress > /tmp/phase.patch
+          git config user.name "OpenAI"
+          git config user.email "noreply@openai.com"
+          git am --3way /tmp/phase.patch
+          git push origin HEAD:refs/heads/rewrite/mewa-code-foundation
