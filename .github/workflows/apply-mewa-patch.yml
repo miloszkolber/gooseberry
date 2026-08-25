@@ -67,6 +67,16 @@ jobs:
               if old not in text:
                   raise SystemExit(f"expected text not found in {path}")
               path.write_text(text.replace(old, new, 1))
+
+          files = Path("packages/server/src/fs/files.ts")
+          text = files.read_text()
+          helper = (
+              "\nexport function resolveWorktreeFile(workspaceId: string, path: string): string {\n"
+              "\treturn resolveInWorktree(workspaceId, path).abs;\n"
+              "}\n"
+          )
+          if "export function resolveWorktreeFile" not in text:
+              files.write_text(text.rstrip() + "\n" + helper)
           PY
           bun run format
 
