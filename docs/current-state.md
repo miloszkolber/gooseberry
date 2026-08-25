@@ -23,7 +23,7 @@ The branch already provides several pieces worth keeping:
 
 The current foundation still includes behavior outside the baseline:
 
-- Web UI terminal, PTY server, terminal settings/state, xterm packages, and `bun-pty` runtime support;
+- Web UI terminal and PTY runtime have been removed; remaining work should not reintroduce terminal surfaces.
 - Monaco editor/save behavior and workbench/layout concepts;
 - branch/worktree management controls rather than observational Git projection;
 - repository/workspace identity coupled too tightly to one working tree;
@@ -33,9 +33,8 @@ The current foundation still includes behavior outside the baseline:
 - direct provider/model IDs in the current subagent tool rather than typed roles and model groups;
 - a single generic child role rather than scout/builder/strategist/auditor policy;
 - no lightweight task list alongside the session goal;
-- no scheduled atomic Pi-family update workflow;
+- no scheduled atomic Pi-family update workflow; the inherited release-version helper has been removed and will be replaced with a focused Pi updater;
 - broad inherited tests and runtime checks that should shrink with removed features;
-- repository ceremony such as templates and ownership boilerplate unrelated to the private rewrite workflow.
 
 ## Near-term invariant
 

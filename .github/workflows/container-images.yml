@@ -2,7 +2,7 @@ name: Container images
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "rewrite/mewa-code-foundation"]
     paths:
       - ".github/workflows/container-images.yml"
       - "compose.yaml"
@@ -10,7 +10,7 @@ on:
       - "mewa-code/**"
       - "mewa-browser/**"
   push:
-    branches: [main]
+    branches: [main, "rewrite/mewa-code-foundation"]
     tags: ["v*"]
     paths:
       - ".github/workflows/container-images.yml"
