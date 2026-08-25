@@ -1,0 +1,40 @@
+name: Cleanup old branches
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/cleanup-old-branches.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Delete stale implementation branches
+        run: |
+          set -euo pipefail
+          for branch in \
+            automation/source-snapshot \
+            rewrite/mewa-code-foundation \
+            rewrite/mewa-code-implementation \
+            rewrite/mewa-code-work
+          do
+            git push origin --delete "$branch" 2>/dev/null || true
+          done
+
+      - name: Remove temporary cleanup workflow
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/cleanup-old-branches.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: remove temporary branch cleanup workflow"
+          git push origin HEAD:main
