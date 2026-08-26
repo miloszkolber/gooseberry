@@ -65,7 +65,7 @@ jobs:
           MEWA_CODE_TOKEN: ci-controller-token-0123456789abcdef0123456789
           MEWA_CODE_ALLOWED_ORIGINS: ""
           MEWA_BROWSER_TOKEN: ci-browser-token-0123456789abcdef0123456789
-          MEWA_WORKSPACE_PATH: ${{ github.workspace }}/mewa-code
+          MEWA_PROJECT_PATH: ${{ github.workspace }}/mewa-code
           MEWA_MOUNT_ROOTS: ${{ github.workspace }}
           MEWA_SSH_HOST: host.docker.internal
           MEWA_SSH_USER: ci
