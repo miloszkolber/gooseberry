@@ -1,20 +1,24 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, type Project } from "@gooseberry/contracts";
-import { loadConfig, loadProjects, saveConfig, saveProjects, selectDataDir } from "./persistence";
+import {
+	loadConfig,
+	loadProjects,
+	saveConfig,
+	saveProjects,
+	setDataDirForTests,
+} from "./persistence";
 
 let root: string;
-const previousDataDir = process.env.GOOSEBERRY_DATA_DIR;
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "gooseberry-persistence-"));
-	process.env.GOOSEBERRY_DATA_DIR = root;
+	setDataDirForTests(root);
 });
 afterEach(() => {
 	rmSync(root, { recursive: true, force: true });
-	if (previousDataDir === undefined) delete process.env.GOOSEBERRY_DATA_DIR;
-	else process.env.GOOSEBERRY_DATA_DIR = previousDataDir;
+	setDataDirForTests(undefined);
 });
 
 const project = (id: string): Project => ({
@@ -45,17 +49,6 @@ test("legacy one-path projects migrate to roots", () => {
 	);
 	expect(loadProjects()[0]?.roots).toEqual(["/repos/old"]);
 	expect(readFileSync(join(root, "projects.json"), "utf8")).not.toContain('"path"');
-});
-
-test("uses only the Gooseberry default state directory", () => {
-	const home = mkdtempSync(join(tmpdir(), "gooseberry-home-"));
-	try {
-		mkdirSync(join(home, ".mewa-code"));
-		mkdirSync(join(home, ".mewa_code"));
-		expect(selectDataDir(home)).toBe(join(home, ".gooseberry"));
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
 });
 
 test("serialization and size failures preserve the last valid value", () => {

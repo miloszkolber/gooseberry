@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { basename, dirname, join, normalize } from "node:path";
+import { join, normalize } from "node:path";
 import type {
 	ProjectFsChangedPayload,
 	ServerWelcome,
@@ -28,13 +27,7 @@ import {
 import { ControllerAuth, expiredSessionCookie, sessionCookie } from "../auth";
 import { resolveProjectFile } from "../fs";
 import { sessionGoalState, updateStoredSessionObjective } from "../persistence";
-import {
-	getProject,
-	listProjects,
-	listRecentProjects,
-	openProject,
-	setProjectPublisher,
-} from "../projects";
+import { getProject, listProjects, listRecentProjects, setProjectPublisher } from "../projects";
 import { getConfig, setSettingsPublisher } from "../settings";
 import { setWatchPublisher, stopAllWatches } from "../watch";
 import { handleRequest } from "./handlers";
@@ -51,10 +44,10 @@ import {
 } from "./web-socket-auth";
 
 export interface CreateServerOptions {
+	/** Explicit embedding and test seam. Production always uses the fixed runtime endpoint. */
 	port?: number;
+	/** Explicit embedding and test seam. Production always uses the fixed runtime endpoint. */
 	host?: string;
-	staticDir?: string;
-	projectPath?: string;
 	appVersion?: string;
 	/** Test and embedding hook for an already initialized controller auth store. */
 	controllerAuth?: ControllerAuth;
@@ -80,6 +73,10 @@ const BROWSER_ARTIFACT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]
 const CLIENT_KEY = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_AUTH_BODY_BYTES = 4096;
 const MAX_TIMEOUT_MS = 2_147_483_647;
+export const CONTROLLER_HOST = "0.0.0.0";
+export const CONTROLLER_PORT = 7312;
+export const CONTROLLER_STATIC_DIR = "/app/web";
+const BROWSER_SERVICE_URL = new URL("http://127.0.0.1:8787");
 
 /** Bun delivers text as strings and binary frames as byte arrays. Count wire bytes in both cases. */
 export function isWebSocketPayloadWithinLimit(message: string | Uint8Array): boolean {
@@ -230,51 +227,19 @@ async function handleControllerAuth(
 	return authResponse({ error: "not found" }, { status: 404 });
 }
 
-export function assertCanonicalStateLayout(env: NodeJS.ProcessEnv = process.env): void {
-	const appDir = env.GOOSEBERRY_DATA_DIR?.trim();
-	const stateRoot =
-		env.GOOSEBERRY_STATE_ROOT?.trim() ||
-		(appDir && basename(appDir) === "app" ? dirname(appDir) : undefined);
-	if (!stateRoot) return;
-	const rootLegacyMarkers = [
-		"config.json",
-		"projects.json",
-		"controller-token",
-		"pixie",
-		"pixie-browser",
-	];
-	if (rootLegacyMarkers.some((name) => existsSync(join(stateRoot, name)))) {
-		throw new Error(
-			`Legacy Pixie or mixed Gooseberry state appears mounted at ${stateRoot}. Refusing to start. Preserve the old state, then mount a clean Gooseberry app directory.`,
-		);
-	}
-}
-
-function browserArtifactServiceUrl(): URL | undefined {
-	const configured = (process.env.GOOSEBERRY_BROWSER_URL ?? "http://127.0.0.1:8787").trim();
-	try {
-		const url = new URL(configured);
-		if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password)
-			return undefined;
-		return url;
-	} catch {
-		return undefined;
-	}
-}
-
 async function proxyBrowserArtifact(pathname: string): Promise<Response> {
 	const target = browserArtifactTarget(pathname);
 	if (!target) return new Response("not found", { status: 404 });
 
-	const token = process.env.GOOSEBERRY_BROWSER_TOKEN;
-	const serviceUrl = browserArtifactServiceUrl();
-	if (!isCodeToken(token) || !serviceUrl)
+	const tokens = validateAuthTokens();
+	const token = tokens.browserToken;
+	if (tokens.browserAuthenticationEnabled && !isCodeToken(token))
 		return new Response("browser artifact proxy unavailable", { status: 503 });
 
 	let upstream: Response;
 	try {
-		upstream = await fetch(new URL(target.path, serviceUrl), {
-			headers: { authorization: `Bearer ${token}` },
+		upstream = await fetch(new URL(target.path, BROWSER_SERVICE_URL), {
+			...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
 			redirect: "error",
 			signal: AbortSignal.timeout(BROWSER_ARTIFACT_TIMEOUT_MS),
 		});
@@ -312,22 +277,18 @@ const isRequestId = (id: unknown): id is string => typeof id === "string";
 
 export async function createServer(options: CreateServerOptions = {}): Promise<RunningServer> {
 	const {
-		port = 3141,
-		host = "localhost",
-		staticDir,
-		projectPath,
+		port = CONTROLLER_PORT,
+		host = CONTROLLER_HOST,
 		appVersion,
 		controllerAuth: suppliedAuth,
 	} = options;
 	const tokens = validateAuthTokens();
-	assertCanonicalStateLayout();
 	let controllerAuth = suppliedAuth;
 	if (!controllerAuth && tokens.authenticationEnabled) {
 		if (!tokens.controllerToken)
 			throw new Error("GOOSEBERRY_TOKEN authentication is not configured");
 		controllerAuth = new ControllerAuth({
 			token: tokens.controllerToken,
-			maxAgeDays: tokens.authMaxAgeDays,
 		});
 	}
 	const websocketAuth = readWebSocketAuthConfig(controllerAuth);
@@ -445,10 +406,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				}
 				return serveProjectFile(url.pathname);
 			}
-			if (staticDir) {
-				return serveStatic(url.pathname, staticDir);
-			}
-			return new Response("not found", { status: 404 });
+			return serveStatic(url.pathname, CONTROLLER_STATIC_DIR);
 		},
 		websocket: {
 			maxPayloadLength: MAX_SERIALIZED_WS_REQUEST_BYTES,
@@ -572,16 +530,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		},
 	});
 
-	const configuredObjectiveUrl = process.env.GOOSEBERRY_OBJECTIVE_MCP_URL?.trim();
-	if (configuredObjectiveUrl) {
-		try {
-			const url = new URL(configuredObjectiveUrl);
-			if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
-			setObjectiveMcpUrl(url.toString());
-		} catch {
-			throw new Error("GOOSEBERRY_OBJECTIVE_MCP_URL must be an http:// or https:// URL");
-		}
-	} else setObjectiveMcpUrl(`http://127.0.0.1:${server.port ?? port}/mcp/objective`);
+	setObjectiveMcpUrl(`http://127.0.0.1:${server.port ?? port}/mcp/objective`);
 
 	setProjectPublisher((project) => {
 		publishToSockets(WS_CHANNELS.projectUpdated, project);
@@ -606,16 +555,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		publishToSockets(WS_CHANNELS.permissionResolved, payload),
 	);
 	void refreshGooseStatus();
-
-	if (projectPath) {
-		try {
-			openProject(projectPath);
-		} catch (err) {
-			console.warn(
-				`Could not open project ${projectPath}: ${err instanceof Error ? err.message : err}`,
-			);
-		}
-	}
 
 	return {
 		get port() {

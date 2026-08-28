@@ -6,6 +6,7 @@ import { createServer as createProbeServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
+import { readExactBoolean } from "../src/server.mjs";
 
 const token = "server-test-token-0123456789abcdef0123456789";
 const serviceRoot = await mkdtemp(join(tmpdir(), "gooseberry-browser-test-"));
@@ -28,11 +29,15 @@ async function freePort() {
 }
 
 function rawRequest({ method = "GET", path = "/", headers = {}, body = "" } = {}) {
+	return rawRequestTo(port, { method, path, headers, body });
+}
+
+function rawRequestTo(targetPort, { method = "GET", path = "/", headers = {}, body = "" } = {}) {
 	return new Promise((resolveResponse, rejectResponse) => {
 		const request = httpRequest(
 			{
 				host: "127.0.0.1",
-				port,
+				port: targetPort,
 				method,
 				path,
 				headers: { ...headers, "content-length": Buffer.byteLength(body) },
@@ -124,28 +129,41 @@ if (command === "close") await appendFile(join(home, "closed"), "yes").catch(() 
 	await writeFile(join(stateRoot, "stale", ".lock"), "stale");
 	await writeFile(join(serviceRoot, "config.json"), "{}");
 	port = await freePort();
-	child = spawn(process.execPath, ["src/server.mjs"], {
+	child = spawn(
+		process.execPath,
+		[
+			"test/fixture-server.mjs",
+			JSON.stringify({
+				port,
+				authenticationEnabled: true,
+				authToken: token,
+				agentBrowser: fakeBrowser,
+				browserConfig: join(serviceRoot, "config.json"),
+				artifactRoot,
+				stateRoot,
+				commandTimeoutMs: 1000,
+				maxArtifactBytes: 64,
+				maxTotalArtifactBytes: 10,
+				maxSessions: 3,
+			}),
+		],
+		{
 		cwd: new URL("..", import.meta.url),
-		env: {
-			...process.env,
-			GOOSEBERRY_BROWSER_PORT: String(port),
-			GOOSEBERRY_BROWSER_TOKEN: token,
-			AGENT_BROWSER_BINARY: fakeBrowser,
-			AGENT_BROWSER_CONFIG: join(serviceRoot, "config.json"),
-			GOOSEBERRY_BROWSER_ARTIFACT_ROOT: artifactRoot,
-			GOOSEBERRY_BROWSER_STATE_ROOT: stateRoot,
-			GOOSEBERRY_BROWSER_COMMAND_TIMEOUT_MS: "1000",
-			GOOSEBERRY_BROWSER_MAX_ARTIFACT_BYTES: "64",
-			GOOSEBERRY_BROWSER_MAX_TOTAL_ARTIFACT_BYTES: "10",
-			GOOSEBERRY_BROWSER_MAX_SESSIONS: "3",
-		},
 		stdio: ["ignore", "pipe", "pipe"],
-	});
+		},
+	);
 	await waitForHealth();
 	await assert.rejects(access(join(artifactRoot, "stale", ".gooseberry-screenshot-stale.tmp")));
 	await assert.rejects(access(join(stateRoot, "stale", ".lock")));
 	await rm(join(artifactRoot, "stale"), { recursive: true, force: true });
 	await rm(join(stateRoot, "stale"), { recursive: true, force: true });
+});
+
+test("uses an exact false-by-default browser authentication setting", () => {
+	assert.equal(readExactBoolean(undefined), false);
+	assert.equal(readExactBoolean("true"), true);
+	assert.equal(readExactBoolean("false"), false);
+	assert.throws(() => readExactBoolean("1"), /GOOSEBERRY_BROWSER_AUTH/);
 });
 
 after(async () => {
@@ -263,15 +281,55 @@ test("cleans timed-out and output-limited sessions", async () => {
 	await assert.rejects(access(join(stateRoot, "output-session")));
 });
 
-test("requires a strong independent browser API token before listening", async () => {
+test("permits unauthenticated loopback browser calls when browser authentication is disabled", async () => {
+	const unauthPort = await freePort();
+	const unauthRoot = join(serviceRoot, "unauthenticated");
+	const unauth = spawn(
+		process.execPath,
+		[
+			"test/fixture-server.mjs",
+			JSON.stringify({
+				port: unauthPort,
+				authenticationEnabled: false,
+				agentBrowser: fakeBrowser,
+				browserConfig: join(serviceRoot, "config.json"),
+				artifactRoot: join(unauthRoot, "artifacts"),
+				stateRoot: join(unauthRoot, "state"),
+			}),
+		],
+		{ cwd: new URL("..", import.meta.url), stdio: ["ignore", "ignore", "ignore"] },
+	);
+	try {
+		for (let attempt = 0; attempt < 100; attempt += 1) {
+			try {
+				if ((await rawRequestTo(unauthPort, { path: "/health" })).status === 200) break;
+			} catch {
+				// The child may still be binding its port.
+			}
+			await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+		}
+		const response = await rawRequestTo(unauthPort, {
+			method: "POST",
+			path: "/v1/browser",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ command: "snapshot", session: "unauth", args: [] }),
+		});
+		assert.equal(response.status, 200);
+	} finally {
+		if (unauth.exitCode === null) unauth.kill("SIGTERM");
+		await new Promise((resolveExit) => unauth.once("exit", resolveExit));
+		await rm(unauthRoot, { recursive: true, force: true });
+	}
+});
+
+test("requires a strong browser API token only when browser authentication is enabled", async () => {
 	for (const invalidToken of ["", "short-browser-token", "INVALID_REPLACE_WITH_RANDOM_BROWSER_TOKEN"]) {
-		const invalid = spawn(process.execPath, ["src/server.mjs"], {
+		const invalid = spawn(process.execPath, ["test/fixture-server.mjs", JSON.stringify({
+			port: await freePort(),
+			authenticationEnabled: true,
+			authToken: invalidToken,
+		})], {
 			cwd: new URL("..", import.meta.url),
-			env: {
-				...process.env,
-				GOOSEBERRY_BROWSER_PORT: String(await freePort()),
-				GOOSEBERRY_BROWSER_TOKEN: invalidToken,
-			},
 			stdio: ["ignore", "ignore", "ignore"],
 		});
 		const exitCode = await new Promise((resolveExit, rejectExit) => {

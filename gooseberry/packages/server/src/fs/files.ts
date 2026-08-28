@@ -31,9 +31,8 @@ export function readDir(projectId: string, root: string, path: string): FileNode
 		.filter((entry) => entry.name !== ".git")
 		.filter((entry) => {
 			try {
-				// Resolve every entry before advertising it. This hides protected state
-				// and aliases to it from broad project roots instead of making the UI
-				// discover the protection through a failed follow-up request.
+				// Resolve every entry before advertising it so symlinks cannot leave the
+				// read-only project mount through a later request.
 				assertMountedPath(join(resolved.abs, entry.name), { label: "Project file" });
 				return true;
 			} catch {

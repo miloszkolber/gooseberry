@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { saveProjects } from "../persistence";
+import { setMountedProjectRootsForTesting } from "../path-admission";
+import { saveProjects, setDataDirForTests } from "../persistence";
 import {
 	DISCOVERY_MAX_QUEUED_DIRECTORIES,
 	DISCOVERY_MAX_REPOSITORIES,
@@ -15,8 +16,6 @@ import {
 let dataDir: string;
 let mountRoot: string;
 let repository: string;
-const previousDataDir = process.env.GOOSEBERRY_DATA_DIR;
-const previousMountRoots = process.env.GOOSEBERRY_MOUNT_ROOTS;
 
 function git(...args: string[]): void {
 	const result = Bun.spawnSync(["git", "-C", repository, ...args], {
@@ -35,10 +34,10 @@ function commitFile(path: string, content: string): void {
 beforeEach(() => {
 	dataDir = mkdtempSync(join(tmpdir(), "gooseberry-git-data-"));
 	mountRoot = realpathSync(mkdtempSync(join(tmpdir(), "gooseberry-git-mount-")));
+	setMountedProjectRootsForTesting([mountRoot]);
 	repository = join(mountRoot, "repository");
 	mkdirSync(repository);
-	process.env.GOOSEBERRY_DATA_DIR = dataDir;
-	process.env.GOOSEBERRY_MOUNT_ROOTS = mountRoot;
+	setDataDirForTests(dataDir);
 	git("init", "-b", "main");
 	git("config", "user.email", "test@gooseberry.test");
 	git("config", "user.name", "test");
@@ -54,12 +53,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	setMountedProjectRootsForTesting(undefined);
 	rmSync(dataDir, { recursive: true, force: true });
 	rmSync(mountRoot, { recursive: true, force: true });
-	if (previousDataDir === undefined) delete process.env.GOOSEBERRY_DATA_DIR;
-	else process.env.GOOSEBERRY_DATA_DIR = previousDataDir;
-	if (previousMountRoots === undefined) delete process.env.GOOSEBERRY_MOUNT_ROOTS;
-	else process.env.GOOSEBERRY_MOUNT_ROOTS = previousMountRoots;
+	setDataDirForTests(undefined);
 });
 
 test("returns ordinary status and diff previews", async () => {

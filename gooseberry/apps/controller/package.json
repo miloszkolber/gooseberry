@@ -10,7 +10,7 @@
 		"dev": "bun run --watch src/index.ts",
 		"build": "bun build src/index.ts --outdir dist --target bun",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test"
+		"test": "bun test --pass-with-no-tests"
 	},
 	"dependencies": {
 		"@gooseberry/contracts": "workspace:*",

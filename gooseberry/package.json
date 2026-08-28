@@ -19,8 +19,6 @@
 	"scripts": {
 		"build": "bun run build:controller && bun run build:web",
 		"build:controller": "bun --filter @gooseberry/controller build",
-		"dev": "bun scripts/dev.ts",
-		"dev:server": "bun --filter @gooseberry/server dev",
 		"dev:web": "bun --filter @gooseberry/web dev",
 		"build:web": "bun --filter @gooseberry/web build",
 		"typecheck": "bun --filter @gooseberry/goose-client typecheck && bun --filter @gooseberry/contracts typecheck && bun --filter @gooseberry/shared typecheck && bun --filter @gooseberry/server typecheck && bun --filter @gooseberry/controller typecheck && bun --filter @gooseberry/web typecheck",

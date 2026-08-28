@@ -5,7 +5,6 @@
 	"type": "module",
 	"exports": {
 		"./shellEnv": "./src/shell-env.ts",
-		"./freePort": "./src/free-port.ts",
 		"./startupMark": "./src/startup-mark.ts",
 		"./paths": "./src/paths.ts",
 		"./codedError": "./src/coded-error.ts"

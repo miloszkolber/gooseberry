@@ -95,11 +95,7 @@ export function setPermissionTimeoutForTests(timeoutMs: number | undefined): voi
 	permissionTimeoutOverride = timeoutMs;
 }
 function permissionTimeoutMs(): number {
-	if (permissionTimeoutOverride !== undefined) return permissionTimeoutOverride;
-	const value = Number(process.env.GOOSEBERRY_PERMISSION_TIMEOUT_MS);
-	return Number.isFinite(value) && value >= 1_000 && value <= 60 * 60_000
-		? value
-		: DEFAULT_PERMISSION_TIMEOUT_MS;
+	return permissionTimeoutOverride ?? DEFAULT_PERMISSION_TIMEOUT_MS;
 }
 
 export function setSessionPublisher(fn: (payload: SessionEventPayload) => void): void {
@@ -160,17 +156,7 @@ export function setGooseClient(client: GooseClient | undefined): void {
 }
 
 function gooseUrl(): string {
-	const value = (process.env.GOOSEBERRY_GOOSE_URL ?? "ws://127.0.0.1:3284/acp").trim();
-	let url: URL;
-	try {
-		url = new URL(value);
-	} catch {
-		throw new Error("GOOSEBERRY_GOOSE_URL must be a ws:// or wss:// URL");
-	}
-	if ((url.protocol !== "ws:" && url.protocol !== "wss:") || url.username || url.password) {
-		throw new Error("GOOSEBERRY_GOOSE_URL must be a ws:// or wss:// URL without credentials");
-	}
-	return url.toString();
+	return "ws://127.0.0.1:3284/acp";
 }
 
 function client(): GooseClient {

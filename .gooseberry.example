@@ -1,40 +1,16 @@
-# Required same-path project mount and admission root.
-GOOSEBERRY_PROJECT_PATH=/repo
-GOOSEBERRY_MOUNT_ROOTS=/repo
-
-# Dedicated host data root. Gooseberry creates app and browser state under GOOSEBERRY_DATA_PATH/gooseberry.
-# Keep it disjoint from every project and mount root.
+# Dedicated host data directory. Setup creates app and browser state inside it.
 GOOSEBERRY_DATA_PATH=/absolute/path/to/gooseberry-data
 
-# setup-deployment.sh writes these from the non-root technical user's numeric identity. They let
-# Compose retain non-root images while accessing host-owned state and runtime directories.
-# GOOSEBERRY_UID=1000
-# GOOSEBERRY_GID=1000
-
-# Enable browser authentication. This defaults to true. Set false only for a trusted LAN or loopback
-# deployment where every reachable browser must receive full controller authority.
-GOOSEBERRY_AUTH_ENABLED=true
-
-# Required human login credential when GOOSEBERRY_AUTH_ENABLED=true. Generate a unique, strong random
-# value and keep it private. It is ignored when authentication is disabled.
-GOOSEBERRY_TOKEN=replace-with-a-random-controller-token
-
-# Browser authentication lifetime in days. Defaults to 180 and accepts whole numbers from 1 to 365.
-# GOOSEBERRY_AUTH_MAX_AGE_DAYS=180
-
-# Optional trusted reverse-proxy origin. Set only when TLS terminates before Gooseberry. Gooseberry does not
-# trust forwarded headers, and uses this value for origin checks and Secure session cookies.
-# GOOSEBERRY_PUBLIC_ORIGIN=https://gooseberry.example.com
-
-# Shared with the isolated browser service. setup-deployment.sh writes a distinct random value.
-GOOSEBERRY_BROWSER_TOKEN=
-
-# Host-native Goose ACP endpoint. Gooseberry and gooseberry-browser use host networking.
-GOOSEBERRY_GOOSE_URL=ws://127.0.0.1:3284/acp
-
-# Required controller-to-Goose credential. It must exactly match the value configured as
-# GOOSE_SERVER__SECRET_KEY for the host Goose service. It is passed only to the controller.
+# Required controller-to-Goose secret. It must match GOOSE_SERVER__SECRET_KEY.
 GOOSEBERRY_GOOSE_SECRET_KEY=replace-with-a-random-goose-secret
 
-# Optional controller listen port. The browser and host-native Goose ports are fixed by deployment.
-# GOOSEBERRY_PORT=7312
+# Optional controller login. Authentication is disabled by default.
+GOOSEBERRY_AUTH_ENABLED=false
+# GOOSEBERRY_TOKEN=replace-with-a-random-controller-token
+
+# Optional trusted reverse-proxy origin used for controller origin checks and secure cookies.
+# GOOSEBERRY_PUBLIC_ORIGIN=https://gooseberry.example.com
+
+# Browser API authentication is disabled by default. When enabled, set a distinct strong token.
+GOOSEBERRY_BROWSER_AUTH=false
+# GOOSEBERRY_BROWSER_TOKEN=replace-with-a-random-browser-token

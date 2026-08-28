@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_GOAL_MAX_LENGTH } from "@gooseberry/contracts";
+import { setDataDirForTests } from "./persistence";
 import {
 	clearStoredSessionGoal,
 	sessionGoalState,
@@ -11,15 +12,13 @@ import {
 } from "./session-goals";
 
 let root: string;
-const previousDataDir = process.env.GOOSEBERRY_DATA_DIR;
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "gooseberry-objectives-"));
-	process.env.GOOSEBERRY_DATA_DIR = root;
+	setDataDirForTests(root);
 });
 afterEach(() => {
 	rmSync(root, { recursive: true, force: true });
-	if (previousDataDir === undefined) delete process.env.GOOSEBERRY_DATA_DIR;
-	else process.env.GOOSEBERRY_DATA_DIR = previousDataDir;
+	setDataDirForTests(undefined);
 });
 
 describe("session objective persistence", () => {

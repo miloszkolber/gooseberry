@@ -1,158 +1,82 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertMountedPath, configuredMountRoots } from "./path-admission";
+import {
+	assertMountedDirectory,
+	assertMountedPath,
+	assertMountedProject,
+	mountedProjectRoots,
+	setMountedProjectRootsForTesting,
+} from "./path-admission";
 
-function fixture(): { root: string; project: string; outside: string; state: string } {
-	const root = mkdtempSync(join(tmpdir(), "gooseberry-mount-"));
+function fixture(): { root: string; project: string; outside: string } {
+	const root = mkdtempSync(join(tmpdir(), "gooseberry-path-"));
 	const project = join(root, "repo");
 	const outside = mkdtempSync(join(tmpdir(), "gooseberry-outside-"));
-	const state = mkdtempSync(join(tmpdir(), "gooseberry-state-"));
-	mkdirSync(project, { recursive: true });
+	mkdirSync(join(project, "nested"), { recursive: true });
 	writeFileSync(join(project, "README.md"), "ok\n");
-	return { root, project, outside, state };
+	return { root, project, outside };
 }
 
-test("requires an absolute existing mount and rejects root or protected descendants", () => {
+afterEach(() => {
+	setMountedProjectRootsForTesting(undefined);
+});
+
+test("admits paths inside canonical injected read-only project mounts", () => {
 	const value = fixture();
 	try {
-		const baseEnv = { HOME: value.outside, GOOSEBERRY_DATA_DIR: value.state };
-		expect(configuredMountRoots({ ...baseEnv, GOOSEBERRY_MOUNT_ROOTS: value.root })).toEqual([
-			realpathSync(value.root),
-		]);
-		expect(() => configuredMountRoots({ ...baseEnv, GOOSEBERRY_MOUNT_ROOTS: "/" })).toThrow(
-			"must not contain /",
+		setMountedProjectRootsForTesting([value.project]);
+		expect(mountedProjectRoots()).toEqual([realpathSync(value.project)]);
+		expect(assertMountedProject(value.project)).toBe(realpathSync(value.project));
+		expect(assertMountedDirectory(join(value.project, "nested"))).toBe(
+			join(realpathSync(value.project), "nested"),
 		);
-		expect(() => configuredMountRoots({ ...baseEnv, GOOSEBERRY_MOUNT_ROOTS: value.state })).toThrow(
-			"overlaps protected",
+		expect(assertMountedPath(join(value.project, "README.md"))).toBe(
+			join(realpathSync(value.project), "README.md"),
 		);
-		expect(() =>
-			configuredMountRoots({ ...baseEnv, GOOSEBERRY_MOUNT_ROOTS: join(value.root, "missing") }),
-		).toThrow("missing or not mounted");
+		expect(
+			assertMountedPath(join(value.project, "new", "file.txt"), { allowMissingLeaf: true }),
+		).toBe(join(realpathSync(value.project), "new", "file.txt"));
 	} finally {
 		rmSync(value.root, { recursive: true, force: true });
 		rmSync(value.outside, { recursive: true, force: true });
-		rmSync(value.state, { recursive: true, force: true });
 	}
 });
 
-test("admits broad mounts while denying protected descendant paths and aliases", () => {
-	const root = mkdtempSync(join(tmpdir(), "gooseberry-broad-mount-"));
-	const state = join(root, ".db", "gooseberry", "gooseberry");
-	const project = join(root, "project");
-	const alias = join(project, "gooseberry-state");
-	const home = mkdtempSync(join(tmpdir(), "gooseberry-broad-mount-home-"));
-	try {
-		mkdirSync(state, { recursive: true });
-		mkdirSync(project, { recursive: true });
-		writeFileSync(join(project, "README.md"), "ok\n");
-		symlinkSync(state, alias);
-		const env = {
-			HOME: home,
-			GOOSEBERRY_MOUNT_ROOTS: root,
-			GOOSEBERRY_PROTECTED_STATE_ROOTS: state,
-		};
-		expect(configuredMountRoots(env)).toEqual([realpathSync(root)]);
-		expect(assertMountedPath(root, { env, directory: true, label: "Project" })).toBe(
-			realpathSync(root),
-		);
-		expect(assertMountedPath(join(project, "README.md"), { env })).toBe(
-			realpathSync(join(project, "README.md")),
-		);
-		expect(() => assertMountedPath(state, { env })).toThrow("protected application state");
-		expect(() => assertMountedPath(join(state, "auth", "key"), { env })).toThrow(
-			"protected application state",
-		);
-		expect(() => assertMountedPath(alias, { env })).toThrow("protected application state");
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("protects home secrets below a broad home mount, including missing leaves and aliases", () => {
-	const parent = mkdtempSync(join(tmpdir(), "gooseberry-home-mount-"));
-	const home = join(parent, "home", "core");
-	const project = join(home, "project");
-	const secrets = join(home, ".secrets");
-	const alias = join(project, "secrets-link");
-	const state = mkdtempSync(join(tmpdir(), "gooseberry-home-mount-state-"));
-	try {
-		mkdirSync(project, { recursive: true });
-		mkdirSync(secrets, { recursive: true });
-		writeFileSync(join(project, "README.md"), "ok\n");
-		symlinkSync(secrets, alias);
-		const env = { HOME: home, GOOSEBERRY_DATA_DIR: state, GOOSEBERRY_MOUNT_ROOTS: home };
-		expect(configuredMountRoots(env)).toEqual([realpathSync(home)]);
-		expect(assertMountedPath(join(project, "README.md"), { env })).toBe(
-			realpathSync(join(project, "README.md")),
-		);
-		expect(() => assertMountedPath(secrets, { env })).toThrow("protected application state");
-		expect(() =>
-			assertMountedPath(join(secrets, "new", "credential"), { env, allowMissingLeaf: true }),
-		).toThrow("protected application state");
-		expect(() =>
-			assertMountedPath(join(alias, "new", "credential"), { env, allowMissingLeaf: true }),
-		).toThrow("protected application state");
-	} finally {
-		rmSync(parent, { recursive: true, force: true });
-		rmSync(state, { recursive: true, force: true });
-	}
-});
-
-test("rejects ambiguous, empty, and duplicate mount-root lists", () => {
+test("rejects root, state, and unmounted directories", () => {
 	const value = fixture();
 	try {
-		const env = { HOME: value.outside, GOOSEBERRY_DATA_DIR: value.state };
-		expect(() =>
-			configuredMountRoots({ ...env, GOOSEBERRY_MOUNT_ROOTS: `${value.root},${value.project}:` }),
-		).toThrow("must not mix");
-		expect(() =>
-			configuredMountRoots({ ...env, GOOSEBERRY_MOUNT_ROOTS: `${value.root},` }),
-		).toThrow("must not contain empty entries");
-		expect(() =>
-			configuredMountRoots({ ...env, GOOSEBERRY_MOUNT_ROOTS: `${value.root},${value.root}` }),
-		).toThrow("must not contain duplicate entries");
+		setMountedProjectRootsForTesting([value.project]);
+		expect(() => assertMountedProject("/")).toThrow("outside a discovered read-only project mount");
+		expect(() => assertMountedProject(value.outside)).toThrow(
+			"outside a discovered read-only project mount",
+		);
+		expect(() => assertMountedProject("/var/lib/gooseberry")).toThrow();
+		expect(() => assertMountedPath("relative")).toThrow("must be an absolute path");
 	} finally {
 		rmSync(value.root, { recursive: true, force: true });
 		rmSync(value.outside, { recursive: true, force: true });
-		rmSync(value.state, { recursive: true, force: true });
 	}
 });
 
-test("canonicalizes approved paths and rejects symlink escapes", () => {
+test("canonicalizes roots and rejects nested duplicate roots and symlink escapes", () => {
 	const value = fixture();
 	try {
-		const link = join(value.project, "outside");
-		symlinkSync(value.outside, link);
+		const nested = join(value.project, "nested");
+		const escapeLink = join(value.project, "escape");
+		setMountedProjectRootsForTesting([value.project, nested, value.project]);
+		expect(mountedProjectRoots()).toEqual([realpathSync(value.project)]);
+		symlinkSync(value.outside, escapeLink);
 		writeFileSync(join(value.outside, "secret.txt"), "secret\n");
-		const env = {
-			HOME: value.outside,
-			GOOSEBERRY_DATA_DIR: value.state,
-			GOOSEBERRY_MOUNT_ROOTS: value.root,
-		};
-		expect(assertMountedPath(join(value.project, "README.md"), { env })).toBe(
-			realpathSync(join(value.project, "README.md")),
-		);
-		expect(() => assertMountedPath(join(link, "secret.txt"), { env })).toThrow(
-			"outside the approved",
+		expect(() => assertMountedPath(join(escapeLink, "secret.txt"))).toThrow(
+			"outside a discovered read-only project mount",
 		);
 		expect(() =>
-			assertMountedPath(join(value.project, "new", "file.txt"), {
-				env,
-				allowMissingLeaf: true,
-			}),
-		).not.toThrow();
-		expect(() =>
-			assertMountedPath(join(value.project, "README.md", "child"), {
-				env,
-				allowMissingLeaf: true,
-			}),
-		).toThrow("parent is not a directory");
+			assertMountedPath(join(escapeLink, "new", "file.txt"), { allowMissingLeaf: true }),
+		).toThrow("outside a discovered read-only project mount");
 	} finally {
 		rmSync(value.root, { recursive: true, force: true });
 		rmSync(value.outside, { recursive: true, force: true });
-		rmSync(value.state, { recursive: true, force: true });
 	}
 });

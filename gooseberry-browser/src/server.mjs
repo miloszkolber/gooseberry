@@ -19,29 +19,22 @@ const CLEANUP_CODES = new Set([
 ]);
 const CLOSE_COMMANDS = new Set(["close"]);
 
-const host = process.env.GOOSEBERRY_BROWSER_HOST ?? "127.0.0.1";
-const port = positiveInteger(process.env.GOOSEBERRY_BROWSER_PORT, 8787);
-const artifactRoot = resolve(
-	process.env.GOOSEBERRY_BROWSER_ARTIFACT_ROOT ?? "/var/lib/gooseberry-browser/artifacts",
-);
-const stateRoot = resolve(process.env.GOOSEBERRY_BROWSER_STATE_ROOT ?? "/var/lib/gooseberry-browser/state");
-const agentBrowser = process.env.AGENT_BROWSER_BINARY ?? "/app/node_modules/.bin/agent-browser";
-const browserConfig = process.env.AGENT_BROWSER_CONFIG ?? "/app/config.json";
-const authToken = process.env.GOOSEBERRY_BROWSER_TOKEN ?? "";
-const commandTimeoutMs = positiveInteger(process.env.GOOSEBERRY_BROWSER_COMMAND_TIMEOUT_MS, 120_000);
-const requestTimeoutMs = positiveInteger(process.env.GOOSEBERRY_BROWSER_REQUEST_TIMEOUT_MS, 120_000);
-const headersTimeoutMs = positiveInteger(process.env.GOOSEBERRY_BROWSER_HEADERS_TIMEOUT_MS, 15_000);
-const keepAliveTimeoutMs = positiveInteger(process.env.GOOSEBERRY_BROWSER_KEEPALIVE_TIMEOUT_MS, 5_000);
-const maxArtifactBytes = positiveInteger(process.env.GOOSEBERRY_BROWSER_MAX_ARTIFACT_BYTES, 64 * 1024 * 1024);
-const maxTotalArtifactBytes = positiveInteger(
-	process.env.GOOSEBERRY_BROWSER_MAX_TOTAL_ARTIFACT_BYTES ?? process.env.GOOSEBERRY_BROWSER_GLOBAL_ARTIFACT_BYTES,
-	256 * 1024 * 1024,
-);
-const maxStateBytes = positiveInteger(process.env.GOOSEBERRY_BROWSER_MAX_STATE_BYTES, 256 * 1024 * 1024);
-const maxSessions = positiveInteger(
-	process.env.GOOSEBERRY_BROWSER_MAX_SESSIONS ?? process.env.GOOSEBERRY_BROWSER_MAX_SESSION_COUNT,
-	16,
-);
+let host = process.env.GOOSEBERRY_BROWSER_HOST ?? "127.0.0.1";
+let port = positiveInteger(process.env.GOOSEBERRY_BROWSER_PORT, 8787);
+let browserAuthenticationEnabled = readExactBoolean(process.env.GOOSEBERRY_BROWSER_AUTH);
+let artifactRoot = "/var/lib/gooseberry-browser/artifacts";
+let stateRoot = "/var/lib/gooseberry-browser/state";
+let agentBrowser = "/usr/local/bin/agent-browser";
+let browserConfig = "/app/config.json";
+let authToken = process.env.GOOSEBERRY_BROWSER_TOKEN ?? "";
+let commandTimeoutMs = 120_000;
+let requestTimeoutMs = 120_000;
+let headersTimeoutMs = 15_000;
+let keepAliveTimeoutMs = 5_000;
+let maxArtifactBytes = 64 * 1024 * 1024;
+let maxTotalArtifactBytes = 256 * 1024 * 1024;
+let maxStateBytes = 256 * 1024 * 1024;
+let maxSessions = 16;
 const maxProcessOutputBytes = 512 * 1024;
 const maxRequestBytes = 64 * 1024;
 
@@ -72,13 +65,41 @@ function positiveInteger(value, fallback) {
 	return parsed;
 }
 
+export function readExactBoolean(value) {
+	if (value === undefined) return false;
+	if (value === "true") return true;
+	if (value === "false") return false;
+	throw new Error("GOOSEBERRY_BROWSER_AUTH must be exactly true or false");
+}
+
+/** Explicit test seam. Docker runtime configuration is intentionally fixed. */
+function configureForTests(options) {
+	if (!options) return;
+	host = options.host ?? host;
+	port = options.port ?? port;
+	browserAuthenticationEnabled = options.authenticationEnabled ?? browserAuthenticationEnabled;
+	authToken = options.authToken ?? authToken;
+	artifactRoot = options.artifactRoot ?? artifactRoot;
+	stateRoot = options.stateRoot ?? stateRoot;
+	agentBrowser = options.agentBrowser ?? agentBrowser;
+	browserConfig = options.browserConfig ?? browserConfig;
+	commandTimeoutMs = options.commandTimeoutMs ?? commandTimeoutMs;
+	requestTimeoutMs = options.requestTimeoutMs ?? requestTimeoutMs;
+	headersTimeoutMs = options.headersTimeoutMs ?? headersTimeoutMs;
+	keepAliveTimeoutMs = options.keepAliveTimeoutMs ?? keepAliveTimeoutMs;
+	maxArtifactBytes = options.maxArtifactBytes ?? maxArtifactBytes;
+	maxTotalArtifactBytes = options.maxTotalArtifactBytes ?? maxTotalArtifactBytes;
+	maxStateBytes = options.maxStateBytes ?? maxStateBytes;
+	maxSessions = options.maxSessions ?? maxSessions;
+}
+
 function within(root, candidate) {
 	const rel = relative(root, candidate);
 	return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
 function authorized(req) {
-	if (!authToken) return false;
+	if (!browserAuthenticationEnabled) return true;
 	const header = req.headers.authorization;
 	const supplied =
 		typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -959,8 +980,9 @@ function requestHandler(req, res) {
 	void handleRequest(req, res).catch((error) => containRequestError(error, res));
 }
 
-export async function startServer() {
-	assertStrongToken(authToken);
+export async function startServer(options) {
+	configureForTests(options);
+	if (browserAuthenticationEnabled) assertStrongToken(authToken);
 	await access(agentBrowser, constants.X_OK);
 	await access(browserConfig, constants.R_OK);
 	await initializeStorage();

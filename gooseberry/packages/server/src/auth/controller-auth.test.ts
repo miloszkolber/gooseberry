@@ -17,7 +17,7 @@ test("derives a durable opaque cookie that survives controller restart", () => {
 	const restarted = new ControllerAuth({ token });
 	expect(restarted.isSession(cookie)).toBe(true);
 	expect(restarted.maxAgeSeconds).toBe(SESSION_MAX_AGE_SECONDS);
-	expect(DEFAULT_AUTH_MAX_AGE_DAYS).toBe(180);
+	expect(DEFAULT_AUTH_MAX_AGE_DAYS).toBe(90);
 });
 
 test("rejects the wrong token and invalidates cookies when GOOSEBERRY_TOKEN changes", () => {
@@ -37,14 +37,14 @@ test("does not let invalid login attempts block a valid controller token", () =>
 	expect(auth.login(token)).toMatch(/^[0-9a-z]+\.[A-Za-z0-9_-]{43}$/);
 });
 
-test("verifies and exposes expiry for the minimum one-day session lifetime", () => {
+test("verifies and exposes the fixed ninety-day session lifetime", () => {
 	let now = 1_000;
-	const auth = new ControllerAuth({ token, now: () => now, maxAgeDays: 1 });
+	const auth = new ControllerAuth({ token, now: () => now });
 	const cookie = auth.login(token) as string;
 	expect(auth.isSession(cookie)).toBe(true);
-	expect(auth.maxAgeSeconds).toBe(24 * 60 * 60);
-	expect(auth.sessionExpiresAt(cookie)).toBe(24 * 60 * 60 * 1000 + 1_000);
-	now += 24 * 60 * 60 * 1000 + 1;
+	expect(auth.maxAgeSeconds).toBe(90 * 24 * 60 * 60);
+	expect(auth.sessionExpiresAt(cookie)).toBe(90 * 24 * 60 * 60 * 1000 + 1_000);
+	now += 90 * 24 * 60 * 60 * 1000 + 1;
 	expect(auth.isSession(cookie)).toBe(false);
 	expect(auth.sessionExpiresAt(cookie)).toBeUndefined();
 });

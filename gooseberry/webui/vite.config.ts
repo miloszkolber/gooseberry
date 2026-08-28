@@ -11,11 +11,11 @@ export default defineConfig({
 		},
 	},
 	server: {
-		port: Number(process.env.GOOSEBERRY_WEB_PORT ?? 24269),
-		strictPort: process.env.GOOSEBERRY_WEB_PORT !== undefined,
+		port: 24269,
+		strictPort: true,
 		proxy: {
 			"/ws": {
-				target: `ws://localhost:${process.env.GOOSEBERRY_PORT ?? 3141}`,
+				target: "ws://127.0.0.1:7312",
 				ws: true,
 			},
 		},

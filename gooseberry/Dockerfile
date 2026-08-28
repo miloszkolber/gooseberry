@@ -57,12 +57,7 @@ RUN apt-get update \
 
 ENV NODE_ENV=production \
     HOME=/home/bun \
-	GOOSEBERRY_DATA_DIR=/var/lib/gooseberry \
-	GOOSEBERRY_HOST=0.0.0.0 \
-	GOOSEBERRY_PORT=3141 \
-	GOOSEBERRY_GOOSE_URL=ws://127.0.0.1:3284/acp \
-	GOOSEBERRY_BROWSER_URL=http://127.0.0.1:8787 \
-	GOOSEBERRY_STATIC_DIR=/app/web
+	GOOSEBERRY_BROWSER_AUTH=false
 
 WORKDIR /app
 RUN mkdir -p /var/lib/gooseberry \
@@ -85,8 +80,8 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* /root/.cache /root/.bun /home/bun/.cache /home/bun/.bun/install/cache
 
 USER bun
-EXPOSE 3141
+EXPOSE 7312
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["bun", "-e", "fetch('http://127.0.0.1:' + (process.env.GOOSEBERRY_PORT || '3141') + '/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    CMD ["bun", "-e", "fetch('http://127.0.0.1:7312/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["bun", "/app/gooseberry.js", "--no-open"]
+CMD ["bun", "/app/gooseberry.js"]
