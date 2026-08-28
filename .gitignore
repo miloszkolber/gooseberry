@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.DS_Store
+.idea/
+test-results*/
+.claude/
+.mockups/
+.superpowers/
+.gsd/
+
+# Build-only manifests written transiently by the controller.
+gooseberry/apps/controller/src/*.generated.ts
+# Scratch files `bun build --compile` leaves behind when a binary build is interrupted
+*.bun-build
+
+# Local env / secrets (Vite auto-loads .env*; app handles provider auth tokens)
+.env
+.gooseberry
+# Legacy deployment secret. Keep ignored until operators remove it after migration.
+.browser
+.env.local
+.env.*.local
+secrets/
+data/

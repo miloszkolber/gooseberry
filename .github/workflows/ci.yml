@@ -1,0 +1,116 @@
+name: CI
+
+# Fast structural gates for pull requests. Feature changes run focused tests chosen for their behavior.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "LICENSE"
+      - "NOTICE.md"
+      - "compose.yaml"
+      - ".gooseberry.example"
+      - "scripts/setup-deployment.sh"
+      - "scripts/setup-deployment.test.sh"
+      - "goose/**"
+      - "gooseberry/**"
+      - "gooseberry-browser/**"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - ".github/workflows/**"
+      - "LICENSE"
+      - "NOTICE.md"
+      - "compose.yaml"
+      - ".gooseberry.example"
+      - "scripts/setup-deployment.sh"
+      - "scripts/setup-deployment.test.sh"
+      - "goose/**"
+      - "gooseberry/**"
+      - "gooseberry-browser/**"
+  workflow_call:
+
+# Supersede only runs of the same workflow and ref. The reusable invocation from
+# the container-image workflow must not cancel the standalone CI run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Source validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check synchronized legal copies
+        run: |
+          cmp -- LICENSE gooseberry/LICENSE
+          cmp -- NOTICE.md gooseberry/NOTICE.md
+          cmp -- LICENSE gooseberry-browser/LICENSE
+          cmp -- NOTICE.md gooseberry-browser/NOTICE.md
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Cache bun install
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('gooseberry/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+        working-directory: gooseberry
+      - run: bun run check:deps
+        working-directory: gooseberry
+      - run: bun run lint
+        working-directory: gooseberry
+      - run: bun run typecheck
+        working-directory: gooseberry
+      - run: bun run test
+        working-directory: gooseberry
+      - run: bun run build
+        working-directory: gooseberry
+      - run: bun run check:runtime
+        working-directory: gooseberry
+      - run: bun --filter @gooseberry/goose-client typecheck
+        working-directory: gooseberry
+      - run: bun --filter @gooseberry/goose-client test
+        working-directory: gooseberry
+      - name: Validate Compose configuration
+        env:
+          GOOSEBERRY_PORT: "3141"
+          GOOSEBERRY_TOKEN: ci-controller-token-0123456789abcdef0123456789
+          GOOSEBERRY_BROWSER_TOKEN: ci-browser-token-0123456789abcdef0123456789
+          GOOSEBERRY_GOOSE_URL: ws://127.0.0.1:3284/acp
+          GOOSEBERRY_GOOSE_SECRET_KEY: ci-goose-secret-0123456789abcdef0123456789
+          GOOSEBERRY_PROJECT_PATH: ${{ github.workspace }}/gooseberry
+          GOOSEBERRY_MOUNT_ROOTS: ${{ github.workspace }}
+        run: |
+          sh -n scripts/setup-deployment.sh
+          sh scripts/setup-deployment.test.sh
+          sh -n goose/install-goose.sh
+          sh goose/tests/install-goose.test.sh
+          cat > .gooseberry <<EOF
+          GOOSEBERRY_PROJECT_PATH=$GOOSEBERRY_PROJECT_PATH
+          GOOSEBERRY_MOUNT_ROOTS=$GOOSEBERRY_MOUNT_ROOTS
+          GOOSEBERRY_DATA_PATH=${RUNNER_TEMP}/gooseberry-data
+          GOOSEBERRY_AUTH_ENABLED=true
+          GOOSEBERRY_TOKEN=$GOOSEBERRY_TOKEN
+          GOOSEBERRY_BROWSER_TOKEN=$GOOSEBERRY_BROWSER_TOKEN
+          GOOSEBERRY_GOOSE_URL=$GOOSEBERRY_GOOSE_URL
+          GOOSEBERRY_GOOSE_SECRET_KEY=$GOOSEBERRY_GOOSE_SECRET_KEY
+          EOF
+          ./scripts/setup-deployment.sh "$GOOSEBERRY_PROJECT_PATH" "${RUNNER_TEMP}/gooseberry-data"
+          docker compose --env-file .gooseberry -f compose.yaml config --quiet
+          docker compose --env-file .gooseberry -f compose.yaml config --format json > "${RUNNER_TEMP}/gooseberry-compose.json"
+          jq -e --arg identity "$(id -u):$(id -g)" --arg project "$GOOSEBERRY_PROJECT_PATH" '
+            ([.services.gooseberry, .services["gooseberry-browser"]] | all(.[]; .user == $identity)) and
+            ([.services.gooseberry.volumes[] | select(.source == $project and .target == $project and .read_only == true)] | length == 1)
+          ' "${RUNNER_TEMP}/gooseberry-compose.json" > /dev/null
+      - run: bun run check
+        working-directory: gooseberry-browser
+      - run: bun run test
+        working-directory: gooseberry-browser
