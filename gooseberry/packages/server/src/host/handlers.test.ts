@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IMAGE_MAX_BASE64_BYTES } from "@gooseberry/contracts";
+import { setMountedProjectRootsForTesting } from "../path-admission";
+import { setDataDirForTests } from "../persistence";
 import { resetConfigCache } from "../settings";
 import { stopAllWatches } from "../watch";
 import { handleRequest } from "./handlers";
@@ -14,8 +16,6 @@ let notes: string;
 let nestedRepo: string;
 let repositoryWithinRepository: string;
 let mountRoot: string;
-const previousDataDir = process.env.GOOSEBERRY_DATA_DIR;
-const previousMountRoots = process.env.GOOSEBERRY_MOUNT_ROOTS;
 
 function git(cwd: string, ...args: string[]): void {
 	const result = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "ignore", stderr: "ignore" });
@@ -26,13 +26,13 @@ beforeEach(() => {
 	dataDir = mkdtempSync(join(tmpdir(), "gooseberry-handlers-"));
 	mountRoot = mkdtempSync(join(tmpdir(), "gooseberry-handlers-mount-"));
 	mountRoot = realpathSync(mountRoot);
-	process.env.GOOSEBERRY_DATA_DIR = dataDir;
+	setMountedProjectRootsForTesting([mountRoot]);
+	setDataDirForTests(dataDir);
 	resetConfigCache();
 	repo = join(mountRoot, "repo");
 	notes = join(mountRoot, "notes");
 	nestedRepo = join(notes, "nested-repo");
 	repositoryWithinRepository = join(repo, "packages", "independent");
-	process.env.GOOSEBERRY_MOUNT_ROOTS = mountRoot;
 	mkdirSync(repo);
 	mkdirSync(nestedRepo, { recursive: true });
 	repo = realpathSync(repo);
@@ -65,13 +65,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	setMountedProjectRootsForTesting(undefined);
 	stopAllWatches();
 	rmSync(dataDir, { recursive: true, force: true });
 	rmSync(mountRoot, { recursive: true, force: true });
-	if (previousDataDir === undefined) delete process.env.GOOSEBERRY_DATA_DIR;
-	else process.env.GOOSEBERRY_DATA_DIR = previousDataDir;
-	if (previousMountRoots === undefined) delete process.env.GOOSEBERRY_MOUNT_ROOTS;
-	else process.env.GOOSEBERRY_MOUNT_ROOTS = previousMountRoots;
+	setDataDirForTests(undefined);
 	resetConfigCache();
 });
 

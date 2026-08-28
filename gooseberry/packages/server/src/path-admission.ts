@@ -1,31 +1,58 @@
-import { lstatSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import {
-	configuredPathListEntries,
-	isProtectedPath,
-	protectedStateRoots,
-} from "./agent/protected-paths";
 
-export interface MountPathOptions {
+export interface PathOptions {
 	allowMissingLeaf?: boolean;
 	directory?: boolean;
 	label?: string;
-	env?: NodeJS.ProcessEnv;
 }
 
-interface CanonicalRoot {
-	display: string;
-	path: string;
-}
+const EXCLUDED_MOUNT_PATHS = [
+	"/",
+	"/app",
+	"/bin",
+	"/boot",
+	"/dev",
+	"/etc",
+	"/home/goose",
+	"/lib",
+	"/lib64",
+	"/proc",
+	"/root",
+	"/run",
+	"/sbin",
+	"/sys",
+	"/tmp",
+	"/usr",
+	"/var",
+	"/var/lib/gooseberry",
+	"/home/goose/.config/goose",
+] as const;
+
+let testMountRoots: readonly string[] | undefined;
+let discoveredMountRoots: readonly string[] | undefined;
 
 function isWithin(root: string, candidate: string): boolean {
 	const rel = relative(root, candidate);
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+function overlapsExcludedPath(path: string): boolean {
+	if (path === "/") return true;
+	return EXCLUDED_MOUNT_PATHS.some(
+		(excluded) => excluded !== "/" && (isWithin(excluded, path) || isWithin(path, excluded)),
+	);
+}
+
 function canonicalExisting(path: string): string {
 	return resolve(realpathSync(path));
+}
+
+function isMissing(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")
+	);
 }
 
 function nearestExistingAncestor(path: string): { path: string; suffix: string[] } | undefined {
@@ -35,8 +62,8 @@ function nearestExistingAncestor(path: string): { path: string; suffix: string[]
 		try {
 			lstatSync(current);
 			return { path: current, suffix };
-		} catch {
-			// Keep walking until an existing ancestor is found.
+		} catch (error) {
+			if (!isMissing(error)) throw error;
 		}
 		const parent = dirname(current);
 		if (parent === current) return undefined;
@@ -45,179 +72,125 @@ function nearestExistingAncestor(path: string): { path: string; suffix: string[]
 	}
 }
 
-function configuredRootEntries(env: NodeJS.ProcessEnv): string[] {
-	const raw = env.GOOSEBERRY_MOUNT_ROOTS?.trim();
-	if (!raw) {
-		throw new Error(
-			"GOOSEBERRY_MOUNT_ROOTS is required. Configure one or more absolute same-path bind-mount roots.",
-		);
+function decodeMountPath(value: string): string | undefined {
+	let decoded = "";
+	for (let index = 0; index < value.length; index += 1) {
+		if (value[index] !== "\\") {
+			decoded += value[index];
+			continue;
+		}
+		const octal = value.slice(index + 1, index + 4);
+		if (!/^[0-7]{3}$/.test(octal)) return undefined;
+		decoded += String.fromCharCode(Number.parseInt(octal, 8));
+		index += 3;
 	}
-	const entries = configuredPathListEntries(raw, "GOOSEBERRY_MOUNT_ROOTS");
-	if (entries.length === 0) {
-		throw new Error("GOOSEBERRY_MOUNT_ROOTS must contain at least one absolute directory");
-	}
-	return entries;
+	return decoded.includes("\0") ? undefined : decoded;
 }
 
-function protectedCanonicalRoots(env: NodeJS.ProcessEnv): string[] {
-	return protectedStateRoots({ env, home: env.HOME?.trim() || homedir() }).map((root) => {
+function readOnlyMountPaths(): string[] {
+	const paths: string[] = [];
+	for (const line of readFileSync("/proc/self/mountinfo", "utf8").split("\n")) {
+		if (!line) continue;
+		const fields = line.split(" ");
+		const mountPath = fields[4];
+		const options = fields[5];
+		if (!mountPath || !options?.split(",").includes("ro")) continue;
+		const decoded = decodeMountPath(mountPath);
+		if (decoded) paths.push(decoded);
+	}
+	return paths;
+}
+
+function canonicalProjectMountRoots(paths: readonly string[], excludeSystemPaths = true): string[] {
+	const roots = new Set<string>();
+	for (const path of paths) {
+		if (!isAbsolute(path)) continue;
+		const lexical = resolve(path);
+		if (excludeSystemPaths && overlapsExcludedPath(lexical)) continue;
 		try {
-			return canonicalExisting(root);
+			if (!statSync(lexical).isDirectory()) continue;
+			const canonical = canonicalExisting(lexical);
+			if (!excludeSystemPaths || !overlapsExcludedPath(canonical)) roots.add(canonical);
 		} catch {
-			return resolve(root);
-		}
-	});
-}
-
-export function configuredMountRoots(env: NodeJS.ProcessEnv = process.env): string[] {
-	const protectedRoots = protectedCanonicalRoots(env);
-	const roots: CanonicalRoot[] = [];
-	for (const display of configuredRootEntries(env)) {
-		if (!isAbsolute(display)) {
-			throw new Error(`GOOSEBERRY_MOUNT_ROOTS entries must be absolute: ${display}`);
-		}
-		const lexical = resolve(display);
-		if (lexical === "/") throw new Error("GOOSEBERRY_MOUNT_ROOTS must not contain /");
-		let canonical: string;
-		try {
-			const stats = lstatSync(lexical);
-			if (!stats.isDirectory()) {
-				throw new Error(`GOOSEBERRY_MOUNT_ROOTS entry is not a directory: ${display}`);
-			}
-			canonical = canonicalExisting(lexical);
-		} catch (error) {
-			if (error instanceof Error && error.message.startsWith("GOOSEBERRY_MOUNT_ROOTS entry")) {
-				throw error;
-			}
-			throw new Error(`GOOSEBERRY_MOUNT_ROOTS entry is missing or not mounted: ${display}`, {
-				cause: error,
-			});
-		}
-		if (canonical === "/") throw new Error("GOOSEBERRY_MOUNT_ROOTS must not contain /");
-		// A broad same-path mount can contain protected state. Individual path
-		// admission still rejects that subtree, including resolved symlink aliases.
-		// Only a mount rooted at protected state (or one of its descendants) is unsafe.
-		if (protectedRoots.some((root) => isWithin(root, canonical))) {
-			throw new Error(
-				`GOOSEBERRY_MOUNT_ROOTS entry overlaps protected controller state: ${display}`,
-			);
-		}
-		if (roots.some((root) => root.path === canonical)) {
-			throw new Error(`GOOSEBERRY_MOUNT_ROOTS must not contain duplicate entries: ${display}`);
-		}
-		roots.push({ display, path: canonical });
-	}
-	for (let index = 0; index < roots.length; index++) {
-		for (let other = index + 1; other < roots.length; other++) {
-			const first = roots[index];
-			const second = roots[other];
-			if (
-				first &&
-				second &&
-				(isWithin(first.path, second.path) || isWithin(second.path, first.path))
-			) {
-				throw new Error("GOOSEBERRY_MOUNT_ROOTS must not mix nested mount roots");
-			}
+			// Mounts can disappear while the controller is reading mountinfo.
 		}
 	}
-	return roots.sort((a, b) => b.path.length - a.path.length).map((root) => root.path);
-}
 
-function missingPathError(path: string, label: string): Error {
-	return new Error(`${label} does not exist on an approved same-path mount: ${path}`);
-}
-
-function outsidePathError(path: string, label: string): Error {
-	return new Error(
-		`${label} is outside the approved same-path mounts (GOOSEBERRY_MOUNT_ROOTS): ${path}`,
+	const ordered = [...roots].sort(
+		(left, right) => left.length - right.length || left.localeCompare(right),
+	);
+	return ordered.filter(
+		(root, index) => !ordered.slice(0, index).some((parent) => isWithin(parent, root)),
 	);
 }
 
-function assertUnderApprovedRoot(path: string, roots: readonly string[], label: string): void {
-	if (!roots.some((root) => isWithin(root, path))) throw outsidePathError(path, label);
+/** Lists canonical, read-only project mounts visible to the controller. */
+export function mountedProjectRoots(): string[] {
+	if (testMountRoots !== undefined) return [...testMountRoots];
+	discoveredMountRoots ??= canonicalProjectMountRoots(readOnlyMountPaths());
+	return [...discoveredMountRoots];
+}
+
+/** Test-only seam for temporary directory fixtures. */
+export function setMountedProjectRootsForTesting(roots: readonly string[] | undefined): void {
+	testMountRoots = roots === undefined ? undefined : canonicalProjectMountRoots(roots, false);
+}
+
+function assertUnderProjectMount(path: string, roots: readonly string[], label: string): void {
+	if (!roots.some((root) => isWithin(root, path))) {
+		throw new Error(`${label} is outside a discovered read-only project mount: ${path}`);
+	}
 }
 
 /**
- * Resolve a controller-visible path through an approved same-path mount.
- * Existing symlinks are canonicalized, while a missing leaf is allowed only
- * when every existing ancestor remains inside an approved root.
+ * Resolve a controller-visible path through a discovered read-only project mount.
+ * Existing symlinks are canonicalized, while a missing leaf is accepted only
+ * when every existing ancestor remains inside the same mount.
  */
-export function resolveMountedPath(candidate: string, options: MountPathOptions = {}): string {
-	const env = options.env ?? process.env;
+export function resolveVisiblePath(candidate: string, options: PathOptions = {}): string {
 	const label = options.label ?? "Path";
-	const absolute = isAbsolute(candidate) ? resolve(candidate) : resolve(process.cwd(), candidate);
-	const roots = configuredMountRoots(env);
-
-	if (isProtectedPath(absolute, { env, roots: protectedCanonicalRoots(env) })) {
-		throw new Error(`${label} is protected application state: ${absolute}`);
-	}
+	if (!isAbsolute(candidate)) throw new Error(`${label} must be an absolute path: ${candidate}`);
+	const absolute = resolve(candidate);
+	const roots = mountedProjectRoots();
 
 	try {
 		lstatSync(absolute);
 		const canonical = canonicalExisting(absolute);
-		if (isProtectedPath(canonical, { env, roots: protectedCanonicalRoots(env) })) {
-			throw new Error(`${label} is protected application state: ${absolute}`);
-		}
-		assertUnderApprovedRoot(canonical, roots, label);
+		assertUnderProjectMount(canonical, roots, label);
 		if (options.directory && !statSync(canonical).isDirectory()) {
 			throw new Error(`${label} is not a directory: ${candidate}`);
 		}
 		return canonical;
 	} catch (error) {
-		if (
-			error instanceof Error &&
-			!["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")
-		) {
-			throw error;
-		}
-		if (!options.allowMissingLeaf) throw missingPathError(absolute, label);
+		if (!isMissing(error)) throw error;
+		if (!options.allowMissingLeaf) throw new Error(`${label} does not exist: ${absolute}`);
 	}
 
 	const ancestor = nearestExistingAncestor(absolute);
-	if (!ancestor) throw missingPathError(absolute, label);
-	let canonicalAncestor: string;
-	try {
-		canonicalAncestor = canonicalExisting(ancestor.path);
-	} catch (error) {
-		throw new Error(`${label} contains a dangling or unresolved symlink: ${absolute}`, {
-			cause: error,
-		});
-	}
-	if (isProtectedPath(canonicalAncestor, { env, roots: protectedCanonicalRoots(env) })) {
-		throw new Error(`${label} is protected application state: ${absolute}`);
-	}
-	assertUnderApprovedRoot(canonicalAncestor, roots, label);
+	if (!ancestor) throw new Error(`${label} does not exist: ${absolute}`);
+	const canonicalAncestor = canonicalExisting(ancestor.path);
+	assertUnderProjectMount(canonicalAncestor, roots, label);
 	if (ancestor.suffix.length > 0 && !statSync(canonicalAncestor).isDirectory()) {
 		throw new Error(`${label} parent is not a directory: ${candidate}`);
 	}
-	if (options.directory && ancestor.suffix.length === 0) {
-		if (!statSync(canonicalAncestor).isDirectory()) {
-			throw new Error(`${label} is not a directory: ${candidate}`);
-		}
+	if (
+		options.directory &&
+		ancestor.suffix.length === 0 &&
+		!statSync(canonicalAncestor).isDirectory()
+	) {
+		throw new Error(`${label} is not a directory: ${candidate}`);
 	}
 	return resolve(canonicalAncestor, ...ancestor.suffix);
 }
 
-export function assertMountedPath(candidate: string, options: MountPathOptions = {}): string {
-	return resolveMountedPath(candidate, options);
+export function assertMountedPath(candidate: string, options: PathOptions = {}): string {
+	return resolveVisiblePath(candidate, options);
 }
 
 export function assertMountedDirectory(candidate: string, label = "Directory"): string {
-	return resolveMountedPath(candidate, { directory: true, label });
+	return resolveVisiblePath(candidate, { directory: true, label });
 }
 
 export function assertMountedProject(candidate: string): string {
 	return assertMountedDirectory(candidate, "Project");
-}
-
-export function isApprovedMountedPath(
-	candidate: string,
-	env: NodeJS.ProcessEnv = process.env,
-): boolean {
-	try {
-		resolveMountedPath(candidate, { env });
-		return true;
-	} catch {
-		return false;
-	}
 }

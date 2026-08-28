@@ -8,8 +8,10 @@ on:
       - ".github/workflows/**"
       - "LICENSE"
       - "NOTICE.md"
+      - "README.md"
       - "compose.yaml"
       - ".gooseberry.example"
+      - "docs/**"
       - "scripts/setup-deployment.sh"
       - "scripts/setup-deployment.test.sh"
       - "goose/**"
@@ -22,8 +24,10 @@ on:
       - ".github/workflows/**"
       - "LICENSE"
       - "NOTICE.md"
+      - "README.md"
       - "compose.yaml"
       - ".gooseberry.example"
+      - "docs/**"
       - "scripts/setup-deployment.sh"
       - "scripts/setup-deployment.test.sh"
       - "goose/**"
@@ -81,34 +85,30 @@ jobs:
         working-directory: gooseberry
       - name: Validate Compose configuration
         env:
-          GOOSEBERRY_PORT: "3141"
           GOOSEBERRY_TOKEN: ci-controller-token-0123456789abcdef0123456789
           GOOSEBERRY_BROWSER_TOKEN: ci-browser-token-0123456789abcdef0123456789
-          GOOSEBERRY_GOOSE_URL: ws://127.0.0.1:3284/acp
           GOOSEBERRY_GOOSE_SECRET_KEY: ci-goose-secret-0123456789abcdef0123456789
-          GOOSEBERRY_PROJECT_PATH: ${{ github.workspace }}/gooseberry
-          GOOSEBERRY_MOUNT_ROOTS: ${{ github.workspace }}
         run: |
           sh -n scripts/setup-deployment.sh
           sh scripts/setup-deployment.test.sh
           sh -n goose/install-goose.sh
           sh goose/tests/install-goose.test.sh
           cat > .gooseberry <<EOF
-          GOOSEBERRY_PROJECT_PATH=$GOOSEBERRY_PROJECT_PATH
-          GOOSEBERRY_MOUNT_ROOTS=$GOOSEBERRY_MOUNT_ROOTS
           GOOSEBERRY_DATA_PATH=${RUNNER_TEMP}/gooseberry-data
-          GOOSEBERRY_AUTH_ENABLED=true
+          GOOSEBERRY_AUTH_ENABLED=false
           GOOSEBERRY_TOKEN=$GOOSEBERRY_TOKEN
+          GOOSEBERRY_BROWSER_AUTH=true
           GOOSEBERRY_BROWSER_TOKEN=$GOOSEBERRY_BROWSER_TOKEN
-          GOOSEBERRY_GOOSE_URL=$GOOSEBERRY_GOOSE_URL
           GOOSEBERRY_GOOSE_SECRET_KEY=$GOOSEBERRY_GOOSE_SECRET_KEY
           EOF
-          ./scripts/setup-deployment.sh "$GOOSEBERRY_PROJECT_PATH" "${RUNNER_TEMP}/gooseberry-data"
+          ./scripts/setup-deployment.sh
           docker compose --env-file .gooseberry -f compose.yaml config --quiet
           docker compose --env-file .gooseberry -f compose.yaml config --format json > "${RUNNER_TEMP}/gooseberry-compose.json"
-          jq -e --arg identity "$(id -u):$(id -g)" --arg project "$GOOSEBERRY_PROJECT_PATH" '
-            ([.services.gooseberry, .services["gooseberry-browser"]] | all(.[]; .user == $identity)) and
-            ([.services.gooseberry.volumes[] | select(.source == $project and .target == $project and .read_only == true)] | length == 1)
+          jq -e --arg data "${RUNNER_TEMP}/gooseberry-data" '
+            ([.services.gooseberry, .services["gooseberry-browser"]] | all(.[]; .user == "1000:1000")) and
+            ([.services.gooseberry.volumes[] | select(.source == ($data + "/app") and .target == "/var/lib/gooseberry")] | length == 1) and
+            ([.services["gooseberry-browser"].volumes[] | select(.source == ($data + "/browser") and .target == "/var/lib/gooseberry-browser")] | length == 1) and
+            ((.services["gooseberry-browser"].environment | keys | sort) == ["GOOSEBERRY_BROWSER_AUTH", "GOOSEBERRY_BROWSER_HOST", "GOOSEBERRY_BROWSER_PORT", "GOOSEBERRY_BROWSER_TOKEN"])
           ' "${RUNNER_TEMP}/gooseberry-compose.json" > /dev/null
       - run: bun run check
         working-directory: gooseberry-browser

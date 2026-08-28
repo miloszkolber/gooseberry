@@ -10,8 +10,7 @@ case "$VERSION" in
 esac
 printf '%s\n' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "invalid Goose version pin: $VERSION" >&2; exit 1; }
 printf '%s\n' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || { echo "invalid Goose source commit pin" >&2; exit 1; }
-# Keep the current distribution repository until its remote is renamed. Operators may override it
-# with GOOSE_REPOSITORY after that cutover.
+# The distribution is published from the current GitHub repository. Override this after a remote rename.
 REPOSITORY=${GOOSE_REPOSITORY:-miloszkolber/pixie}
 RELEASE_BASE=${GOOSE_RELEASE_BASE:-https://github.com/${REPOSITORY}/releases/download/${VERSION}}
 PREFIX=${GOOSE_PREFIX:-/usr/local/bin}

@@ -1,4 +1,6 @@
-# Trusted single-host deployment example. Image defaults own the runtime configuration.
+# Trusted single-host deployment. Add read-only same-path project mounts below.
+name: gooseberry
+
 services:
     gooseberry:
         build:
@@ -9,18 +11,21 @@ services:
         container_name: gooseberry
         restart: unless-stopped
         network_mode: host
-        user: "${GOOSEBERRY_UID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_UID}:${GOOSEBERRY_GID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_GID}"
+        # Change this default if the technical host user does not use UID/GID 1000.
+        user: "1000:1000"
         read_only: true
         environment:
-            HOME: /run
+            HOME: /home/goose
         env_file:
             - .gooseberry
         volumes:
-            - "${GOOSEBERRY_DATA_PATH:?set a host data root}/gooseberry/app:/var/lib/gooseberry"
-            - "${GOOSEBERRY_PROJECT_PATH:?set an absolute host project path}:${GOOSEBERRY_PROJECT_PATH:?set an absolute host project path}:ro"
+            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app:/var/lib/gooseberry"
+            - "${HOME:?run Docker Compose as the technical host user}/.config/goose:/home/goose/.config/goose:ro"
+            # Grant each project root explicitly. The container path must match the host path.
+            # - /absolute/path/to/project:/absolute/path/to/project:ro
         tmpfs:
-            - /tmp:size=64m,mode=1777
-            - /run:size=16m,mode=700,uid=${GOOSEBERRY_UID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_UID},gid=${GOOSEBERRY_GID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_GID}
+            - /tmp:size=64m,mode=1777,uid=1000,gid=1000
+            - /run:size=16m,mode=700,uid=1000,gid=1000
 
     gooseberry-browser:
         build:
@@ -30,14 +35,17 @@ services:
         container_name: gooseberry-browser
         restart: unless-stopped
         network_mode: host
-        user: "${GOOSEBERRY_UID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_UID}:${GOOSEBERRY_GID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_GID}"
+        # Change this default if the technical host user does not use UID/GID 1000.
+        user: "1000:1000"
         read_only: true
         environment:
-            HOME: /run
-            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set GOOSEBERRY_BROWSER_TOKEN in .gooseberry}"
+            GOOSEBERRY_BROWSER_HOST: "127.0.0.1"
+            GOOSEBERRY_BROWSER_PORT: "8787"
+            GOOSEBERRY_BROWSER_AUTH: "${GOOSEBERRY_BROWSER_AUTH:-false}"
+            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:-}"
         volumes:
-            - "${GOOSEBERRY_DATA_PATH:?set a host data root}/gooseberry/browser:/var/lib/gooseberry-browser"
+            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser:/var/lib/gooseberry-browser"
         tmpfs:
-            - /tmp:size=128m,mode=1777
-            - /run:size=16m,mode=700,uid=${GOOSEBERRY_UID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_UID},gid=${GOOSEBERRY_GID:?run ./scripts/setup-deployment.sh to set GOOSEBERRY_GID}
-            - /dev/shm:size=64m,mode=1777
+            - /tmp:size=128m,mode=1777,uid=1000,gid=1000
+            - /run:size=16m,mode=700,uid=1000,gid=1000
+            - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000

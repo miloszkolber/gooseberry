@@ -5,7 +5,7 @@ import {
 	isAllowedWebSocketOrigin,
 	isAuthorizedHttpRequest,
 	readAuthEnabled,
-	readAuthMaxAgeDays,
+	readBrowserAuthEnabled,
 	readWebSocketAuthConfig,
 	validateAuthTokens,
 } from "./web-socket-auth";
@@ -13,11 +13,11 @@ import {
 const token = "controller-token-0123456789abcdef0123456789";
 const auth = new ControllerAuth({ token });
 const session = auth.login(token) as string;
-const config = readWebSocketAuthConfig(auth);
+const config = readWebSocketAuthConfig(auth, { GOOSEBERRY_AUTH_ENABLED: "true" });
 
 function request(headers: Record<string, string> = {}): Request {
-	return new Request("http://controller.test:3141/ws", {
-		headers: { host: "controller.test:3141", origin: "http://controller.test:3141", ...headers },
+	return new Request("http://controller.test:7312/ws", {
+		headers: { host: "controller.test:7312", origin: "http://controller.test:7312", ...headers },
 	});
 }
 
@@ -49,11 +49,12 @@ describe("controller cookie authentication", () => {
 
 	test("uses explicit public HTTPS origin without trusting forwarded headers", () => {
 		const proxyConfig = readWebSocketAuthConfig(auth, {
+			GOOSEBERRY_AUTH_ENABLED: "true",
 			GOOSEBERRY_PUBLIC_ORIGIN: "https://gooseberry.example.test",
 		});
-		const proxied = new Request("http://127.0.0.1:3141/ws", {
+		const proxied = new Request("http://127.0.0.1:7312/ws", {
 			headers: {
-				host: "127.0.0.1:3141",
+				host: "127.0.0.1:7312",
 				origin: "https://gooseberry.example.test",
 				cookie: `gooseberry_auth=${session}`,
 				"x-forwarded-proto": "http",
@@ -65,30 +66,31 @@ describe("controller cookie authentication", () => {
 		});
 		expect(() =>
 			readWebSocketAuthConfig(auth, {
+				GOOSEBERRY_AUTH_ENABLED: "true",
 				GOOSEBERRY_PUBLIC_ORIGIN: "https://gooseberry.example.test/path",
 			}),
 		).toThrow("GOOSEBERRY_PUBLIC_ORIGIN");
 	});
 });
 
-test("requires distinct strong controller and browser tokens and validates auth lifetime", () => {
+test("requires distinct strong controller and authenticated browser tokens", () => {
 	expect(
 		validateAuthTokens({
+			GOOSEBERRY_AUTH_ENABLED: "true",
 			GOOSEBERRY_TOKEN: token,
+			GOOSEBERRY_BROWSER_AUTH: "true",
 			GOOSEBERRY_BROWSER_TOKEN: "browser-token-fedcba9876543210fedcba987654",
-			GOOSEBERRY_AUTH_MAX_AGE_DAYS: "90",
 		}),
 	).toEqual({
 		authenticationEnabled: true,
 		controllerToken: token,
 		browserToken: "browser-token-fedcba9876543210fedcba987654",
-		authMaxAgeDays: 90,
+		browserAuthenticationEnabled: true,
 	});
-	expect(() => validateAuthTokens({})).toThrow("GOOSEBERRY_TOKEN");
-	for (const value of ["", "0", "366", "1.5", "day"]) {
-		expect(() => readAuthMaxAgeDays(value)).toThrow("GOOSEBERRY_AUTH_MAX_AGE_DAYS");
-	}
-	expect(readAuthMaxAgeDays(undefined)).toBe(180);
+	expect(() => validateAuthTokens({ GOOSEBERRY_AUTH_ENABLED: "true" })).toThrow("GOOSEBERRY_TOKEN");
+	expect(() => validateAuthTokens({ GOOSEBERRY_BROWSER_AUTH: "true" })).toThrow(
+		"GOOSEBERRY_BROWSER_TOKEN",
+	);
 });
 
 test("disables controller token validation only with the canonical false flag", () => {
@@ -96,13 +98,16 @@ test("disables controller token validation only with the canonical false flag", 
 		validateAuthTokens({ GOOSEBERRY_AUTH_ENABLED: "false", GOOSEBERRY_TOKEN: "short" }),
 	).toEqual({
 		authenticationEnabled: false,
-		authMaxAgeDays: 180,
+		browserAuthenticationEnabled: false,
 	});
-	expect(readAuthEnabled(undefined)).toBe(true);
+	expect(readAuthEnabled(undefined)).toBe(false);
 	expect(readAuthEnabled("false")).toBe(false);
 	for (const value of ["False", "0", " true", ""]) {
 		expect(() => readAuthEnabled(value)).toThrow("GOOSEBERRY_AUTH_ENABLED");
 	}
+	expect(readBrowserAuthEnabled(undefined)).toBe(false);
+	expect(readBrowserAuthEnabled("true")).toBe(true);
+	expect(() => readBrowserAuthEnabled("1")).toThrow("GOOSEBERRY_BROWSER_AUTH");
 });
 
 test("disabled authentication permits only same-origin private traffic", () => {
@@ -112,7 +117,7 @@ test("disabled authentication permits only same-origin private traffic", () => {
 	);
 	expect(
 		authorizeWebSocketUpgrade(
-			request({ origin: "http://foreign.test:3141", "sec-fetch-site": "same-origin" }),
+			request({ origin: "http://foreign.test:7312", "sec-fetch-site": "same-origin" }),
 			disabled,
 		),
 	).toMatchObject({ status: 403 });

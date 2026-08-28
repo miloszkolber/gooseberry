@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import {
 	type GooseConnection,
 	type GooseConnectionFactory,
 } from "@gooseberry/goose-client";
+import { setMountedProjectRootsForTesting } from "../path-admission";
+import { setDataDirForTests } from "../persistence";
 import {
 	abortSession,
 	createSession,
@@ -145,8 +147,8 @@ class FakeConnection implements GooseConnection {
 
 function fixture() {
 	const directory = mkdtempSync(join(tmpdir(), "gooseberry-goose-"));
-	process.env.GOOSEBERRY_MOUNT_ROOTS = directory;
-	process.env.GOOSEBERRY_DATA_DIR = join(directory, "state");
+	setMountedProjectRootsForTesting([directory]);
+	setDataDirForTests(join(directory, "state"));
 	let connection: FakeConnection | undefined;
 	const client = new GooseClient({
 		connectionFactory: {
@@ -166,6 +168,10 @@ function fixture() {
 		},
 	};
 }
+
+afterEach(() => {
+	setMountedProjectRootsForTesting(undefined);
+});
 
 test("Goose create, replay load, prompt stream, cancel, steer, and thinking are projected", async () => {
 	const f = fixture();
@@ -336,8 +342,8 @@ test("prompt acknowledgement is not held by Goose's long-running prompt request"
 
 test("reconnects session attachments once per ACP generation before concurrent operations", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "gooseberry-goose-reconnect-"));
-	process.env.GOOSEBERRY_MOUNT_ROOTS = directory;
-	process.env.GOOSEBERRY_DATA_DIR = join(directory, "state");
+	setMountedProjectRootsForTesting([directory]);
+	setDataDirForTests(join(directory, "state"));
 	const connections: FakeConnection[] = [];
 	const client = new GooseClient({
 		connectionFactory: {
@@ -349,7 +355,7 @@ test("reconnects session attachments once per ACP generation before concurrent o
 		},
 	});
 	setGooseClient(client);
-	setObjectiveMcpUrl("http://127.0.0.1:3141/mcp/objective");
+	setObjectiveMcpUrl("http://127.0.0.1:7312/mcp/objective");
 	const created = await createSession({ projectId: "project", cwd: directory });
 	const first = connections[0];
 	if (!first) throw new Error("missing first connection");
@@ -399,8 +405,8 @@ test("reconnects session attachments once per ACP generation before concurrent o
 
 test("reconnect replay atomically replaces history without republishing or duplicating it", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "gooseberry-goose-replay-"));
-	process.env.GOOSEBERRY_MOUNT_ROOTS = directory;
-	process.env.GOOSEBERRY_DATA_DIR = join(directory, "state");
+	setMountedProjectRootsForTesting([directory]);
+	setDataDirForTests(join(directory, "state"));
 	const connections: FakeConnection[] = [];
 	const client = new GooseClient({
 		connectionFactory: {

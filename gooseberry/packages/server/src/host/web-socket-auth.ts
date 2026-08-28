@@ -1,11 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import {
-	CONTROLLER_AUTH_COOKIE,
-	type ControllerAuth,
-	DEFAULT_AUTH_MAX_AGE_DAYS,
-	MAX_AUTH_MAX_AGE_DAYS,
-	MIN_AUTH_MAX_AGE_DAYS,
-} from "../auth";
+import { CONTROLLER_AUTH_COOKIE, type ControllerAuth } from "../auth";
 
 export { CONTROLLER_AUTH_COOKIE as CODE_AUTH_COOKIE } from "../auth";
 export const MAX_AUTH_HEADER_LENGTH = 4096;
@@ -16,10 +10,10 @@ export interface AuthEnvironment {
 	readonly GOOSEBERRY_AUTH_ENABLED?: string;
 	readonly GOOSEBERRY_TOKEN?: string;
 	readonly GOOSEBERRY_BROWSER_TOKEN?: string;
+	readonly GOOSEBERRY_BROWSER_AUTH?: string;
 	/** Rejected legacy configuration, retained only for a clear startup error. */
 	readonly GOOSEBERRY_ALLOWED_ORIGINS?: string;
 	readonly GOOSEBERRY_PUBLIC_ORIGIN?: string;
-	readonly GOOSEBERRY_AUTH_MAX_AGE_DAYS?: string;
 }
 
 export interface WebSocketAuthConfig {
@@ -36,7 +30,7 @@ export interface AuthTokenPair {
 	readonly authenticationEnabled: boolean;
 	readonly controllerToken?: string;
 	readonly browserToken?: string;
-	readonly authMaxAgeDays: number;
+	readonly browserAuthenticationEnabled: boolean;
 }
 
 /** GOOSEBERRY_TOKEN is the required human controller credential, never a bearer request credential. */
@@ -44,17 +38,19 @@ export function validateAuthTokens(
 	env: AuthEnvironment = process.env as AuthEnvironment,
 ): AuthTokenPair {
 	const authenticationEnabled = readAuthEnabled(env.GOOSEBERRY_AUTH_ENABLED);
+	const browserAuthenticationEnabled = readBrowserAuthEnabled(env.GOOSEBERRY_BROWSER_AUTH);
 	const controllerToken = env.GOOSEBERRY_TOKEN?.trim();
 	const browserToken = env.GOOSEBERRY_BROWSER_TOKEN?.trim();
 	if (authenticationEnabled && (!controllerToken || !isStrongToken(controllerToken))) {
 		throw new Error("GOOSEBERRY_TOKEN must be a strong printable random token");
 	}
-	if (browserToken && !isStrongToken(browserToken)) {
+	if (browserAuthenticationEnabled && (!browserToken || !isStrongToken(browserToken))) {
 		throw new Error("GOOSEBERRY_BROWSER_TOKEN must be a strong printable random token");
 	}
 	if (
 		authenticationEnabled &&
 		controllerToken &&
+		browserAuthenticationEnabled &&
 		browserToken &&
 		constantTimeEqual(controllerToken, browserToken)
 	) {
@@ -63,16 +59,23 @@ export function validateAuthTokens(
 	return {
 		authenticationEnabled,
 		...(authenticationEnabled && controllerToken ? { controllerToken } : {}),
-		...(browserToken ? { browserToken } : {}),
-		authMaxAgeDays: readAuthMaxAgeDays(env.GOOSEBERRY_AUTH_MAX_AGE_DAYS),
+		...(browserAuthenticationEnabled && browserToken ? { browserToken } : {}),
+		browserAuthenticationEnabled,
 	};
 }
 
 export function readAuthEnabled(value: string | undefined): boolean {
-	if (value === undefined) return true;
+	if (value === undefined) return false;
 	if (value === "true") return true;
 	if (value === "false") return false;
 	throw new Error("GOOSEBERRY_AUTH_ENABLED must be exactly true or false");
+}
+
+export function readBrowserAuthEnabled(value: string | undefined): boolean {
+	if (value === undefined) return false;
+	if (value === "true") return true;
+	if (value === "false") return false;
+	throw new Error("GOOSEBERRY_BROWSER_AUTH must be exactly true or false");
 }
 
 function isStrongToken(value: string): boolean {
@@ -83,22 +86,6 @@ function isStrongToken(value: string): boolean {
 		!value.startsWith("INVALID_REPLACE_WITH_RANDOM_") &&
 		!value.startsWith("replace-with-a-random-")
 	);
-}
-
-export function readAuthMaxAgeDays(value: string | undefined): number {
-	if (value === undefined) return DEFAULT_AUTH_MAX_AGE_DAYS;
-	if (!/^\d+$/.test(value)) {
-		throw new Error(
-			`GOOSEBERRY_AUTH_MAX_AGE_DAYS must be an integer from ${MIN_AUTH_MAX_AGE_DAYS} to ${MAX_AUTH_MAX_AGE_DAYS}`,
-		);
-	}
-	const days = Number(value);
-	if (!Number.isSafeInteger(days) || days < MIN_AUTH_MAX_AGE_DAYS || days > MAX_AUTH_MAX_AGE_DAYS) {
-		throw new Error(
-			`GOOSEBERRY_AUTH_MAX_AGE_DAYS must be an integer from ${MIN_AUTH_MAX_AGE_DAYS} to ${MAX_AUTH_MAX_AGE_DAYS}`,
-		);
-	}
-	return days;
 }
 
 function constantTimeEqual(left: string, right: string): boolean {

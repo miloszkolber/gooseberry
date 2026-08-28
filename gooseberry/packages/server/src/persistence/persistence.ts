@@ -11,7 +11,6 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import {
 	type AppConfig,
@@ -22,6 +21,8 @@ import {
 } from "@gooseberry/contracts";
 
 const MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024;
+export const DATA_DIR = "/var/lib/gooseberry";
+let dataDirOverride: string | undefined;
 
 interface ReadJsonResult<T> {
 	value: T;
@@ -32,12 +33,12 @@ interface ReadJsonResult<T> {
 type JsonValidator<T> = (value: unknown) => value is T;
 
 export function dataDir(): string {
-	return selectDataDir(homedir(), process.env.GOOSEBERRY_DATA_DIR);
+	return dataDirOverride ?? DATA_DIR;
 }
 
-export function selectDataDir(home: string, configured?: string): string {
-	if (configured) return configured;
-	return join(home, ".gooseberry");
+/** Explicit test seam. The Docker runtime always persists under DATA_DIR. */
+export function setDataDirForTests(path: string | undefined): void {
+	dataDirOverride = path;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

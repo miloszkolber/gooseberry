@@ -1,9 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const CONTROLLER_AUTH_COOKIE = "gooseberry_auth";
-export const DEFAULT_AUTH_MAX_AGE_DAYS = 180;
-export const MIN_AUTH_MAX_AGE_DAYS = 1;
-export const MAX_AUTH_MAX_AGE_DAYS = 365;
+export const DEFAULT_AUTH_MAX_AGE_DAYS = 90;
 export const SESSION_MAX_AGE_SECONDS = DEFAULT_AUTH_MAX_AGE_DAYS * 24 * 60 * 60;
 
 export interface ControllerAuthStatus {
@@ -14,7 +12,6 @@ export interface ControllerAuthOptions {
 	/** The configured controller credential. It is never returned to the browser. */
 	token?: string;
 	now?: () => number;
-	maxAgeDays?: number;
 }
 
 function tokenDigest(token: string): Buffer {
@@ -47,7 +44,7 @@ export class ControllerAuth {
 		if (!token) throw new Error("GOOSEBERRY_TOKEN is required");
 		this.token = token;
 		this.now = options.now ?? Date.now;
-		this.maxAgeSeconds = (options.maxAgeDays ?? DEFAULT_AUTH_MAX_AGE_DAYS) * 24 * 60 * 60;
+		this.maxAgeSeconds = SESSION_MAX_AGE_SECONDS;
 	}
 
 	status(sessionToken: string | undefined): ControllerAuthStatus {

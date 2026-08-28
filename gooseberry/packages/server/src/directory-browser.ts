@@ -1,7 +1,7 @@
 import { opendirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { DirectoryEntry, DirectoryListing } from "@gooseberry/contracts";
-import { assertMountedDirectory, configuredMountRoots } from "./path-admission";
+import { assertMountedDirectory, mountedProjectRoots } from "./path-admission";
 
 export const DIRECTORY_BROWSER_PAGE_SIZE = 100;
 export const DIRECTORY_BROWSER_MAX_PAGE = 99;
@@ -42,8 +42,8 @@ function rootEntry(path: string): DirectoryEntry {
 
 /**
  * Lists selectable directories without ever expanding a path outside the
- * configured same-path mounts. Directory scans have a hard entry cap so a
- * filesystem containing many files or unsafe symlinks cannot hold a request.
+ * discovered read-only project mounts. Directory scans have a hard entry cap
+ * so a filesystem containing many files or unsafe symlinks cannot hold a request.
  */
 export function listDirectories(request: DirectoryBrowserRequest = {}): DirectoryListing {
 	const page = pagination(request.page, 0, "page", DIRECTORY_BROWSER_MAX_PAGE);
@@ -56,7 +56,7 @@ export function listDirectories(request: DirectoryBrowserRequest = {}): Director
 	if (pageSize === 0) throw new Error("Invalid directory browser page size");
 	const hidden = includeHidden(request.includeHidden);
 	const path = requestPath(request.path);
-	const roots = configuredMountRoots();
+	const roots = mountedProjectRoots();
 
 	if (path === undefined) {
 		const start = page * pageSize;
@@ -90,7 +90,7 @@ export function listDirectories(request: DirectoryBrowserRequest = {}): Director
 
 			let candidate: string;
 			try {
-				// This follows symlinks and applies both protected-state and mount admission.
+				// This follows symlinks and confirms the target remains in a project mount.
 				candidate = assertMountedDirectory(join(current, entry.name), "Directory");
 			} catch {
 				continue;

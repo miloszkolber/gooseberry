@@ -74,7 +74,7 @@ afterEach(() => {
 describe("WsTransport channel replay", () => {
 	test("uses cookie authentication and never sends a credential in the WebSocket URL or subprotocol", () => {
 		const transport = new WsTransport({
-			url: "ws://localhost:3141/ws?token=must-not-leak",
+			url: "ws://localhost:7312/ws?token=must-not-leak",
 		});
 		transport.connect();
 		const socket = TestWebSocket.instances[0];
@@ -89,7 +89,7 @@ describe("WsTransport reconnect delivery", () => {
 	test("stops retrying after an initial connection failure when requested", async () => {
 		let failed = 0;
 		const transport = new WsTransport({
-			url: "ws://localhost:3141/ws",
+			url: "ws://localhost:7312/ws",
 			onInitialConnectionFailure: () => {
 				failed += 1;
 			},
@@ -105,7 +105,7 @@ describe("WsTransport reconnect delivery", () => {
 	test("replays an unresolved frame under the same id and resolves from the replacement socket", async () => {
 		const statuses: string[] = [];
 		const transport = new WsTransport({
-			url: "ws://localhost:3141/ws",
+			url: "ws://localhost:7312/ws",
 			onStatus: (status) => statuses.push(status),
 		});
 		const result = transport.request("project.list", {});
@@ -151,7 +151,7 @@ describe("WsTransport reconnect delivery", () => {
 
 describe("WsTransport response receipts", () => {
 	test("keeps optional Signet configuration behind the typed settings boundary", async () => {
-		const transport = new WsTransport({ url: "ws://localhost:3141/ws" });
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
 		transport.connect();
 		const socket = TestWebSocket.instances[0];
 		socket?.open();
@@ -171,7 +171,7 @@ describe("WsTransport response receipts", () => {
 	});
 
 	test("acknowledges each response, batching a burst into one frame", async () => {
-		const transport = new WsTransport({ url: "ws://localhost:3141/ws" });
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
 		transport.connect();
 		const socket = TestWebSocket.instances[0];
 		socket?.open();
@@ -192,7 +192,7 @@ describe("WsTransport response receipts", () => {
 	});
 
 	test("a receipt lost with its socket is repaired by the reconnect reconciliation", async () => {
-		const transport = new WsTransport({ url: "ws://localhost:3141/ws" });
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
 		transport.connect();
 		const first = TestWebSocket.instances[0];
 		first?.open();
@@ -214,7 +214,7 @@ describe("WsTransport response receipts", () => {
 	});
 
 	test("the reconciliation names every unresolved id, including ones queued while offline", async () => {
-		const transport = new WsTransport({ url: "ws://localhost:3141/ws" });
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
 		transport.connect();
 		const first = TestWebSocket.instances[0];
 		first?.open();
@@ -241,7 +241,7 @@ describe("WsTransport response receipts", () => {
 	});
 
 	test("re-acknowledges a duplicate reply, whose first receipt may be what went missing", async () => {
-		const transport = new WsTransport({ url: "ws://localhost:3141/ws" });
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
 		transport.connect();
 		const socket = TestWebSocket.instances[0];
 		socket?.open();
