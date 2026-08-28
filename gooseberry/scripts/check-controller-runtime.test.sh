@@ -59,4 +59,13 @@ for path in \
 	rm -f "$fixture/$path"
 done
 
+empty_source="$fixture/empty-source"
+empty_runtime="$fixture/empty-runtime"
+mkdir -p "$empty_source/@gooseberry/controller"
+sh "$root/scripts/prune-runtime-dependencies.sh" "$empty_source" "$empty_runtime"
+if [ ! -d "$empty_runtime/node_modules" ]; then
+	echo "runtime pruning removed the empty node_modules root required by the Docker copy" >&2
+	exit 1
+fi
+
 echo "check-controller-runtime: positive and negative fixtures passed"
