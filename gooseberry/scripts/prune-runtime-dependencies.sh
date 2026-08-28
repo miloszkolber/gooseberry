@@ -47,4 +47,4 @@ find "$runtime_node_modules" -type f \
   \) \
   -delete
 
-find "$runtime_node_modules" -depth -type d -empty -delete
+find "$runtime_node_modules" -mindepth 1 -depth -type d -empty -delete
