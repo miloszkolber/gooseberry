@@ -159,7 +159,7 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 				<div className="flex min-h-10 shrink-0 items-center gap-xs border-border-default border-b bg-container-header-bg px-xs">
 					<div
 						className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto"
-						role="tablist"
+						role="toolbar"
 						aria-label="Open tabs"
 					>
 						{contentTabs.map((tab) => (
@@ -173,9 +173,8 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 							>
 								<button
 									type="button"
-									role="tab"
-									aria-selected={activeTab?.id === tab.id}
-									className={`max-w-[12rem] truncate px-sm py-sm tr-text-ui text-text-muted hover:text-text-default aria-selected:bg-control-bg-selected aria-selected:text-text-default ${previewTabId === tab.id ? "italic" : "not-italic"}`}
+									aria-pressed={activeTab?.id === tab.id}
+									className={`max-w-[12rem] truncate px-sm py-sm tr-text-ui text-text-muted hover:text-text-default aria-pressed:bg-control-bg-selected aria-pressed:text-text-default ${previewTabId === tab.id ? "italic" : "not-italic"}`}
 									onClick={() => useAppStore.getState().setActiveTab(tab.id, "keep")}
 								>
 									{tab.name}
@@ -213,7 +212,6 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 				<div className="flex min-h-0 flex-1">
 					<main
 						data-testid="primary-content"
-						role="tabpanel"
 						aria-label={activeTab?.name ?? "ProjectArea content"}
 						className="min-h-0 min-w-0 flex-1 bg-container-content-bg"
 					>
