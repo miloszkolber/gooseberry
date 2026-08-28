@@ -112,9 +112,7 @@ test("disables controller token validation only with the canonical false flag", 
 
 test("disabled authentication permits only same-origin private traffic", () => {
 	const disabled = readWebSocketAuthConfig(undefined, { GOOSEBERRY_AUTH_ENABLED: "false" });
-	expect(authorizeWebSocketUpgrade(request({ "sec-fetch-site": "same-origin" }), disabled)).toEqual(
-		{ sessionExpiresAt: undefined },
-	);
+	expect(authorizeWebSocketUpgrade(request(), disabled)).toEqual({ sessionExpiresAt: undefined });
 	expect(
 		authorizeWebSocketUpgrade(
 			request({ origin: "http://foreign.test:7312", "sec-fetch-site": "same-origin" }),
