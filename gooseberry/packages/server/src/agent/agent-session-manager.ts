@@ -1,0 +1,1002 @@
+import { randomUUID } from "node:crypto";
+import {
+	type AgentEvent,
+	type AgentSettlement,
+	type AssistantMessage,
+	type ImageContent,
+	modelReferenceKey,
+	type PermissionRequest,
+	type SessionEventPayload,
+	type SessionStats,
+	type SessionSummary,
+	type ThinkingLevel,
+	type TranscriptMessage,
+	type UserMessage,
+	type WireModel,
+} from "@gooseberry/contracts";
+import {
+	GooseClient,
+	type GooseClientEvent,
+	type GooseConfigOption,
+	type GooseMcpServer,
+	type GoosePermissionDecision,
+	type GoosePermissionRequest,
+	type GooseSchedule,
+	type GooseSessionInfo,
+	type GooseUpdate,
+} from "@gooseberry/goose-client";
+import { assertMountedDirectory } from "../path-admission";
+import {
+	forgetProjectSession,
+	loadProjectSessionRecords,
+	recordProjectSession,
+} from "../persistence";
+import { getConfig, updateConfig } from "../settings";
+
+interface Entry {
+	projectId: string;
+	cwd: string;
+	title: string;
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+	configOptions: readonly GooseConfigOption[];
+	messages: TranscriptMessage[];
+	isStreaming: boolean;
+	lastSettlement?: AgentSettlement | null | undefined;
+	stats: SessionStats;
+	runId?: string | undefined;
+	objectiveToken: string;
+	/** The Goose ACP connection generation that loaded or created this session. */
+	attachedGeneration?: number | undefined;
+	attachment?: { generation: number; promise: Promise<void> } | undefined;
+	/** Fresh state receiving a session/load replay until it can be atomically committed. */
+	replay?: Entry | undefined;
+	pendingUserEcho?:
+		| {
+				text: string;
+				offset: number;
+				images: readonly ImageContent[];
+				matchedImages: boolean[];
+		  }
+		| undefined;
+}
+
+const sessions = new Map<string, Entry>();
+let publisher: (payload: SessionEventPayload) => void = () => {};
+let deletedPublisher: (payload: { projectId: string; sessionId: string }) => void = () => {};
+let configuredClient: GooseClient | undefined;
+let subscribedClient: GooseClient | undefined;
+let objectiveMcpUrl: string | undefined;
+let gooseStatus: { configured: boolean; reachable: boolean; error?: string; version?: string } = {
+	configured: Boolean(process.env.GOOSEBERRY_GOOSE_SECRET_KEY?.trim()),
+	reachable: false,
+};
+interface PendingPermission {
+	sessionId: string;
+	request: GoosePermissionRequest;
+	resolve: (decision: GoosePermissionDecision) => void;
+	timer: ReturnType<typeof setTimeout>;
+	aborted: () => void;
+}
+const pendingPermissions = new Map<string, PendingPermission>();
+const MAX_PENDING_PERMISSION_SNAPSHOT = 100;
+let permissionPublisher: (request: {
+	id: string;
+	sessionId: string;
+	toolCallId: string;
+	title: string;
+	options: readonly { optionId: string; name: string; kind: string }[];
+}) => void = () => {};
+let permissionResolvedPublisher: (payload: { sessionId: string; permissionId: string }) => void =
+	() => {};
+const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60_000;
+let permissionTimeoutOverride: number | undefined;
+export function setPermissionTimeoutForTests(timeoutMs: number | undefined): void {
+	permissionTimeoutOverride = timeoutMs;
+}
+function permissionTimeoutMs(): number {
+	if (permissionTimeoutOverride !== undefined) return permissionTimeoutOverride;
+	const value = Number(process.env.GOOSEBERRY_PERMISSION_TIMEOUT_MS);
+	return Number.isFinite(value) && value >= 1_000 && value <= 60 * 60_000
+		? value
+		: DEFAULT_PERMISSION_TIMEOUT_MS;
+}
+
+export function setSessionPublisher(fn: (payload: SessionEventPayload) => void): void {
+	publisher = fn;
+}
+export function setSessionDeletedPublisher(
+	fn: (payload: { projectId: string; sessionId: string }) => void,
+): void {
+	deletedPublisher = fn;
+}
+export function setPermissionPublisher(fn: typeof permissionPublisher): void {
+	permissionPublisher = fn;
+}
+export function setPermissionResolvedPublisher(fn: typeof permissionResolvedPublisher): void {
+	permissionResolvedPublisher = fn;
+}
+function permissionPayload(id: string, request: GoosePermissionRequest): PermissionRequest {
+	return {
+		id,
+		sessionId: request.sessionId,
+		toolCallId: request.toolCall.toolCallId,
+		title: request.toolCall.title ?? request.toolCall.kind ?? "Tool permission",
+		options: request.options.map(({ optionId, name, kind }) => ({ optionId, name, kind })),
+	};
+}
+/** A bounded, public-only projection for authenticated browser reconnects. */
+export function pendingPermissionSnapshot(): PermissionRequest[] {
+	return [...pendingPermissions]
+		.slice(0, MAX_PENDING_PERMISSION_SNAPSHOT)
+		.map(([id, pending]) => permissionPayload(id, pending.request));
+}
+/** The controller publishes this loopback HTTP MCP endpoint to new and loaded Goose sessions. */
+export function setObjectiveMcpUrl(url: string | undefined): void {
+	objectiveMcpUrl = url;
+}
+function objectiveMcp(token: string): readonly GooseMcpServer[] {
+	return objectiveMcpUrl
+		? [
+				{
+					type: "http",
+					name: "gooseberry-objectives",
+					url: objectiveMcpUrl,
+					headers: [{ name: "Authorization", value: `Bearer ${token}` }],
+				},
+			]
+		: [];
+}
+
+/** Test and embedding seam. The production client is created from GOOSEBERRY_GOOSE_* once. */
+export function setGooseClient(client: GooseClient | undefined): void {
+	configuredClient?.shutdown();
+	configuredClient = client;
+	subscribedClient = undefined;
+	for (const entry of sessions.values()) {
+		entry.attachedGeneration = undefined;
+		entry.attachment = undefined;
+	}
+}
+
+function gooseUrl(): string {
+	const value = (process.env.GOOSEBERRY_GOOSE_URL ?? "ws://127.0.0.1:3284/acp").trim();
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error("GOOSEBERRY_GOOSE_URL must be a ws:// or wss:// URL");
+	}
+	if ((url.protocol !== "ws:" && url.protocol !== "wss:") || url.username || url.password) {
+		throw new Error("GOOSEBERRY_GOOSE_URL must be a ws:// or wss:// URL without credentials");
+	}
+	return url.toString();
+}
+
+function client(): GooseClient {
+	const secretKey = process.env.GOOSEBERRY_GOOSE_SECRET_KEY?.trim();
+	if (!configuredClient && !secretKey) {
+		throw new Error(
+			"Goose is not configured: set GOOSEBERRY_GOOSE_SECRET_KEY and start Goose ACP.",
+		);
+	}
+	configuredClient ??= new GooseClient({
+		url: gooseUrl(),
+		...(secretKey ? { secretKey } : {}),
+		permissionHandler: requestPermission,
+	});
+	if (subscribedClient !== configuredClient) {
+		subscribedClient = configuredClient;
+		configuredClient.on(onGooseEvent);
+	}
+	return configuredClient;
+}
+export function currentGooseStatus(): typeof gooseStatus {
+	return gooseStatus;
+}
+export async function refreshGooseStatus(): Promise<typeof gooseStatus> {
+	if (!process.env.GOOSEBERRY_GOOSE_SECRET_KEY?.trim() && !configuredClient) {
+		gooseStatus = {
+			configured: false,
+			reachable: false,
+			error: "GOOSEBERRY_GOOSE_SECRET_KEY is not configured",
+		};
+		return gooseStatus;
+	}
+	try {
+		await client().ready({ timeoutMs: 2_000 });
+		gooseStatus = { configured: true, reachable: true };
+		return gooseStatus;
+	} catch (error) {
+		gooseStatus = {
+			configured: true,
+			reachable: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+		return gooseStatus;
+	}
+}
+
+function emit(sessionId: string, event: AgentEvent): void {
+	publisher({ sessionId, event });
+}
+function emptyStats(sessionId: string): SessionStats {
+	return {
+		sessionId,
+		totalMessages: 0,
+		tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		cost: 0,
+	};
+}
+function modelFrom(info: GooseSessionInfo): WireModel | null {
+	if (!info.providerId || !info.modelId) return null;
+	return {
+		id: info.modelId,
+		name: info.modelId,
+		provider: info.providerId,
+		available: true,
+		hidden: false,
+	};
+}
+function thinkingFrom(options: readonly GooseConfigOption[]): ThinkingLevel {
+	const value = options.find((option) => option.id === "thinking_effort")?.currentValue;
+	return typeof value === "string" ? value : "off";
+}
+
+export function requestPermission(
+	request: GoosePermissionRequest,
+	signal: AbortSignal,
+): Promise<GoosePermissionDecision> {
+	if (signal.aborted) return Promise.resolve("cancelled");
+	const id = randomUUID();
+	return new Promise((resolve) => {
+		const finish = (decision: GoosePermissionDecision) => {
+			const pending = pendingPermissions.get(id);
+			if (!pending) return;
+			pendingPermissions.delete(id);
+			clearTimeout(pending.timer);
+			signal.removeEventListener("abort", pending.aborted);
+			permissionResolvedPublisher({ sessionId: pending.sessionId, permissionId: id });
+			resolve(decision);
+		};
+		const aborted = () => finish("cancelled");
+		const timer = setTimeout(() => finish("cancelled"), permissionTimeoutMs());
+		pendingPermissions.set(id, {
+			sessionId: request.sessionId,
+			request,
+			resolve: finish,
+			timer,
+			aborted,
+		});
+		signal.addEventListener("abort", aborted, { once: true });
+		permissionPublisher(permissionPayload(id, request));
+	});
+}
+
+export function resolvePermission(
+	sessionId: string,
+	permissionId: string,
+	optionId?: string,
+): void {
+	const pending = pendingPermissions.get(permissionId);
+	if (!pending || pending.sessionId !== sessionId)
+		throw new Error("Unknown or expired permission request");
+	const option =
+		optionId === undefined
+			? undefined
+			: pending.request.options.find((candidate) => candidate.optionId === optionId);
+	if (optionId === undefined) pending.resolve("cancelled");
+	else if (!option) throw new Error("Invalid permission option");
+	else pending.resolve({ optionId: option.optionId });
+}
+
+function cancelPermissions(sessionId: string): void {
+	for (const pending of pendingPermissions.values())
+		if (pending.sessionId === sessionId) pending.resolve("cancelled");
+}
+function entryFrom(info: GooseSessionInfo, projectId: string, cwd: string): Entry {
+	const sessionId = info.session.sessionId;
+	return {
+		projectId,
+		cwd,
+		title: info.session.title ?? "Chat",
+		model: modelFrom(info),
+		thinkingLevel: thinkingFrom(info.configOptions),
+		configOptions: info.configOptions,
+		messages: [],
+		isStreaming: false,
+		stats: emptyStats(sessionId),
+		objectiveToken: randomUUID(),
+	};
+}
+
+type UserContentBlock = Exclude<UserMessage["content"], string>[number];
+type AssistantContentBlock = AssistantMessage["content"][number];
+
+function appendUserBlock(entry: Entry, block: UserContentBlock): void {
+	const previous = entry.messages.at(-1);
+	if (previous?.role !== "user") {
+		entry.messages.push({ role: "user", content: [block] });
+		return;
+	}
+	if (typeof previous.content === "string") {
+		if (block.type === "text") {
+			previous.content = `${previous.content}${block.text}`;
+			return;
+		}
+		previous.content = [{ type: "text", text: previous.content }, block];
+		return;
+	}
+	const last = previous.content.at(-1);
+	if (block.type === "text" && last?.type === "text") {
+		last.text = `${last.text}${block.text}`;
+		return;
+	}
+	previous.content.push(block);
+}
+
+function appendAssistantBlock(entry: Entry, block: AssistantContentBlock): void {
+	const previous = entry.messages.at(-1);
+	if (previous?.role !== "assistant") {
+		entry.messages.push({ role: "assistant", content: [block] });
+		return;
+	}
+	const last = previous.content.at(-1);
+	if (block.type === "text" && last?.type === "text") {
+		last.text = `${last.text}${block.text}`;
+		return;
+	}
+	if (block.type === "thinking" && last?.type === "thinking") {
+		last.thinking = `${last.thinking}${block.thinking}`;
+		return;
+	}
+	previous.content.push(block);
+}
+
+function onGooseEvent(event: GooseClientEvent): void {
+	if (event.type === "disconnected") {
+		for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
+		for (const [sessionId, entry] of sessions) {
+			entry.attachedGeneration = undefined;
+			if (entry.replay) continue;
+			if (!entry.isStreaming) continue;
+			entry.isStreaming = false;
+			entry.lastSettlement = {
+				stopReason: "connection_lost",
+				errorMessage: "Goose ACP connection closed",
+			};
+			emit(sessionId, { type: "error", error: "Goose ACP connection closed" });
+		}
+		return;
+	}
+	if (event.type !== "update") return;
+	const update = event.update;
+	const entry = sessions.get(update.sessionId);
+	if (!entry) return;
+	applyGooseUpdate(entry.replay ?? entry, update, entry.replay === undefined);
+}
+
+function applyGooseUpdate(entry: Entry, update: GooseUpdate, publish: boolean): void {
+	const publishEvent = (event: AgentEvent) => {
+		if (publish) emit(update.sessionId, event);
+	};
+	switch (update.type) {
+		case "text": {
+			entry.isStreaming = true;
+			if (update.role === "user") {
+				const echo = entry.pendingUserEcho;
+				if (
+					echo &&
+					echo.text.slice(echo.offset, echo.offset + update.text.length) === update.text
+				) {
+					echo.offset += update.text.length;
+					if (userEchoComplete(echo)) delete entry.pendingUserEcho;
+					break;
+				}
+				delete entry.pendingUserEcho;
+				appendUserBlock(entry, { type: "text", text: update.text });
+				entry.stats.totalMessages = entry.messages.length;
+				publishEvent({
+					type: "message_start",
+					message: entry.messages.at(-1) as TranscriptMessage,
+				});
+				break;
+			}
+			appendAssistantBlock(entry, { type: "text", text: update.text });
+			entry.stats.totalMessages = entry.messages.length;
+			publishEvent({
+				type: "text",
+				...(update.messageId ? { messageId: update.messageId } : {}),
+				text: update.text,
+			});
+			break;
+		}
+		case "image": {
+			if (update.role === "assistant") {
+				entry.isStreaming = true;
+				appendAssistantBlock(entry, { type: "image", ...update.image });
+				entry.stats.totalMessages = entry.messages.length;
+				publishEvent({
+					type: "image",
+					...(update.messageId ? { messageId: update.messageId } : {}),
+					image: { type: "image", ...update.image },
+				});
+				break;
+			}
+			const echo = entry.pendingUserEcho;
+			const imageIndex = echo?.images.findIndex(
+				(expected, index) =>
+					!echo.matchedImages[index] &&
+					expected?.data === update.image.data &&
+					expected.mimeType === update.image.mimeType,
+			);
+			if (echo && imageIndex !== undefined && imageIndex >= 0) {
+				echo.matchedImages[imageIndex] = true;
+				if (userEchoComplete(echo)) delete entry.pendingUserEcho;
+				break;
+			}
+			delete entry.pendingUserEcho;
+			appendUserBlock(entry, { type: "image", ...update.image });
+			entry.stats.totalMessages = entry.messages.length;
+			publishEvent({
+				type: "message_start",
+				message: entry.messages.at(-1) as TranscriptMessage,
+			});
+			break;
+		}
+		case "thinking": {
+			entry.isStreaming = true;
+			appendAssistantBlock(entry, { type: "thinking", thinking: update.text });
+			publishEvent({
+				type: "thinking",
+				...(update.messageId ? { messageId: update.messageId } : {}),
+				text: update.text,
+			});
+			break;
+		}
+		case "tool-call": {
+			const toolName = update.toolName ?? update.title ?? "tool";
+			appendAssistantBlock(entry, {
+				type: "toolCall",
+				id: update.toolCallId,
+				toolName,
+				name: toolName,
+				arguments: update.rawInput ?? {},
+			});
+			entry.stats.totalMessages = entry.messages.length;
+			publishEvent({
+				type: "tool-start",
+				toolCallId: update.toolCallId,
+				toolName,
+				tool: update.rawInput ?? {},
+			});
+			break;
+		}
+		case "tool-update": {
+			const finished =
+				update.status === "completed" || update.status === "error" || update.status === "failed";
+			const result = update.rawOutput ?? update.content ?? update.error;
+			if (finished)
+				entry.messages.push({
+					role: "toolResult",
+					toolCallId: update.toolCallId,
+					...(update.status === "error" || update.status === "failed" ? { isError: true } : {}),
+					content: result,
+					details: update.raw,
+				});
+			publishEvent({
+				type: finished ? "tool-end" : "tool-update",
+				toolCallId: update.toolCallId,
+				...(update.status ? { status: update.status } : {}),
+				tool: result,
+			});
+			break;
+		}
+		case "usage": {
+			const usage = update.usage;
+			entry.stats.tokens.input += usage.inputTokens ?? 0;
+			entry.stats.tokens.output += usage.outputTokens ?? 0;
+			entry.stats.tokens.cacheRead += usage.cacheReadTokens ?? 0;
+			entry.stats.tokens.cacheWrite += usage.cacheWriteTokens ?? 0;
+			entry.stats.tokens.total =
+				usage.totalTokens ??
+				entry.stats.tokens.input +
+					entry.stats.tokens.output +
+					entry.stats.tokens.cacheRead +
+					entry.stats.tokens.cacheWrite;
+			entry.stats.cost += usage.cost ?? 0;
+			publishEvent({
+				type: "usage",
+				usage: { ...entry.stats.tokens, cost: entry.stats.cost },
+			});
+			break;
+		}
+		case "context-usage": {
+			const percent = update.usage.contextLimit
+				? (update.usage.used / update.usage.contextLimit) * 100
+				: null;
+			entry.stats.contextUsage = {
+				tokens: update.usage.used,
+				contextWindow: update.usage.contextLimit,
+				percent,
+			};
+			publishEvent({ type: "context", contextUsage: entry.stats.contextUsage });
+			break;
+		}
+		case "config":
+			entry.configOptions = update.configOptions;
+			entry.thinkingLevel = thinkingFrom(update.configOptions);
+			publishEvent({ type: "config", configOptions: update.configOptions });
+			break;
+		case "session-info":
+			entry.title = update.session.title ?? entry.title;
+			if (update.activeRunId === null) delete entry.runId;
+			else if (update.activeRunId !== undefined) entry.runId = update.activeRunId;
+			publishEvent({ type: "session-info", title: entry.title });
+			break;
+		case "status": {
+			if (/error|fail/i.test(update.status)) {
+				entry.isStreaming = false;
+				entry.lastSettlement = { stopReason: "error", errorMessage: update.message };
+				publishEvent({ type: "error", error: update.message });
+			} else if (/complete|idle|done|cancel/i.test(update.status)) {
+				entry.isStreaming = false;
+				entry.lastSettlement = { stopReason: update.status };
+				publishEvent({ type: "complete", status: update.status });
+			}
+			break;
+		}
+	}
+}
+
+export interface CreateSessionInput {
+	cwd: string;
+	projectId: string;
+	model?: WireModel;
+	thinkingLevel?: ThinkingLevel;
+}
+export interface CreateSessionResult {
+	sessionId: string;
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+}
+export async function createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
+	const cwd = assertMountedDirectory(input.cwd, "Session workspace");
+	const token = randomUUID();
+	const info = await client().createSession({
+		cwd,
+		projectId: input.projectId,
+		mcpServers: objectiveMcp(token),
+	});
+	const entry = entryFrom(info, input.projectId, cwd);
+	entry.objectiveToken = token;
+	entry.attachedGeneration = client().connectionGeneration;
+	sessions.set(info.session.sessionId, entry);
+	recordProjectSession({ projectId: input.projectId, sessionId: info.session.sessionId, cwd });
+	if (input.model) await setSessionModel(info.session.sessionId, input.model);
+	if (input.thinkingLevel)
+		await setSessionThinkingLevel(info.session.sessionId, input.thinkingLevel);
+	return {
+		sessionId: info.session.sessionId,
+		model: entry.model,
+		thinkingLevel: entry.thinkingLevel,
+	};
+}
+
+export function hasSession(sessionId: string): boolean {
+	return sessions.has(sessionId);
+}
+export function getSessionProjectId(sessionId: string): string | undefined {
+	return sessions.get(sessionId)?.projectId;
+}
+export function getSessionCwd(sessionId: string): string | undefined {
+	return sessions.get(sessionId)?.cwd;
+}
+export function isSessionStreaming(sessionId: string): boolean {
+	return sessions.get(sessionId)?.isStreaming === true;
+}
+
+export async function ensureSessionAttached(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+): Promise<boolean> {
+	const admitted = assertMountedDirectory(cwd, "Session workspace");
+	const existing = sessions.get(sessionId);
+	if (existing) {
+		if (existing.projectId !== projectId || existing.cwd !== admitted) return false;
+		await attachSession(sessionId, existing);
+		return true;
+	}
+	const record = loadProjectSessionRecords().find(
+		(candidate) =>
+			candidate.projectId === projectId &&
+			candidate.sessionId === sessionId &&
+			candidate.cwd === admitted,
+	);
+	if (!record) return false;
+	const placeholder: Entry = {
+		projectId,
+		cwd: admitted,
+		title: "Chat",
+		model: null,
+		thinkingLevel: "off",
+		configOptions: [],
+		messages: [],
+		isStreaming: false,
+		stats: emptyStats(sessionId),
+		objectiveToken: randomUUID(),
+	};
+	sessions.set(sessionId, placeholder);
+	try {
+		await attachSession(sessionId, placeholder);
+		return true;
+	} catch (error) {
+		sessions.delete(sessionId);
+		throw error;
+	}
+}
+
+function summary(sessionId: string, entry: Entry): SessionSummary {
+	return {
+		sessionId,
+		projectId: entry.projectId,
+		cwd: entry.cwd,
+		title: entry.title,
+		model: entry.model,
+		thinkingLevel: entry.thinkingLevel,
+		isStreaming: entry.isStreaming,
+		messageCount: entry.messages.length,
+		updatedAt: Date.now(),
+		live: true,
+		...(entry.lastSettlement !== undefined ? { lastSettlement: entry.lastSettlement } : {}),
+	};
+}
+export async function listSessions(projectId: string): Promise<SessionSummary[]> {
+	const records = loadProjectSessionRecords().filter((record) => record.projectId === projectId);
+	const byId = new Map<
+		string,
+		Awaited<ReturnType<GooseClient["listSessions"]>>["sessions"][number]
+	>();
+	let cursor: string | undefined;
+	const seenCursors = new Set<string>();
+	for (let page = 0; page < 20; page++) {
+		const remote = await client().listSessions({
+			limit: 100,
+			...(cursor === undefined ? {} : { cursor }),
+		});
+		for (const session of remote.sessions) byId.set(session.sessionId, session);
+		if (!remote.nextCursor) break;
+		if (seenCursors.has(remote.nextCursor))
+			throw new Error("Goose session list was truncated because it repeated a cursor");
+		cursor = remote.nextCursor;
+		seenCursors.add(cursor);
+		if (page === 19) throw new Error("Goose session list was truncated after 20 pages");
+	}
+	return records.flatMap((record) => {
+		const live = sessions.get(record.sessionId);
+		if (live) return [summary(record.sessionId, live)];
+		const source = byId.get(record.sessionId);
+		if (!source || source.archived) return [];
+		return [
+			{
+				sessionId: record.sessionId,
+				projectId,
+				cwd: record.cwd,
+				title: source.title ?? "Chat",
+				model: null,
+				thinkingLevel: "off",
+				isStreaming: false,
+				messageCount: 0,
+				updatedAt: source.updatedAt ? Date.parse(source.updatedAt) || Date.now() : Date.now(),
+				live: false,
+			},
+		];
+	});
+}
+export async function getSessionMessages(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+): Promise<{ summary: SessionSummary; messages: TranscriptMessage[] }> {
+	if (!(await ensureSessionAttached(sessionId, projectId, cwd)))
+		throw new Error(`Unknown session: ${sessionId}`);
+	const entry = sessions.get(sessionId);
+	if (!entry) throw new Error(`Unknown session: ${sessionId}`);
+	return { summary: summary(sessionId, entry), messages: entry.messages };
+}
+function requireEntry(sessionId: string): Entry {
+	const entry = sessions.get(sessionId);
+	if (!entry) throw new Error(`Unknown session: ${sessionId}`);
+	return entry;
+}
+
+/**
+ * Goose keeps loaded session state per ACP connection. Serialize a load for
+ * each entry and generation so reconnecting requests cannot race duplicate
+ * loads or issue a session-specific request against an unattached transport.
+ */
+async function attachSession(sessionId: string, entry: Entry): Promise<void> {
+	const goose = client();
+	await goose.ready();
+	const generation = goose.connectionGeneration;
+	if (!generation) throw new Error("Goose ACP connection is not ready");
+	if (entry.attachedGeneration === generation) return;
+	if (entry.attachment?.generation === generation) return entry.attachment.promise;
+
+	const replay = freshReplay(entry, sessionId);
+	const promise = (async () => {
+		entry.replay = replay;
+		const info = await goose.loadSession(sessionId, entry.cwd, {
+			mcpServers: objectiveMcp(entry.objectiveToken),
+		});
+		if (goose.connectionGeneration !== generation)
+			throw new Error("Goose ACP connection changed while loading the session");
+		replay.title = info.session.title ?? replay.title;
+		replay.model = modelFrom(info);
+		replay.thinkingLevel = thinkingFrom(info.configOptions);
+		replay.configOptions = info.configOptions;
+		replay.attachedGeneration = generation;
+		replay.stats.totalMessages = replay.messages.length;
+		commitReplay(entry, replay);
+	})();
+	entry.attachment = { generation, promise };
+	try {
+		await promise;
+	} finally {
+		if (entry.replay === replay) entry.replay = undefined;
+		if (entry.attachment?.promise === promise) entry.attachment = undefined;
+	}
+}
+
+function freshReplay(entry: Entry, sessionId: string): Entry {
+	return {
+		...entry,
+		messages: [],
+		isStreaming: false,
+		lastSettlement: undefined,
+		stats: emptyStats(sessionId),
+		runId: undefined,
+		pendingUserEcho: undefined,
+		attachedGeneration: undefined,
+		attachment: undefined,
+		replay: undefined,
+	};
+}
+
+function commitReplay(entry: Entry, replay: Entry): void {
+	entry.title = replay.title;
+	entry.model = replay.model;
+	entry.thinkingLevel = replay.thinkingLevel;
+	entry.configOptions = replay.configOptions;
+	entry.messages = replay.messages;
+	entry.isStreaming = replay.isStreaming;
+	entry.lastSettlement = replay.lastSettlement;
+	entry.stats = replay.stats;
+	entry.runId = replay.runId;
+	entry.pendingUserEcho = replay.pendingUserEcho;
+	entry.attachedGeneration = replay.attachedGeneration;
+}
+
+function gooseImages(images: ImageContent[] = []) {
+	return images.map(({ data, mimeType }) => ({ data, mimeType }));
+}
+function userEchoComplete(echo: NonNullable<Entry["pendingUserEcho"]>): boolean {
+	return echo.offset >= echo.text.length && echo.matchedImages.every(Boolean);
+}
+function attachedRequest(entry: Entry): { connectionGeneration: number } {
+	if (!entry.attachedGeneration) throw new Error("Goose session is not attached");
+	return { connectionGeneration: entry.attachedGeneration };
+}
+export async function promptSession(
+	sessionId: string,
+	text: string,
+	images?: ImageContent[],
+): Promise<void> {
+	const entry = requireEntry(sessionId);
+	await attachSession(sessionId, entry);
+	entry.messages.push({
+		role: "user",
+		content: images?.length ? [{ type: "text", text }, ...images] : text,
+	});
+	entry.pendingUserEcho = {
+		text,
+		offset: 0,
+		images: images ?? [],
+		matchedImages: (images ?? []).map(() => false),
+	};
+	entry.stats.totalMessages = entry.messages.length;
+	entry.isStreaming = true;
+	emit(sessionId, { type: "run-start" });
+	void client()
+		.prompt(sessionId, text, gooseImages(images), attachedRequest(entry))
+		.then((result) => {
+			entry.isStreaming = false;
+			entry.lastSettlement = { stopReason: result.stopReason ?? "complete" };
+			emit(sessionId, {
+				type: "complete",
+				...(result.stopReason ? { status: result.stopReason } : {}),
+			});
+		})
+		.catch((error: unknown) => {
+			entry.isStreaming = false;
+			const message = error instanceof Error ? error.message : String(error);
+			entry.lastSettlement = { stopReason: "error", errorMessage: message };
+			emit(sessionId, { type: "error", error: message });
+		});
+}
+export async function steerSession(
+	sessionId: string,
+	text: string,
+	images?: ImageContent[],
+): Promise<void> {
+	const entry = requireEntry(sessionId);
+	await attachSession(sessionId, entry);
+	if (!entry.runId) throw new Error("Goose has not supplied a steerable run id.");
+	const result = await client().steer(
+		sessionId,
+		entry.runId,
+		text,
+		gooseImages(images),
+		attachedRequest(entry),
+	);
+	entry.runId = result.runId;
+}
+export async function abortSession(sessionId: string): Promise<void> {
+	cancelPermissions(sessionId);
+	await attachSession(sessionId, requireEntry(sessionId));
+	await client().cancel(sessionId, attachedRequest(requireEntry(sessionId)));
+}
+export async function setSessionModel(sessionId: string, model: WireModel): Promise<void> {
+	const entry = requireEntry(sessionId);
+	await attachSession(sessionId, entry);
+	let options = entry.configOptions;
+	if (entry.model?.provider !== model.provider)
+		options = await client().setProvider(sessionId, model.provider, attachedRequest(entry));
+	options = await client().setModel(sessionId, model.id, attachedRequest(entry));
+	entry.model = model;
+	entry.configOptions = options;
+}
+export async function setSessionThinkingLevel(
+	sessionId: string,
+	level: ThinkingLevel,
+): Promise<void> {
+	const entry = requireEntry(sessionId);
+	await attachSession(sessionId, entry);
+	entry.configOptions = await client().setThinking(sessionId, level, attachedRequest(entry));
+	entry.thinkingLevel = level;
+}
+export function clampSessionThinkingLevel(
+	sessionId: string,
+	requested: ThinkingLevel,
+): ThinkingLevel {
+	const option = requireEntry(sessionId).configOptions.find(
+		(candidate) => candidate.id === "thinking_effort",
+	);
+	const values = option?.values.map((value) => value.value).filter(Boolean) ?? [];
+	if (values.length === 0)
+		return typeof option?.currentValue === "string" ? option.currentValue : "off";
+	if (values.includes(requested)) return requested;
+	const scale = ["off", "minimal", "low", "medium", "high", "xhigh"];
+	const requestedIndex = Math.max(0, scale.indexOf(requested));
+	return values.reduce((closest, value) =>
+		Math.abs(scale.indexOf(value) - requestedIndex) <
+		Math.abs(scale.indexOf(closest) - requestedIndex)
+			? value
+			: closest,
+	);
+}
+export function getSessionStats(sessionId: string): SessionStats {
+	return requireEntry(sessionId).stats;
+}
+export function sessionForObjectiveToken(
+	token: string,
+): { projectId: string; sessionId: string } | undefined {
+	for (const [sessionId, entry] of sessions)
+		if (entry.objectiveToken === token) return { projectId: entry.projectId, sessionId };
+	return undefined;
+}
+export function getSessionCommands(): [] {
+	return [];
+}
+export async function deleteSession(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+): Promise<void> {
+	cancelPermissions(sessionId);
+	if (!(await ensureSessionAttached(sessionId, projectId, cwd)))
+		throw new Error(`Unknown session: ${sessionId}`);
+	await attachSession(sessionId, requireEntry(sessionId));
+	await client().deleteSession(sessionId, attachedRequest(requireEntry(sessionId)));
+	sessions.delete(sessionId);
+	forgetProjectSession(projectId, sessionId);
+	deletedPublisher({ projectId, sessionId });
+}
+export function disposeAllSessions(): void {
+	for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
+	sessions.clear();
+}
+export async function settleSessionsForShutdown(): Promise<void> {
+	await Promise.allSettled([...sessions.keys()].map((id) => abortSession(id)));
+}
+
+export async function listAvailableModels(): Promise<WireModel[]> {
+	const hidden = new Set((getConfig().hiddenModels ?? []).map(modelReferenceKey));
+	const providers = await client().listProviders();
+	return providers
+		.flatMap((provider): WireModel[] =>
+			provider.models.map(
+				(model): WireModel => ({
+					id: model.id,
+					name: model.name ?? model.id,
+					provider: provider.id,
+					...(model.contextLimit === undefined ? {} : { contextWindow: model.contextLimit }),
+					...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+					...(model.modalities === undefined
+						? {}
+						: { input: model.modalities.includes("image") ? ["text", "image"] : ["text"] }),
+					available: provider.available !== false && provider.configured !== false,
+					hidden: hidden.has(modelReferenceKey({ provider: provider.id, id: model.id })),
+				}),
+			),
+		)
+		.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+}
+export async function listProviderStatus(): Promise<
+	import("@gooseberry/contracts").ProviderStatusReport
+> {
+	const providers = await client().listProviders();
+	return {
+		providers: providers.map((provider) => ({
+			id: provider.id,
+			name: provider.name ?? provider.id,
+			configured: provider.configured === true,
+			kind: "other" as const,
+			modelCount: provider.models.length,
+			availableModelCount:
+				provider.configured === false || provider.available === false ? 0 : provider.models.length,
+		})),
+	};
+}
+export async function refreshAvailableModels(): Promise<{
+	models: WireModel[];
+	complete: boolean;
+}> {
+	return { models: await listAvailableModels(), complete: true };
+}
+export async function setModelVisibility(
+	provider: string,
+	id: string,
+	hidden: boolean,
+): Promise<WireModel[]> {
+	const models = await listAvailableModels();
+	if (!models.some((model) => model.provider === provider && model.id === id))
+		throw new Error(`Unknown model: ${provider}/${id}`);
+	const refs = (getConfig().hiddenModels ?? []).filter(
+		(model) => model.provider !== provider || model.id !== id,
+	);
+	if (hidden) refs.push({ provider, id });
+	updateConfig({ hiddenModels: refs });
+	return listAvailableModels();
+}
+export async function setAllModelVisibility(hidden: boolean): Promise<WireModel[]> {
+	const models = await listAvailableModels();
+	updateConfig({
+		hiddenModels: hidden ? models.map(({ provider, id }) => ({ provider, id })) : [],
+	});
+	return listAvailableModels();
+}
+export async function getDefaultModel(): Promise<{
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+}> {
+	const model =
+		(await listAvailableModels()).find((candidate) => candidate.available && !candidate.hidden) ??
+		null;
+	return { model, thinkingLevel: "off" };
+}
+
+export const gooseRecipes = () => client();
+export const gooseSchedules = () => client();
+export type { GooseSchedule };

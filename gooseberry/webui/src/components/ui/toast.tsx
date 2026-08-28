@@ -1,0 +1,85 @@
+import * as ToastPrimitive from "@radix-ui/react-toast";
+import { cva, type VariantProps } from "class-variance-authority";
+import { X } from "lucide-react";
+import type * as React from "react";
+import { cn } from "@/lib";
+
+const ToastProvider = ToastPrimitive.Provider;
+
+function ToastViewport({
+	className,
+	...props
+}: React.ComponentProps<typeof ToastPrimitive.Viewport>) {
+	return (
+		<ToastPrimitive.Viewport
+			className={cn(
+				"fixed inset-x-0 bottom-0 z-[100] flex max-h-screen w-full flex-col gap-sm p-md outline-none sm:inset-x-auto sm:right-0 sm:bottom-0 sm:w-[380px] sm:max-w-[100vw]",
+				className,
+			)}
+			{...props}
+		/>
+	);
+}
+
+const toastVariants = cva(
+	"group pointer-events-auto relative flex w-full items-start gap-sm overflow-hidden rounded-[var(--radius-sm)] border border-l-4 bg-container-elevated-bg p-md text-text-default shadow-[var(--shadow-md)] data-[state=closed]:animate-[toast-out_120ms_ease-in] data-[state=open]:animate-[toast-in_150ms_ease-out] data-[swipe=cancel]:translate-x-0 data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[swipe=end]:animate-[toast-out_120ms_ease-in]",
+	{
+		variants: {
+			variant: {
+				error: "border-border-default border-l-feedback-error",
+				success: "border-border-default border-l-feedback-success",
+				info: "border-border-default border-l-primary",
+			},
+		},
+		defaultVariants: { variant: "info" },
+	},
+);
+
+function Toast({
+	className,
+	variant,
+	...props
+}: React.ComponentProps<typeof ToastPrimitive.Root> & VariantProps<typeof toastVariants>) {
+	return <ToastPrimitive.Root className={cn(toastVariants({ variant }), className)} {...props} />;
+}
+
+function ToastTitle({ className, ...props }: React.ComponentProps<typeof ToastPrimitive.Title>) {
+	return <ToastPrimitive.Title className={cn("tr-title-compact", className)} {...props} />;
+}
+
+function ToastDescription({
+	className,
+	...props
+}: React.ComponentProps<typeof ToastPrimitive.Description>) {
+	return (
+		<ToastPrimitive.Description
+			className={cn("text-text-muted tr-text-ui [overflow-wrap:anywhere]", className)}
+			{...props}
+		/>
+	);
+}
+
+function ToastClose({ className, ...props }: React.ComponentProps<typeof ToastPrimitive.Close>) {
+	return (
+		<ToastPrimitive.Close
+			aria-label="Dismiss"
+			className={cn(
+				"-mr-1 -mt-1 ml-auto flex size-6 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary",
+				className,
+			)}
+			{...props}
+		>
+			<X className="size-3.5" />
+		</ToastPrimitive.Close>
+	);
+}
+
+export {
+	Toast,
+	ToastClose,
+	ToastDescription,
+	ToastProvider,
+	ToastTitle,
+	ToastViewport,
+	toastVariants,
+};

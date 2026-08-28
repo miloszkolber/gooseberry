@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+	<title>gooseberry</title>
+	<style>
+		:root { color: black; }
+		@media (prefers-color-scheme: dark) { :root { color: white; } }
+	</style>
+	<path d="M5 25V7L16 18L27 7V25" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

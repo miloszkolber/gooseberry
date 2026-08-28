@@ -1,0 +1,25 @@
+{
+	"name": "@gooseberry/server",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./agent": "./src/agent/index.ts"
+	},
+	"scripts": {
+		"dev": "bun run --watch src/dev.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@gooseberry/contracts": "workspace:*",
+		"@gooseberry/goose-client": "workspace:*",
+		"@gooseberry/shared": "workspace:*",
+		"typebox": "catalog:"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	}
+}

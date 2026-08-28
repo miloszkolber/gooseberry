@@ -1,0 +1,20 @@
+{
+	"name": "@gooseberry/goose-client",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": "./src/index.ts",
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@agentclientprotocol/sdk": "1.4.0",
+		"ws": "8.21.0"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"@types/ws": "8.18.1",
+		"typescript": "catalog:"
+	}
+}

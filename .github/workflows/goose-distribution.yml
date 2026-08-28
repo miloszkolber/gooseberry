@@ -1,0 +1,143 @@
+name: Goose distribution
+
+on:
+  pull_request:
+    paths: ["LICENSE", "NOTICE.md", "goose/**", ".github/workflows/goose-distribution.yml"]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish (defaults to goose/version)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: https://github.com/aaif-goose/goose.git
+
+jobs:
+  build:
+    name: Build Goose (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            container: quay.io/pypa/manylinux_2_28_x86_64@sha256:441c35fdc6ee809ff9260894f8468ab4fea8c15dc880f8700a3f81b7922c1cda
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64@sha256:8b5f2b4e8c072ae5aefeb659f22c03e1ff46e6a82f154b6c904b106c87e65ff7
+    steps:
+      - name: Checkout Gooseberry
+        uses: actions/checkout@v4
+      - name: Read pin
+        id: pin
+        shell: bash
+        run: |
+          version=$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/goose/version")
+          commit=$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/goose/source-commit")
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'version=%s\ncommit=%s\n' "$version" "$commit" >> "$GITHUB_OUTPUT"
+      - name: Install build dependencies
+        run: dnf install -y openssl-devel dbus-devel libxcb-devel cmake perl-core clang git tar curl jq procps-ng python3
+      - name: Clone unchanged upstream commit
+        env:
+          VERSION: ${{ steps.pin.outputs.version }}
+          COMMIT: ${{ steps.pin.outputs.commit }}
+        run: |
+          git clone "$UPSTREAM" upstream
+          git -C upstream checkout --detach "$COMMIT"
+          test "$(git -C upstream rev-parse HEAD)" = "$COMMIT"
+      - name: Install pinned Rust toolchain
+        working-directory: upstream
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rust=$(sed -n 's/^rust-version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n1)
+          test -n "$rust"
+          rustup toolchain install "$rust" --profile minimal --target "${{ matrix.target }}"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "RUSTUP_TOOLCHAIN=$rust" >> "$GITHUB_ENV"
+      - name: Build standard CLI
+        working-directory: upstream
+        run: cargo build --locked --release --target "${{ matrix.target }}" -p goose-cli --bin goose
+      - name: Smoke checks
+        working-directory: upstream
+        run: |
+          ./target/${{ matrix.target }}/release/goose --version
+          export GOOSE_SERVER__SECRET_KEY=gooseberry-smoke-secret
+          export GOOSE_SERVER__HOST=127.0.0.1
+          export GOOSE_SERVER__PORT=3284
+          ./target/${{ matrix.target }}/release/goose serve --enable-scheduler > server.log 2>&1 &
+          pid=$!; trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:3284/health >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:3284/health >/dev/null
+          python3 - <<'PY'
+          import http.client, json
+          body = json.dumps({"jsonrpc":"2.0", "id":1, "method":"initialize", "params": {
+              "protocolVersion":"v1", "clientCapabilities":{}, "clientInfo":{"name":"gooseberry-smoke", "version":"0"}}})
+          conn = http.client.HTTPConnection("127.0.0.1", 3284, timeout=10)
+          conn.request("POST", "/acp", body, {"Content-Type":"application/json", "Accept":"application/json, text/event-stream", "X-Secret-Key":"gooseberry-smoke-secret"})
+          response = conn.getresponse()
+          payload = response.read()
+          if response.status != 200:
+              raise SystemExit(f"ACP initialize failed: HTTP {response.status}: {payload!r}")
+          result = json.loads(payload)
+          if result.get("error") or result.get("result", {}).get("protocolVersion") != "v1":
+              raise SystemExit(f"invalid ACP initialize response: {result!r}")
+          conn.close()
+          PY
+      - name: Package and checksum
+        env:
+          VERSION: ${{ steps.pin.outputs.version }}
+        working-directory: upstream
+        run: |
+          mkdir package
+          cp "target/${{ matrix.target }}/release/goose" package/goose
+          chmod 0755 package/goose
+           tar -czf "$GITHUB_WORKSPACE/gooseberry-goose-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C package goose
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goose-${{ matrix.arch }}
+          path: |
+            gooseberry-goose-*.tar.gz
+
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: goose-*
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          pinned="$(tr -d '[:space:]' < goose/version)"
+          source_commit="$(tr -d '[:space:]' < goose/source-commit)"
+          [[ "$pinned" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+          tag="$INPUT_TAG"
+           if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
+           test "$tag" = "$pinned"
+          test -s LICENSE
+          test -s NOTICE.md
+          sha256sum gooseberry-goose-*.tar.gz LICENSE NOTICE.md > SHA256SUMS
+           printf 'goose-version=%s\nupstream-repository=%s\nupstream-commit=%s\n' "$pinned" "$UPSTREAM" "$source_commit" > GOOSE-PROVENANCE
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "Gooseberry Goose $tag" --generate-notes 2>/dev/null || true
+           gh release upload "$tag" gooseberry-goose-*.tar.gz SHA256SUMS GOOSE-PROVENANCE LICENSE NOTICE.md --repo "$GITHUB_REPOSITORY" --clobber
