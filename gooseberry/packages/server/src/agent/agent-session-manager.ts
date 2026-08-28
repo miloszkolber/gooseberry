@@ -850,6 +850,7 @@ export async function abortSession(sessionId: string): Promise<void> {
 export async function setSessionModel(sessionId: string, model: WireModel): Promise<void> {
 	const entry = requireEntry(sessionId);
 	await attachSession(sessionId, entry);
+	if (entry.model?.provider === model.provider && entry.model.id === model.id) return;
 	let options = entry.configOptions;
 	if (entry.model?.provider !== model.provider)
 		options = await client().setProvider(sessionId, model.provider, attachedRequest(entry));

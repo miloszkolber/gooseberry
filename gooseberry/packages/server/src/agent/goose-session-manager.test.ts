@@ -42,7 +42,13 @@ class FakeConnection implements GooseConnection {
 		this.calls.push({ method, params });
 		if (method === "initialize") return {};
 		if (method === "session/new")
-			return { sessionId: "goose-1", providerId: "openai", modelId: "gpt", configOptions: [] };
+			return {
+				sessionId: "goose-1",
+				configOptions: [
+					{ id: "provider", currentValue: "openai", options: [] },
+					{ id: "model", currentValue: "gpt", options: [] },
+				],
+			};
 		if (method === "session/load") {
 			if (this.loadUpdates) {
 				this.loadUpdates(params.sessionId as string);
@@ -183,6 +189,25 @@ test("Goose create, replay load, prompt stream, cancel, steer, and thinking are 
 	]);
 	expect(events).toEqual(expect.arrayContaining(["thinking", "tool-start", "usage"]));
 	expect(f.connection.notifications.map((item) => item.method)).toEqual(["session/cancel"]);
+});
+
+test("creating with Goose's active model does not reset unchanged session config", async () => {
+	const f = fixture();
+	const created = await createSession({
+		projectId: "project",
+		cwd: f.directory,
+		model: {
+			provider: "openai",
+			id: "gpt",
+			name: "GPT",
+			available: true,
+			hidden: false,
+		},
+	});
+	expect(created.model).toMatchObject({ provider: "openai", id: "gpt" });
+	expect(f.connection.calls.map((call) => call.method)).toEqual(["initialize", "session/new"]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
 });
 
 test("Goose tool calls preserve exact upstream tool identity, raw input, and failed terminal output", async () => {
