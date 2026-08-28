@@ -217,9 +217,7 @@ export function authorizeWebSocketUpgrade(
 ): WebSocketUpgradeAuthorization {
 	if (!isAllowedWebSocketOrigin(req, config)) return rejection(403, "forbidden");
 	if (!config.authenticationEnabled) {
-		return isAuthorizedHttpRequest(req, config)
-			? { sessionExpiresAt: undefined }
-			: rejection(401, "unauthorized");
+		return { sessionExpiresAt: undefined };
 	}
 	const sessionExpiresAt = config.auth?.sessionExpiresAt(readAuthCookie(req));
 	return sessionExpiresAt === undefined ? rejection(401, "unauthorized") : { sessionExpiresAt };
