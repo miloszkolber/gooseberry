@@ -114,8 +114,29 @@ export interface SessionSummary {
 	messageCount: number;
 	updatedAt: number;
 	live: boolean;
+	archived: boolean;
 	lastSettlement?: AgentSettlement | null;
 	queue?: SessionQueueState;
+}
+
+export const SESSION_TITLE_MAX_LENGTH = 200;
+
+export function normalizeSessionTitle(value: unknown): string {
+	if (typeof value !== "string") throw new Error("Session title must be text");
+	const title = value.trim();
+	if (!title) throw new Error("Session title cannot be empty");
+	if (title.includes("\0")) throw new Error("Session title contains an invalid character");
+	if (title.length > SESSION_TITLE_MAX_LENGTH) {
+		throw new Error(`Session title must be ${SESSION_TITLE_MAX_LENGTH} characters or fewer`);
+	}
+	return title;
+}
+
+export interface SessionLifecycleChangedPayload {
+	projectId: string;
+	sessionId: string;
+	operation: "renamed" | "archived" | "unarchived";
+	title?: string;
 }
 
 export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | WireCustomMessage;

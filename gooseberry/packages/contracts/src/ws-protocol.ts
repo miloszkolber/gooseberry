@@ -28,7 +28,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 58;
+export const PROTOCOL_VERSION = 59;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -78,6 +78,9 @@ export const WS_METHODS = {
 	sessionAbort: "session.abort",
 	sessionPermissionReply: "session.permissionReply",
 	sessionDelete: "session.delete",
+	sessionRename: "session.rename",
+	sessionArchive: "session.archive",
+	sessionUnarchive: "session.unarchive",
 	sessionSetModel: "session.setModel",
 	sessionSetThinkingLevel: "session.setThinkingLevel",
 	sessionGetStats: "session.getStats",
@@ -124,6 +127,7 @@ export const WS_CHANNELS = {
 	projectUpdated: "project.updated",
 	agentEvent: "agent.event",
 	sessionDeleted: "session.deleted",
+	sessionLifecycleChanged: "session.lifecycleChanged",
 	providerLogin: "provider.login",
 	projectFsChanged: "project.fsChanged",
 	settingsChanged: "settings.changed",
@@ -193,6 +197,12 @@ export interface WsMethodMap {
 		result: Ack;
 	};
 	"session.delete": { params: { projectId: string; sessionId: string }; result: Ack };
+	"session.rename": {
+		params: { projectId: string; sessionId: string; title: string };
+		result: Ack;
+	};
+	"session.archive": { params: { projectId: string; sessionId: string }; result: Ack };
+	"session.unarchive": { params: { projectId: string; sessionId: string }; result: Ack };
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };
@@ -213,7 +223,10 @@ export interface WsMethodMap {
 		params: { projectId: string; sessionId: string; tasks: SessionGoal["tasks"] };
 		result: SessionGoal;
 	};
-	"session.list": { params: { projectId: string }; result: SessionSummary[] };
+	"session.list": {
+		params: { projectId: string; archived?: boolean | "all" };
+		result: SessionSummary[];
+	};
 	"session.getMessages": {
 		params: { sessionId: string; projectId: string };
 		result: { summary: SessionSummary; messages: TranscriptMessage[] };

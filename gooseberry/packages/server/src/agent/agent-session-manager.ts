@@ -11,8 +11,10 @@ import {
 	MAX_HISTORY_LIMIT,
 	MAX_HISTORY_QUERY_LENGTH,
 	modelReferenceKey,
+	normalizeSessionTitle,
 	type PermissionRequest,
 	type SessionEventPayload,
+	type SessionLifecycleChangedPayload,
 	type SessionStats,
 	type SessionSummary,
 	type SlashCommandInfo,
@@ -32,6 +34,7 @@ import {
 	type GooseSchedule,
 	type GooseSessionInfo,
 	type GooseUpdate,
+	isGooseResourceNotFound,
 } from "@gooseberry/goose-client";
 import { assertMountedDirectory } from "../path-admission";
 import {
@@ -70,8 +73,11 @@ interface Entry {
 }
 
 const sessions = new Map<string, Entry>();
+const sessionOperationCounts = new Map<string, number>();
+const archivingSessions = new Set<string>();
 let publisher: (payload: SessionEventPayload) => void = () => {};
 let deletedPublisher: (payload: { projectId: string; sessionId: string }) => void = () => {};
+let lifecyclePublisher: (payload: SessionLifecycleChangedPayload) => void = () => {};
 let configuredClient: GooseClient | undefined;
 let subscribedClient: GooseClient | undefined;
 let objectiveMcpUrl: string | undefined;
@@ -115,6 +121,9 @@ export function setSessionDeletedPublisher(
 ): void {
 	deletedPublisher = fn;
 }
+export function setSessionLifecyclePublisher(fn: typeof lifecyclePublisher): void {
+	lifecyclePublisher = fn;
+}
 export function setPermissionPublisher(fn: typeof permissionPublisher): void {
 	permissionPublisher = fn;
 }
@@ -155,6 +164,7 @@ interface HistoryIndexEntry {
 }
 const historySearchIndex = new Map<string, HistoryIndexEntry>();
 const historyIndexOwnedSessions = new Set<string>();
+const historySuppressedSessions = new Set<string>();
 const historyIndexFailures = new Map<string, { attempts: number; retryAt: number }>();
 const historyIndexing = new Map<string, Promise<void>>();
 const HISTORY_INDEX_BATCH_SIZE = 8;
@@ -163,6 +173,8 @@ const HISTORY_INDEX_MAX_MESSAGES = 500;
 const HISTORY_INDEX_MAX_TEXT_CHARS = 256 * 1024;
 const HISTORY_INDEX_MAX_MESSAGE_CHARS = 16 * 1024;
 const HISTORY_INDEX_MAX_ATTEMPTS = 3;
+const SESSION_INFO_BATCH_SIZE = 8;
+const SESSION_INFO_MAX_FALLBACKS = 200;
 const PROVIDER_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const PROVIDER_LOGIN_REPLAY_MS = 60_000;
 let providerLoginTimeoutOverride: number | undefined;
@@ -729,40 +741,42 @@ export async function ensureSessionAttached(
 	projectId: string,
 	cwd: string,
 ): Promise<boolean> {
-	const admitted = assertMountedDirectory(cwd, "Session workspace");
-	const existing = sessions.get(sessionId);
-	if (existing) {
-		if (existing.projectId !== projectId || existing.cwd !== admitted) return false;
-		await attachSession(sessionId, existing);
-		return true;
-	}
-	const record = loadProjectSessionRecords().find(
-		(candidate) =>
-			candidate.projectId === projectId &&
-			candidate.sessionId === sessionId &&
-			candidate.cwd === admitted,
-	);
-	if (!record) return false;
-	const placeholder: Entry = {
-		projectId,
-		cwd: admitted,
-		title: "Chat",
-		model: null,
-		thinkingLevel: "off",
-		configOptions: [],
-		messages: [],
-		isStreaming: false,
-		stats: emptyStats(sessionId),
-		objectiveToken: randomUUID(),
-	};
-	sessions.set(sessionId, placeholder);
-	try {
-		await attachSession(sessionId, placeholder);
-		return true;
-	} catch (error) {
-		sessions.delete(sessionId);
-		throw error;
-	}
+	return withSessionOperation(sessionId, async () => {
+		const admitted = assertMountedDirectory(cwd, "Session workspace");
+		const existing = sessions.get(sessionId);
+		if (existing) {
+			if (existing.projectId !== projectId || existing.cwd !== admitted) return false;
+			await attachSession(sessionId, existing);
+			return true;
+		}
+		const record = loadProjectSessionRecords().find(
+			(candidate) =>
+				candidate.projectId === projectId &&
+				candidate.sessionId === sessionId &&
+				candidate.cwd === admitted,
+		);
+		if (!record) return false;
+		const placeholder: Entry = {
+			projectId,
+			cwd: admitted,
+			title: "Chat",
+			model: null,
+			thinkingLevel: "off",
+			configOptions: [],
+			messages: [],
+			isStreaming: false,
+			stats: emptyStats(sessionId),
+			objectiveToken: randomUUID(),
+		};
+		sessions.set(sessionId, placeholder);
+		try {
+			await attachSession(sessionId, placeholder);
+			return true;
+		} catch (error) {
+			if (sessions.get(sessionId) === placeholder) sessions.delete(sessionId);
+			throw error;
+		}
+	});
 }
 
 function summary(sessionId: string, entry: Entry): SessionSummary {
@@ -777,15 +791,20 @@ function summary(sessionId: string, entry: Entry): SessionSummary {
 		messageCount: entry.messages.length,
 		updatedAt: Date.now(),
 		live: true,
+		archived: false,
 		...(entry.lastSettlement !== undefined ? { lastSettlement: entry.lastSettlement } : {}),
 	};
 }
-export async function listSessions(projectId: string): Promise<SessionSummary[]> {
+export async function listSessions(
+	projectId: string,
+	archived: boolean | "all" = false,
+): Promise<SessionSummary[]> {
 	const records = loadProjectSessionRecords().filter((record) => record.projectId === projectId);
 	const byId = new Map<
 		string,
 		Awaited<ReturnType<GooseClient["listSessions"]>>["sessions"][number]
 	>();
+	const confirmedMissing = new Set<string>();
 	let cursor: string | undefined;
 	const seenCursors = new Set<string>();
 	for (let page = 0; page < 20; page++) {
@@ -801,11 +820,62 @@ export async function listSessions(projectId: string): Promise<SessionSummary[]>
 		seenCursors.add(cursor);
 		if (page === 19) throw new Error("Goose session list was truncated after 20 pages");
 	}
+	const missing = records.filter((record) => !byId.has(record.sessionId));
+	if (missing.length > SESSION_INFO_MAX_FALLBACKS) {
+		throw new Error(
+			`Goose session list requires more than ${SESSION_INFO_MAX_FALLBACKS} per-session lookups`,
+		);
+	}
+	for (let offset = 0; offset < missing.length; offset += SESSION_INFO_BATCH_SIZE) {
+		await Promise.all(
+			missing.slice(offset, offset + SESSION_INFO_BATCH_SIZE).map(async (record) => {
+				try {
+					const info = await client().sessionInfo(record.sessionId);
+					byId.set(record.sessionId, info.session);
+				} catch (error) {
+					if (!isGooseResourceNotFound(error)) throw error;
+					confirmedMissing.add(record.sessionId);
+					// Confirmed stale project records are omitted. Goose remains authoritative for existence.
+				}
+			}),
+		);
+	}
 	return records.flatMap((record) => {
+		if (confirmedMissing.has(record.sessionId)) {
+			const live = sessions.get(record.sessionId);
+			if (
+				(sessionOperationCounts.get(record.sessionId) ?? 0) === 0 &&
+				!live?.isStreaming &&
+				!live?.attachment &&
+				!live?.replay
+			) {
+				clearSessionProjection(record.sessionId);
+			}
+			return [];
+		}
+		const source = byId.get(record.sessionId);
+		if (source?.archived) {
+			if (archived === false) return [];
+			return [
+				{
+					sessionId: record.sessionId,
+					projectId,
+					cwd: record.cwd,
+					title: source.title ?? "Chat",
+					model: null,
+					thinkingLevel: "off",
+					isStreaming: false,
+					messageCount: source.messageCount ?? 0,
+					updatedAt: source.updatedAt ? Date.parse(source.updatedAt) || Date.now() : Date.now(),
+					live: false,
+					archived: true,
+				},
+			];
+		}
+		if (archived === true) return [];
 		const live = sessions.get(record.sessionId);
 		if (live) return [summary(record.sessionId, live)];
-		const source = byId.get(record.sessionId);
-		if (!source || source.archived) return [];
+		if (!source) return [];
 		return [
 			{
 				sessionId: record.sessionId,
@@ -815,9 +885,10 @@ export async function listSessions(projectId: string): Promise<SessionSummary[]>
 				model: null,
 				thinkingLevel: "off",
 				isStreaming: false,
-				messageCount: 0,
+				messageCount: source.messageCount ?? 0,
 				updatedAt: source.updatedAt ? Date.parse(source.updatedAt) || Date.now() : Date.now(),
 				live: false,
+				archived: false,
 			},
 		];
 	});
@@ -882,6 +953,7 @@ async function indexHistoryRecord(
 	})
 		.then(({ summary: loadedSummary, messages }) => {
 			indexedEntry = sessions.get(record.sessionId);
+			if (historySuppressedSessions.has(record.sessionId)) return;
 			let remainingChars = HISTORY_INDEX_MAX_TEXT_CHARS;
 			const indexedMessages: HistoryIndexEntry["messages"] = [];
 			const first = Math.max(0, messages.length - HISTORY_INDEX_MAX_MESSAGES);
@@ -1071,6 +1143,30 @@ function requireEntry(sessionId: string): Entry {
 	return entry;
 }
 
+function beginSessionOperation(sessionId: string): () => void {
+	if (archivingSessions.has(sessionId)) {
+		throw new Error("Wait for the chat archive operation to finish");
+	}
+	sessionOperationCounts.set(sessionId, (sessionOperationCounts.get(sessionId) ?? 0) + 1);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		const remaining = (sessionOperationCounts.get(sessionId) ?? 1) - 1;
+		if (remaining > 0) sessionOperationCounts.set(sessionId, remaining);
+		else sessionOperationCounts.delete(sessionId);
+	};
+}
+
+async function withSessionOperation<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+	const release = beginSessionOperation(sessionId);
+	try {
+		return await operation();
+	} finally {
+		release();
+	}
+}
+
 /**
  * Goose keeps loaded session state per ACP connection. Serialize a load for
  * each entry and generation so reconnecting requests cannot race duplicate
@@ -1153,79 +1249,89 @@ export async function promptSession(
 	text: string,
 	images?: ImageContent[],
 ): Promise<void> {
-	const entry = requireEntry(sessionId);
-	await attachSession(sessionId, entry);
-	entry.messages.push({
-		role: "user",
-		content: images?.length ? [{ type: "text", text }, ...images] : text,
-	});
-	entry.pendingUserEcho = {
-		text,
-		offset: 0,
-		images: images ?? [],
-		matchedImages: (images ?? []).map(() => false),
-	};
-	entry.stats.totalMessages = entry.messages.length;
-	entry.isStreaming = true;
-	emit(sessionId, { type: "run-start" });
-	void client()
-		.prompt(sessionId, text, gooseImages(images), attachedRequest(entry))
-		.then((result) => {
-			entry.isStreaming = false;
-			entry.lastSettlement = { stopReason: result.stopReason ?? "complete" };
-			emit(sessionId, {
-				type: "complete",
-				...(result.stopReason ? { status: result.stopReason } : {}),
-			});
-		})
-		.catch((error: unknown) => {
-			entry.isStreaming = false;
-			const message = error instanceof Error ? error.message : String(error);
-			entry.lastSettlement = { stopReason: "error", errorMessage: message };
-			emit(sessionId, { type: "error", error: message });
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await attachSession(sessionId, entry);
+		entry.messages.push({
+			role: "user",
+			content: images?.length ? [{ type: "text", text }, ...images] : text,
 		});
+		entry.pendingUserEcho = {
+			text,
+			offset: 0,
+			images: images ?? [],
+			matchedImages: (images ?? []).map(() => false),
+		};
+		entry.stats.totalMessages = entry.messages.length;
+		entry.isStreaming = true;
+		emit(sessionId, { type: "run-start" });
+		void client()
+			.prompt(sessionId, text, gooseImages(images), attachedRequest(entry))
+			.then((result) => {
+				entry.isStreaming = false;
+				entry.lastSettlement = { stopReason: result.stopReason ?? "complete" };
+				emit(sessionId, {
+					type: "complete",
+					...(result.stopReason ? { status: result.stopReason } : {}),
+				});
+			})
+			.catch((error: unknown) => {
+				entry.isStreaming = false;
+				const message = error instanceof Error ? error.message : String(error);
+				entry.lastSettlement = { stopReason: "error", errorMessage: message };
+				emit(sessionId, { type: "error", error: message });
+			});
+	});
 }
 export async function steerSession(
 	sessionId: string,
 	text: string,
 	images?: ImageContent[],
 ): Promise<void> {
-	const entry = requireEntry(sessionId);
-	await attachSession(sessionId, entry);
-	if (!entry.runId) throw new Error("Goose has not supplied a steerable run id.");
-	const result = await client().steer(
-		sessionId,
-		entry.runId,
-		text,
-		gooseImages(images),
-		attachedRequest(entry),
-	);
-	entry.runId = result.runId;
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await attachSession(sessionId, entry);
+		if (!entry.runId) throw new Error("Goose has not supplied a steerable run id.");
+		const result = await client().steer(
+			sessionId,
+			entry.runId,
+			text,
+			gooseImages(images),
+			attachedRequest(entry),
+		);
+		entry.runId = result.runId;
+	});
 }
 export async function abortSession(sessionId: string): Promise<void> {
-	cancelPermissions(sessionId);
-	await attachSession(sessionId, requireEntry(sessionId));
-	await client().cancel(sessionId, attachedRequest(requireEntry(sessionId)));
+	await withSessionOperation(sessionId, async () => {
+		cancelPermissions(sessionId);
+		await attachSession(sessionId, requireEntry(sessionId));
+		await client().cancel(sessionId, attachedRequest(requireEntry(sessionId)));
+	});
 }
 export async function setSessionModel(sessionId: string, model: WireModel): Promise<void> {
-	const entry = requireEntry(sessionId);
-	await attachSession(sessionId, entry);
-	if (entry.model?.provider === model.provider && entry.model.id === model.id) return;
-	let options = entry.configOptions;
-	if (entry.model?.provider !== model.provider)
-		options = await client().setProvider(sessionId, model.provider, attachedRequest(entry));
-	options = await client().setModel(sessionId, model.id, attachedRequest(entry));
-	entry.model = model;
-	entry.configOptions = options;
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await attachSession(sessionId, entry);
+		if (entry.model?.provider === model.provider && entry.model.id === model.id) return;
+		let options = entry.configOptions;
+		if (entry.model?.provider !== model.provider)
+			options = await client().setProvider(sessionId, model.provider, attachedRequest(entry));
+		options = await client().setModel(sessionId, model.id, attachedRequest(entry));
+		entry.model = model;
+		entry.configOptions = options;
+	});
 }
 export async function setSessionThinkingLevel(
 	sessionId: string,
 	level: ThinkingLevel,
 ): Promise<void> {
-	const entry = requireEntry(sessionId);
-	await attachSession(sessionId, entry);
-	entry.configOptions = await client().setThinking(sessionId, level, attachedRequest(entry));
-	entry.thinkingLevel = level;
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await attachSession(sessionId, entry);
+		entry.configOptions = await client().setThinking(sessionId, level, attachedRequest(entry));
+		entry.thinkingLevel = level;
+	});
 }
 export function clampSessionThinkingLevel(
 	sessionId: string,
@@ -1273,33 +1379,107 @@ function slashCommand(
 	};
 }
 export async function getSessionCommands(sessionId: string): Promise<SlashCommandInfo[]> {
-	const entry = requireEntry(sessionId);
-	await attachSession(sessionId, entry);
-	return client()
-		.listSlashCommands({ sessionId }, attachedRequest(entry))
-		.then((commands) => commands.map(slashCommand));
+	return withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await attachSession(sessionId, entry);
+		return client()
+			.listSlashCommands({ sessionId }, attachedRequest(entry))
+			.then((commands) => commands.map(slashCommand));
+	});
 }
 export function getCommandsForCwd(cwd: string): Promise<SlashCommandInfo[]> {
 	return client()
 		.listSlashCommands({ cwd })
 		.then((commands) => commands.map(slashCommand));
 }
+
+function clearSessionProjection(sessionId: string): void {
+	cancelPermissions(sessionId);
+	historyIndexOwnedSessions.delete(sessionId);
+	sessions.delete(sessionId);
+	historySearchIndex.delete(sessionId);
+	historyIndexFailures.delete(sessionId);
+}
+
+export async function renameSession(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+	title: string,
+): Promise<void> {
+	await withSessionOperation(sessionId, async () => {
+		const normalizedTitle = normalizeSessionTitle(title);
+		const admitted = assertMountedDirectory(cwd, "Session workspace");
+		const entry = sessions.get(sessionId);
+		if (entry && (entry.projectId !== projectId || entry.cwd !== admitted)) {
+			throw new Error(`Unknown session: ${sessionId}`);
+		}
+		await client().renameSession(sessionId, normalizedTitle);
+		if (entry) entry.title = normalizedTitle;
+		const indexed = historySearchIndex.get(sessionId);
+		if (indexed) indexed.title = normalizedTitle;
+		lifecyclePublisher({ projectId, sessionId, operation: "renamed", title: normalizedTitle });
+	});
+}
+
+export async function archiveSession(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+): Promise<void> {
+	const admitted = assertMountedDirectory(cwd, "Session workspace");
+	const entry = sessions.get(sessionId);
+	if (entry && (entry.projectId !== projectId || entry.cwd !== admitted)) {
+		throw new Error(`Unknown session: ${sessionId}`);
+	}
+	if (entry?.isStreaming) throw new Error("Stop the running chat before archiving it");
+	if (
+		archivingSessions.has(sessionId) ||
+		(sessionOperationCounts.get(sessionId) ?? 0) > 0 ||
+		entry?.attachment ||
+		entry?.replay
+	) {
+		throw new Error("Wait for the chat to finish loading or updating");
+	}
+	archivingSessions.add(sessionId);
+	try {
+		await client().archiveSession(sessionId);
+		historySuppressedSessions.add(sessionId);
+		clearSessionProjection(sessionId);
+		lifecyclePublisher({ projectId, sessionId, operation: "archived" });
+	} finally {
+		archivingSessions.delete(sessionId);
+	}
+}
+
+export async function unarchiveSession(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+): Promise<void> {
+	await withSessionOperation(sessionId, async () => {
+		assertMountedDirectory(cwd, "Session workspace");
+		await client().unarchiveSession(sessionId);
+		historySuppressedSessions.delete(sessionId);
+		lifecyclePublisher({ projectId, sessionId, operation: "unarchived" });
+	});
+}
+
 export async function deleteSession(
 	sessionId: string,
 	projectId: string,
 	cwd: string,
 ): Promise<void> {
-	cancelPermissions(sessionId);
-	historyIndexOwnedSessions.delete(sessionId);
-	if (!(await ensureSessionAttached(sessionId, projectId, cwd)))
-		throw new Error(`Unknown session: ${sessionId}`);
-	await attachSession(sessionId, requireEntry(sessionId));
-	await client().deleteSession(sessionId, attachedRequest(requireEntry(sessionId)));
-	sessions.delete(sessionId);
-	historySearchIndex.delete(sessionId);
-	historyIndexFailures.delete(sessionId);
-	forgetProjectSession(projectId, sessionId);
-	deletedPublisher({ projectId, sessionId });
+	await withSessionOperation(sessionId, async () => {
+		if (!(await ensureSessionAttached(sessionId, projectId, cwd)))
+			throw new Error(`Unknown session: ${sessionId}`);
+		await attachSession(sessionId, requireEntry(sessionId));
+		await client().deleteSession(sessionId, attachedRequest(requireEntry(sessionId)));
+		historySuppressedSessions.add(sessionId);
+		clearSessionProjection(sessionId);
+		forgetProjectSession(projectId, sessionId);
+		deletedPublisher({ projectId, sessionId });
+	});
 }
 export function disposeAllSessions(): void {
 	for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
@@ -1315,7 +1495,10 @@ export function disposeAllSessions(): void {
 	historyIndexFailures.clear();
 	historySearchIndex.clear();
 	historyIndexOwnedSessions.clear();
+	historySuppressedSessions.clear();
 	historyIndexing.clear();
+	sessionOperationCounts.clear();
+	archivingSessions.clear();
 	sessions.clear();
 }
 export async function settleSessionsForShutdown(): Promise<void> {

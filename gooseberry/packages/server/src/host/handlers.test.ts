@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IMAGE_MAX_BASE64_BYTES } from "@gooseberry/contracts";
 import { setMountedProjectRootsForTesting } from "../path-admission";
-import { setDataDirForTests } from "../persistence";
+import { recordProjectSession, setDataDirForTests } from "../persistence";
 import { resetConfigCache } from "../settings";
 import { stopAllWatches } from "../watch";
 import { handleRequest } from "./handlers";
@@ -153,4 +153,25 @@ test("prompt and steer reject malformed image payloads before session mutation",
 			context,
 		),
 	).rejects.toThrow("Unknown session: missing");
+});
+
+test("session lifecycle requests enforce project ownership and bounded titles before ACP", async () => {
+	recordProjectSession({ projectId: "p1", sessionId: "session-1", cwd: repo });
+	await expect(
+		handleRequest(
+			"session.rename",
+			{ projectId: "p1", sessionId: "session-1", title: "   " },
+			context,
+		),
+	).rejects.toThrow("Session title cannot be empty");
+	await expect(
+		handleRequest(
+			"session.archive",
+			{ projectId: "another-project", sessionId: "session-1" },
+			context,
+		),
+	).rejects.toThrow("Unknown session: session-1");
+	await expect(
+		handleRequest("session.list", { projectId: "p1", archived: "yes" }, context),
+	).rejects.toThrow("Malformed session list request");
 });

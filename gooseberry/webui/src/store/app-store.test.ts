@@ -35,6 +35,7 @@ beforeEach(() => {
 		activeTabByProjectArea: { p1: null },
 		previewTabByProjectArea: {},
 		closedChatsByProjectArea: {},
+		sessionCatalogVersionByProjectArea: {},
 		activeActivityByProjectArea: {},
 		sessions: {},
 		deletedSessionsByProjectArea: {},
@@ -181,6 +182,97 @@ test("closing a chat moves it to local history", () => {
 	const state = useAppStore.getState();
 	expect(state.tabsByProjectArea.p1).toEqual([]);
 	expect(state.closedChatsByProjectArea.p1?.[0]?.sessionId).toBe("s1");
+});
+
+test("Goose session lifecycle pushes rename and archive local presentation without deleting", () => {
+	useAppStore.getState().openChatSession("p1", "s1", null, "medium");
+	useAppStore.getState().applySessionLifecycle({
+		projectId: "p1",
+		sessionId: "s1",
+		operation: "renamed",
+		title: "Focused work",
+	});
+	expect(useAppStore.getState().tabsByProjectArea.p1?.[0]?.name).toBe("Focused work");
+	useAppStore.getState().applySessionLifecycle({
+		projectId: "p1",
+		sessionId: "s1",
+		operation: "archived",
+	});
+	const archived = useAppStore.getState();
+	expect(archived.tabsByProjectArea.p1).toEqual([]);
+	expect(archived.sessions.s1).toBeUndefined();
+	expect(archived.deletedSessionsByProjectArea.p1?.s1).toBeUndefined();
+	expect(archived.sessionCatalogVersionByProjectArea.p1).toBe(2);
+	archived.applySessionLifecycle({ projectId: "p1", sessionId: "s1", operation: "unarchived" });
+	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(3);
+});
+
+test("authoritative session reconciliation repairs missed chat title pushes", () => {
+	useAppStore.getState().openChatSession("p1", "open", null, "medium");
+	useAppStore.getState().openChatSession("p1", "closed", null, "medium");
+	useAppStore.getState().closeChatToHistory("closed", "p1", false);
+	useAppStore.getState().reconcileProjectAreaSessions(
+		"p1",
+		["open", "closed"],
+		[
+			{ sessionId: "open", title: "Renamed open chat", archived: false },
+			{ sessionId: "closed", title: "Renamed closed chat", archived: false },
+		],
+	);
+	const state = useAppStore.getState();
+	expect(state.tabsByProjectArea.p1?.find((tab) => tab.kind === "chat")?.name).toBe(
+		"Renamed open chat",
+	);
+	expect(state.closedChatsByProjectArea.p1?.[0]?.title).toBe("Renamed closed chat");
+});
+
+test("missed archive reconciliation does not tombstone a restorable chat", () => {
+	useAppStore.getState().openChatSession("p1", "archived", null, "medium");
+	useAppStore
+		.getState()
+		.reconcileProjectAreaSessions(
+			"p1",
+			["archived"],
+			[{ sessionId: "archived", title: "Archived chat", archived: true }],
+		);
+	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
+	expect(useAppStore.getState().deletedSessionsByProjectArea.p1?.archived).toBeUndefined();
+	useAppStore
+		.getState()
+		.applySessionLifecycle({ projectId: "p1", sessionId: "archived", operation: "unarchived" });
+	useAppStore
+		.getState()
+		.noteClosedChats("p1", [{ sessionId: "archived", title: "Restored chat", closedAt: 42 }]);
+	useAppStore.getState().reopenChat("p1", "archived");
+	expect(useAppStore.getState().tabsByProjectArea.p1?.[0]).toMatchObject({
+		kind: "chat",
+		sessionId: "archived",
+		name: "Restored chat",
+	});
+});
+
+test("missed deletion reconciliation tombstones late hydration", () => {
+	useAppStore.getState().openChatSession("p1", "deleted", null, "medium");
+	useAppStore.getState().reconcileProjectAreaSessions("p1", ["deleted"], []);
+	expect(useAppStore.getState().deletedSessionsByProjectArea.p1?.deleted).toBe(true);
+	useAppStore.getState().hydrateSession(
+		{
+			sessionId: "deleted",
+			projectId: "p1",
+			cwd: "/workspace",
+			title: "Stale chat",
+			model: null,
+			thinkingLevel: "off",
+			isStreaming: false,
+			messageCount: 0,
+			updatedAt: 42,
+			live: false,
+			archived: false,
+		},
+		{ turns: [], toolResults: {}, askAnswers: {} },
+	);
+	expect(useAppStore.getState().sessions.deleted).toBeUndefined();
+	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
 });
 
 test("activity requests select the fixed activity panel", () => {

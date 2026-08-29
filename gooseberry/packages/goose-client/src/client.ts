@@ -189,6 +189,17 @@ export class GooseClient {
 	async deleteSession(sessionId: string, options?: GooseRequestOptions): Promise<void> {
 		await this.#request("session/delete", { sessionId }, options);
 	}
+	renameSession(sessionId: string, title: string, options?: GooseRequestOptions): Promise<void> {
+		return this.custom("_goose/unstable/session/rename", { sessionId, title }, options).then(
+			() => {},
+		);
+	}
+	archiveSession(sessionId: string, options?: GooseRequestOptions): Promise<void> {
+		return this.custom("_goose/unstable/session/archive", { sessionId }, options).then(() => {});
+	}
+	unarchiveSession(sessionId: string, options?: GooseRequestOptions): Promise<void> {
+		return this.custom("_goose/unstable/session/unarchive", { sessionId }, options).then(() => {});
+	}
 
 	async forkSession(
 		sessionId: string,
@@ -787,6 +798,14 @@ function raw(value: unknown): JsonValue {
 function asError(value: unknown): Error {
 	return value instanceof Error ? value : new Error(String(value));
 }
+export function isGooseResourceNotFound(error: unknown): boolean {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		(error as { code?: unknown }).code === -32002
+	);
+}
 function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
 	if (!signal) return promise;
 	return new Promise<T>((resolve, reject) => {
@@ -797,11 +816,15 @@ function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
 }
 function normalizeSession(value: unknown): GooseSession {
 	const p = object(value);
+	const meta = object(p._meta);
 	const cwd = string(p.cwd);
 	const title = string(p.title);
 	const updatedAt = string(p.updatedAt);
-	const createdAt = string(p.createdAt);
-	const projectId = string(p.projectId);
+	const createdAt = string(p.createdAt) ?? string(meta.createdAt);
+	const projectId = string(p.projectId) ?? string(meta.projectId);
+	const messageCount = number(p.messageCount) ?? number(meta.messageCount);
+	const archivedAt = string(p.archivedAt) ?? string(meta.archivedAt);
+	const archived = typeof p.archived === "boolean" ? p.archived : archivedAt !== undefined;
 	return {
 		sessionId: requiredString(p, "sessionId"),
 		...(cwd === undefined ? {} : { cwd }),
@@ -809,7 +832,9 @@ function normalizeSession(value: unknown): GooseSession {
 		...(updatedAt === undefined ? {} : { updatedAt }),
 		...(createdAt === undefined ? {} : { createdAt }),
 		...(projectId === undefined ? {} : { projectId }),
-		...(typeof p.archived === "boolean" ? { archived: p.archived } : {}),
+		...(messageCount === undefined ? {} : { messageCount }),
+		...(archivedAt === undefined ? {} : { archivedAt }),
+		archived,
 		raw: raw(value),
 	};
 }
