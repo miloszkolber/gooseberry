@@ -1,6 +1,8 @@
 import type {
+	AskUserQuestionResult,
 	ImageContent,
 	PermissionRequest,
+	QueueLane,
 	RefreshedModels,
 	SessionStats,
 	SessionSummary,
@@ -28,7 +30,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 59;
+export const PROTOCOL_VERSION = 60;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -61,6 +63,7 @@ export const WS_METHODS = {
 	projectOpen: "project.open",
 	projectAddRoot: "project.addRoot",
 	projectRemoveRoot: "project.removeRoot",
+	projectUpdate: "project.update",
 	projectList: "project.list",
 	projectClose: "project.close",
 	projectWatchReady: "project.watchReady",
@@ -75,6 +78,9 @@ export const WS_METHODS = {
 	sessionCreate: "session.create",
 	sessionPrompt: "session.prompt",
 	sessionSteer: "session.steer",
+	sessionQueueAdd: "session.queueAdd",
+	sessionQueueEdit: "session.queueEdit",
+	sessionQueueRemove: "session.queueRemove",
 	sessionAbort: "session.abort",
 	sessionPermissionReply: "session.permissionReply",
 	sessionDelete: "session.delete",
@@ -88,7 +94,7 @@ export const WS_METHODS = {
 	sessionGoalGet: "session.goalGet",
 	sessionGoalSet: "session.goalSet",
 	sessionGoalClear: "session.goalClear",
-	sessionTasksSet: "session.tasksSet",
+	sessionQuestionReply: "session.questionReply",
 	sessionList: "session.list",
 	sessionGetMessages: "session.getMessages",
 	modelList: "model.list",
@@ -133,6 +139,7 @@ export const WS_CHANNELS = {
 	settingsChanged: "settings.changed",
 	permissionRequest: "session.permissionRequest",
 	permissionResolved: "session.permissionResolved",
+	sessionObjectiveChanged: "session.objectiveChanged",
 } as const;
 
 export type WsMethod = (typeof WS_METHODS)[keyof typeof WS_METHODS];
@@ -150,6 +157,10 @@ export interface WsMethodMap {
 	"project.open": { params: { path: string }; result: Project };
 	"project.addRoot": { params: { id: string; path: string }; result: Project };
 	"project.removeRoot": { params: { id: string; path: string }; result: Project };
+	"project.update": {
+		params: { id: string; name?: string; icon?: Project["icon"] };
+		result: Project;
+	};
 	"project.list": { params: Record<string, never>; result: Project[] };
 	"project.close": { params: { id: string }; result: Ack };
 	"project.watchReady": {
@@ -191,6 +202,15 @@ export interface WsMethodMap {
 		params: { sessionId: string; text: string; images?: ImageContent[] };
 		result: Ack;
 	};
+	"session.queueAdd": { params: { sessionId: string; text: string }; result: Ack };
+	"session.queueEdit": {
+		params: { sessionId: string; lane: QueueLane; index: number; text: string };
+		result: Ack;
+	};
+	"session.queueRemove": {
+		params: { sessionId: string; lane: QueueLane; index: number };
+		result: Ack;
+	};
 	"session.abort": { params: { sessionId: string }; result: Ack };
 	"session.permissionReply": {
 		params: { sessionId: string; permissionId: string; optionId?: string };
@@ -219,9 +239,9 @@ export interface WsMethodMap {
 		params: { projectId: string; sessionId: string };
 		result: SessionGoal;
 	};
-	"session.tasksSet": {
-		params: { projectId: string; sessionId: string; tasks: SessionGoal["tasks"] };
-		result: SessionGoal;
+	"session.questionReply": {
+		params: { sessionId: string; toolCallId: string; result: AskUserQuestionResult };
+		result: Ack;
 	};
 	"session.list": {
 		params: { projectId: string; archived?: boolean | "all" };

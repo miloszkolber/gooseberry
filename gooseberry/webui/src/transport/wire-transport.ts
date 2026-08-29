@@ -8,6 +8,7 @@ import type {
 	ServerWelcome,
 	SessionDeletedPayload,
 	SessionEventPayload,
+	SessionGoal,
 	SessionLifecycleChangedPayload,
 } from "@gooseberry/contracts";
 import { WS_CHANNELS } from "@gooseberry/contracts";
@@ -74,6 +75,10 @@ export function initTransport(): WsTransport {
 	});
 	transport.subscribe(WS_CHANNELS.sessionLifecycleChanged, (data) => {
 		useAppStore.getState().applySessionLifecycle(data as SessionLifecycleChangedPayload);
+	});
+	transport.subscribe(WS_CHANNELS.sessionObjectiveChanged, (data) => {
+		const objective = data as SessionGoal;
+		useAppStore.getState().setSessionGoal(objective.sessionId, objective);
 	});
 
 	transport.subscribe(WS_CHANNELS.projectFsChanged, (data) => {

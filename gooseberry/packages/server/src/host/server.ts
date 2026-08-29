@@ -13,6 +13,7 @@ import {
 } from "@gooseberry/contracts";
 import { errorCodeOf } from "@gooseberry/shared/codedError";
 import {
+	askSessionQuestion,
 	currentGooseStatus,
 	disposeAllSessions,
 	pendingPermissionSnapshot,
@@ -369,6 +370,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		sessionForToken: sessionForObjectiveToken,
 		readObjective: sessionGoalState,
 		updateObjective: updateStoredSessionObjective,
+		askQuestion: askSessionQuestion,
+		onObjectiveUpdated: (state) => publishToSockets(WS_CHANNELS.sessionObjectiveChanged, state),
 	});
 
 	const server = Bun.serve<SocketData, never>({

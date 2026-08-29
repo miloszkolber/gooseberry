@@ -22,7 +22,7 @@ import type {
 	UserMessage,
 	WireModel,
 } from "@gooseberry/contracts";
-import { DEFAULT_CONFIG, isAskUserAnswersMessage } from "@gooseberry/contracts";
+import { DEFAULT_CONFIG } from "@gooseberry/contracts";
 import { create } from "zustand";
 import type { LoginState } from "../auth";
 import { assistantFailureText } from "../chat/assistant-failure";
@@ -480,6 +480,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 								total: event.usage.total ?? 0,
 							},
 							cost: event.usage.cost ?? 0,
+							...(event.reported ? { reported: event.reported } : {}),
 							...(rt.stats?.contextUsage ? { contextUsage: rt.stats.contextUsage } : {}),
 						},
 					}
@@ -576,10 +577,6 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			};
 		}
 		case "message_end": {
-			if (isAskUserAnswersMessage(event.message)) {
-				const { toolCallId, result } = event.message.details;
-				return { ...rt, askAnswers: { ...rt.askAnswers, [toolCallId]: result } };
-			}
 			if (event.message.role !== "assistant" || !rt.currentAssistantId) return rt;
 			const id = rt.currentAssistantId;
 			const turn: ChatTurn = { kind: "assistant", id, message: event.message, streaming: false };
@@ -829,7 +826,10 @@ interface AppState {
 	reconcileProjectAreaSessions: (
 		projectAreaId: string,
 		baselineSessionIds: readonly string[],
-		authoritativeSessions: readonly Pick<SessionSummary, "sessionId" | "title" | "archived">[],
+		authoritativeSessions: readonly Pick<
+			SessionSummary,
+			"sessionId" | "title" | "archived" | "queue"
+		>[],
 	) => void;
 	reopenChat: (projectAreaId: string, sessionId: string, options?: ContentOpenOptions) => void;
 	noteClosedChats: (projectAreaId: string, entries: ClosedChat[]) => void;
@@ -843,6 +843,7 @@ interface AppState {
 	appendUserMessage: (sessionId: string, text: string, attachments?: ChatAttachment[]) => void;
 	appendErrorTurn: (sessionId: string, text: string) => void;
 	handleAgentEvent: (event: AgentEvent, sessionId: string) => void;
+	setAskAnswer: (sessionId: string, toolCallId: string, result: AskUserQuestionResult) => void;
 	setModelsForProviderVersion: (providerVersion: number, models: WireModel[]) => void;
 	noteProviderChanged: () => void;
 	setProviderConfigured: (configured: boolean | null) => void;
@@ -1730,6 +1731,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 					.filter((session) => session.archived)
 					.map((session) => session.sessionId),
 			);
+			const queues = new Map(
+				authoritativeSessions
+					.filter((session) => session.queue !== undefined)
+					.map((session) => [session.sessionId, session.queue as SessionQueueState]),
+			);
 			const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
 			const closed = s.closedChatsByProjectArea[projectAreaId] ?? [];
 			let next: AppState = {
@@ -1749,6 +1755,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 						return title !== undefined && title !== chat.title ? { ...chat, title } : chat;
 					}),
 				},
+				sessions: Object.fromEntries(
+					Object.entries(s.sessions).map(([sessionId, runtime]) => {
+						const queue = queues.get(sessionId);
+						return [sessionId, queue ? { ...runtime, queue } : runtime];
+					}),
+				),
 			};
 			for (const sessionId of baselineSessionIds) {
 				if (!active.has(sessionId)) {
@@ -2040,6 +2052,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 				return {};
 			}
 			return withRuntime(s, request.sessionId, (rt) => reduceExtUi(rt, request));
+		}),
+	setAskAnswer: (sessionId, toolCallId, result) =>
+		set((state) => {
+			const runtime = state.sessions[sessionId];
+			if (!runtime) return state;
+			return {
+				sessions: {
+					...state.sessions,
+					[sessionId]: {
+						...runtime,
+						askAnswers: { ...runtime.askAnswers, [toolCallId]: result },
+					},
+				},
+			};
 		}),
 	beginLogin: (loginId, providerId) =>
 		set((s) =>

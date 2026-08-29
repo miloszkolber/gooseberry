@@ -17,6 +17,7 @@ import {
 	DEFAULT_CONFIG,
 	DEFAULT_SIGNET_SETTINGS,
 	normalizeModelReferences,
+	PROJECT_ICONS,
 	type Project,
 } from "@gooseberry/contracts";
 
@@ -63,6 +64,9 @@ function isProjectList(value: unknown): value is PersistedProject[] {
 				typeof project.id === "string" &&
 				(isStringArray(project.roots) || typeof project.path === "string") &&
 				(project.name === undefined || typeof project.name === "string") &&
+				(project.icon === undefined ||
+					(typeof project.icon === "string" &&
+						(PROJECT_ICONS as readonly string[]).includes(project.icon))) &&
 				(project.slug === undefined || typeof project.slug === "string") &&
 				(project.lastOpened === undefined ||
 					(typeof project.lastOpened === "number" && Number.isFinite(project.lastOpened))) &&

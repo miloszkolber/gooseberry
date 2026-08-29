@@ -22,9 +22,16 @@ import {
 } from "./slash-command-completion";
 import type { ChatAttachment } from "./types";
 
-export type SubmitBehavior = "send" | "steer" | "interrupt";
+export type SubmitBehavior = "send" | "steer" | "queue" | "interrupt";
 
 const STREAMING_SEND_MODES = [
+	{
+		behavior: "queue" as const,
+		name: "Queue follow-up",
+		meaning: "runs after the agent finishes",
+		keys: "Cmd/Ctrl+Enter",
+		testid: "send-mode-queue",
+	},
 	{
 		behavior: "steer" as const,
 		name: "Steer",
@@ -72,7 +79,11 @@ interface ComposerProps {
 	mentionCandidates: MentionCandidate[];
 	recentPrompts: string[];
 	onMentionQuery: (query: string | null) => void;
-	onSubmit: (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => void;
+	onSubmit: (
+		text: string,
+		attachments: ChatAttachment[],
+		behavior: SubmitBehavior,
+	) => boolean | undefined;
 	onAbort: () => void;
 	onHistoryOpen?: () => void;
 }
@@ -159,11 +170,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const submitText = (raw: string, behavior: SubmitBehavior) => {
 		if (!canSubmit(raw)) return;
 		const text = raw.trim();
-		onSubmit(
+		const accepted = onSubmit(
 			text,
 			images.map(({ name, content }) => ({ name, content })),
 			behavior,
 		);
+		if (accepted === false) return;
 		onChange("");
 		commitImages([]);
 		setAttachErrors([]);
@@ -295,6 +307,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		if (e.key === "Enter" && e.shiftKey && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			submit(isStreaming ? "interrupt" : "send");
+			return;
+		}
+		if (e.key === "Enter" && !e.shiftKey && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			submit(isStreaming ? "queue" : "send");
 			return;
 		}
 		if (e.key === "Enter" && !e.shiftKey) {

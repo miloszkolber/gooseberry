@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basename, isAbsolute, relative } from "node:path";
-import type { Project } from "@gooseberry/contracts";
+import { normalizeProjectIcon, normalizeProjectName, type Project } from "@gooseberry/contracts";
 import { canonicalPath } from "../git";
 import { assertMountedDirectory, assertMountedProject } from "../path-admission";
 import { loadProjects, saveProjects } from "../persistence";
@@ -117,6 +117,21 @@ export function removeProjectRoot(id: string, path: string): Project {
 	const next = project.roots.filter((root) => canonicalPath(root) !== wanted);
 	if (next.length === project.roots.length) throw new Error("Project root not found");
 	project.roots = next;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+export function updateProject(id: string, update: { name?: unknown; icon?: unknown }): Project {
+	if (update.name === undefined && update.icon === undefined) {
+		throw new Error("Project update requires a name or icon");
+	}
+	const projects = getProjects();
+	const project = projects.find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	if (update.name !== undefined) project.name = normalizeProjectName(update.name);
+	if (update.icon !== undefined) project.icon = normalizeProjectIcon(update.icon);
+	project.lastOpened = Date.now();
 	saveProjects(projects);
 	emit(project);
 	return project;

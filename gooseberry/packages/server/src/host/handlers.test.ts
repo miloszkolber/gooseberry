@@ -94,6 +94,31 @@ test("directory projects expose discovered Git repositories without managing the
 	);
 });
 
+test("projects persist validated display names and icons without changing stable slugs", async () => {
+	const updated = await handleRequest(
+		"project.update",
+		{ id: "p1", name: "  Research lab  ", icon: "flask" },
+		context,
+	);
+	expect(updated).toMatchObject({ id: "p1", name: "Research lab", icon: "flask", slug: "project" });
+	expect(await handleRequest("project.list", {}, context)).toEqual([
+		expect.objectContaining({ id: "p1", name: "Research lab", icon: "flask", slug: "project" }),
+	]);
+	await expect(
+		handleRequest("project.update", { id: "p1", icon: "arbitrary" }, context),
+	).rejects.toThrow("Unknown project icon");
+});
+
+test("browser protocol does not allow users to mutate agent-owned tasks", async () => {
+	await expect(
+		handleRequest(
+			"session.tasksSet",
+			{ projectId: "p1", sessionId: "session", tasks: [] },
+			context,
+		),
+	).rejects.toThrow("Unknown method");
+});
+
 test("settings expose model visibility and optional Signet configuration", async () => {
 	const config = await handleRequest(
 		"settings.update",

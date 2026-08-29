@@ -125,10 +125,36 @@ export function readAskResult(raw: unknown): AskUserQuestionResult | null {
 		typeof v === "object" &&
 		Array.isArray((v as AskUserQuestionResult).answers) &&
 		typeof (v as AskUserQuestionResult).cancelled === "boolean";
-	if (raw && typeof raw === "object" && isResult((raw as { details?: unknown }).details)) {
-		return (raw as { details: AskUserQuestionResult }).details;
+	if (isResult(raw)) return raw;
+	if (!raw || typeof raw !== "object") {
+		if (typeof raw !== "string") return null;
+		try {
+			const parsed: unknown = JSON.parse(raw);
+			return isResult(parsed) ? parsed : null;
+		} catch {
+			return null;
+		}
 	}
-	return isResult(raw) ? raw : null;
+	const record = raw as {
+		details?: unknown;
+		structuredContent?: unknown;
+		content?: unknown;
+	};
+	if (isResult(record.details)) return record.details;
+	if (isResult(record.structuredContent)) return record.structuredContent;
+	if (Array.isArray(record.content)) {
+		for (const item of record.content) {
+			if (!item || typeof item !== "object" || typeof Reflect.get(item, "text") !== "string")
+				continue;
+			try {
+				const parsed: unknown = JSON.parse(Reflect.get(item, "text") as string);
+				if (isResult(parsed)) return parsed;
+			} catch {
+				// Non-JSON tool text is rendered as a plain resolved record below.
+			}
+		}
+	}
+	return null;
 }
 
 interface RecapState {
@@ -331,13 +357,7 @@ interface CachedCardState {
 }
 const cardStateCache = new Map<string, CachedCardState>();
 
-export function AskUserQuestionCard({
-	toolCallId,
-	args,
-	result,
-	status,
-	streaming,
-}: ToolRenderProps) {
+export function AskUserQuestionCard({ toolCallId, args, result, status }: ToolRenderProps) {
 	const actions = useChatActions();
 	const ask = useAskState(toolCallId);
 	const providedFocusScope = useAskFocusScope();
@@ -394,7 +414,7 @@ export function AskUserQuestionCard({
 	}, [tab]);
 
 	useEffect(() => {
-		if (!awaiting || streaming || questions.length === 0 || submitted) return;
+		if (!awaiting || questions.length === 0 || submitted) return;
 		let frame: number | null = null;
 		let attempts = 0;
 		let userTookOver = false;
@@ -426,7 +446,7 @@ export function AskUserQuestionCard({
 			window.removeEventListener("pointerdown", yieldToUser, { capture: true });
 			window.removeEventListener("keydown", yieldToUser, { capture: true });
 		};
-	}, [awaiting, focusScope, questions.length, streaming, submitted, toolCallId]);
+	}, [awaiting, focusScope, questions.length, submitted, toolCallId]);
 
 	const stateFor = (qi: number): QState => states[qi] ?? emptyQState();
 	const patch = (qi: number, next: Partial<QState>) =>
@@ -456,7 +476,7 @@ export function AskUserQuestionCard({
 	if (status === "error") {
 		return <ResolvedRecord questions={questions} result={null} rawText={resultText(result)} />;
 	}
-	if (streaming || questions.length === 0) return <ComposingCard count={questions.length} />;
+	if (questions.length === 0) return <ComposingCard count={questions.length} />;
 	if (submitted) {
 		return (
 			<WaitingCard>
