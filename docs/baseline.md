@@ -1,6 +1,6 @@
 # Gooseberry baseline
 
-Gooseberry is a focused Web UI for Goose. Goose v1.48.0 runs unchanged on the host and remains the authority for sessions, history, providers, models, tools, compaction, permissions, recipes, and scheduler state. Gooseberry owns projects, goals, tasks, presentation, integrations, and UI state.
+Gooseberry is a focused Web UI for Goose. Goose v1.48.0 runs unchanged on the host and remains the authority for sessions, history, providers, models, extensions, tools, compaction, permissions, recipes, and scheduler state. Gooseberry owns projects, goals, tasks, presentation, integrations, and UI state.
 
 ## Projects and files
 
@@ -10,7 +10,7 @@ A project contains one or more absolute directory roots visible to the controlle
 
 Projects can contain multiple persistent and concurrent Goose sessions. Gooseberry presents streamed text, thinking, tool calls, results, errors, completion, model identity, reasoning, context, and runtime usage reported by Goose. Messages support multiple images. Session controls include steering, controller-memory follow-up queues, interruption, model and reasoning changes, loading persisted Goose sessions, native fork with immediate-parent lineage, rename, reversible archive and restore, Goose slash-command completion, and bounded incremental history search. Queued follow-ups survive browser refreshes but not a controller restart.
 
-Each session may have one goal and an ordered task list with `pending`, `active`, and `done` states. Users set the goal, while agents own task creation and state through objective MCP. The same session-scoped MCP service lets an agent pause and ask the user supporting questions. Custom agents (`scout`, `builder`, `strategist`, and `auditor`) run through Goose. The browser capability is a lazy skill backed by the separate Go browser HTTP service. Settings project Goose provider status, API-key configuration, native OAuth/device-code authentication, models, recipes, and schedules. Schedule controls include run, pause, resume, inspection, termination, recent sessions, update, and deletion.
+Each session may have one goal and an ordered task list with `pending`, `active`, and `done` states. Users set the goal, while agents own task creation and state through objective MCP. The same session-scoped MCP service lets an agent pause and ask the user supporting questions. Custom agents (`scout`, `builder`, `strategist`, and `auditor`) run through Goose. The browser capability is a lazy skill backed by the separate Go browser HTTP service. Settings project Goose provider status, API-key configuration, native OAuth/device-code authentication, models, recipes, schedules, global extensions, active-session extensions, active-session tool inventory, and Goose's global tool permissions. Extension controls expose only sanitized identity and descriptive metadata, while Goose retains raw configuration and credentials. Schedule controls include run, pause, resume, inspection, termination, recent sessions, update, and deletion.
 
 ## Runtime and trust
 

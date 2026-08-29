@@ -20,6 +20,10 @@ import type {
 	GitDiffFile,
 	GitDiffScope,
 	GitRepository,
+	GooseExtensionCatalog,
+	GooseExtensionSummary,
+	GooseToolPermission,
+	GooseToolSummary,
 	HistoryScope,
 	HistorySearchResult,
 	LoginFrame,
@@ -30,7 +34,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 61;
+export const PROTOCOL_VERSION = 62;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -127,6 +131,15 @@ export const WS_METHODS = {
 	gooseScheduleInspect: "goose.scheduleInspect",
 	gooseScheduleKill: "goose.scheduleKill",
 	gooseStatus: "goose.status",
+	gooseExtensionList: "goose.extensionList",
+	gooseExtensionAdd: "goose.extensionAdd",
+	gooseExtensionSetEnabled: "goose.extensionSetEnabled",
+	gooseExtensionRemove: "goose.extensionRemove",
+	sessionExtensionList: "session.extensionList",
+	sessionExtensionAdd: "session.extensionAdd",
+	sessionExtensionRemove: "session.extensionRemove",
+	sessionToolList: "session.toolList",
+	sessionToolPermissionSet: "session.toolPermissionSet",
 } as const;
 
 export const WS_CHANNELS = {
@@ -325,6 +338,41 @@ export interface WsMethodMap {
 	"goose.status": {
 		params: Record<string, never>;
 		result: { configured: boolean; reachable: boolean; error?: string; version?: string };
+	};
+	"goose.extensionList": { params: Record<string, never>; result: GooseExtensionCatalog };
+	"goose.extensionAdd": {
+		params: { name: string; enabled: boolean };
+		result: GooseExtensionCatalog;
+	};
+	"goose.extensionSetEnabled": {
+		params: { configKey: string; enabled: boolean };
+		result: GooseExtensionCatalog;
+	};
+	"goose.extensionRemove": { params: { configKey: string }; result: GooseExtensionCatalog };
+	"session.extensionList": {
+		params: { projectId: string; sessionId: string };
+		result: GooseExtensionSummary[];
+	};
+	"session.extensionAdd": {
+		params: { projectId: string; sessionId: string; name: string };
+		result: GooseExtensionSummary[];
+	};
+	"session.extensionRemove": {
+		params: { projectId: string; sessionId: string; name: string };
+		result: GooseExtensionSummary[];
+	};
+	"session.toolList": {
+		params: { projectId: string; sessionId: string };
+		result: GooseToolSummary[];
+	};
+	"session.toolPermissionSet": {
+		params: {
+			projectId: string;
+			sessionId: string;
+			toolName: string;
+			permission: GooseToolPermission;
+		};
+		result: GooseToolSummary[];
 	};
 }
 

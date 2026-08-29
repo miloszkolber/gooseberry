@@ -3,7 +3,7 @@
 ```text
 Web UI ── Gooseberry controller ── Goose ACP ── /usr/local/bin/goose
    │             │                 ├─ providers/models
-   │             │                 ├─ sessions/history/tools
+   │             │                 ├─ sessions/history/extensions/tools
    │             │                 └─ recipes/scheduler/permissions
    │             ├─ projects, follow-up queues, goals/tasks, Git and file projections
    │             └─ objective and supporting-question MCP

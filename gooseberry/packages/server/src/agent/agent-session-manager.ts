@@ -5,6 +5,11 @@ import {
 	type AskUserQuestionArgs,
 	type AskUserQuestionResult,
 	type AssistantMessage,
+	type GooseConfiguredExtensionSummary,
+	type GooseExtensionCatalog,
+	type GooseExtensionSummary,
+	type GooseToolPermission,
+	type GooseToolSummary,
 	type HistoryScope,
 	type HistorySearchResult,
 	type ImageContent,
@@ -30,6 +35,8 @@ import {
 	GooseClient,
 	type GooseClientEvent,
 	type GooseConfigOption,
+	type GooseConfiguredExtension,
+	type GooseExtension,
 	type GooseMcpServer,
 	type GoosePermissionDecision,
 	type GoosePermissionRequest,
@@ -82,8 +89,11 @@ interface Entry {
 const sessions = new Map<string, Entry>();
 const followUpDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionOperationCounts = new Map<string, number>();
+const sessionAdministrationMutations = new Set<string>();
 const archivingSessions = new Set<string>();
 const forkingSessions = new Set<string>();
+const globalToolPermissionMutations = new Set<string>();
+let globalExtensionMutation = false;
 let publisher: (payload: SessionEventPayload) => void = () => {};
 let deletedPublisher: (payload: { projectId: string; sessionId: string }) => void = () => {};
 let lifecyclePublisher: (payload: SessionLifecycleChangedPayload) => void = () => {};
@@ -1283,12 +1293,18 @@ function requireEntry(sessionId: string): Entry {
 	return entry;
 }
 
-function beginSessionOperation(sessionId: string): () => void {
+function beginSessionOperation(
+	sessionId: string,
+	options: { administrationMutation?: boolean } = {},
+): () => void {
 	if (archivingSessions.has(sessionId)) {
 		throw new Error("Wait for the chat archive operation to finish");
 	}
 	if (forkingSessions.has(sessionId)) {
 		throw new Error("Wait for the chat fork operation to finish");
+	}
+	if (sessionAdministrationMutations.has(sessionId) && !options.administrationMutation) {
+		throw new Error("Wait for the chat extension or permission update to finish");
 	}
 	sessionOperationCounts.set(sessionId, (sessionOperationCounts.get(sessionId) ?? 0) + 1);
 	let released = false;
@@ -1301,12 +1317,27 @@ function beginSessionOperation(sessionId: string): () => void {
 	};
 }
 
-async function withSessionOperation<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-	const release = beginSessionOperation(sessionId);
+async function withSessionOperation<T>(
+	sessionId: string,
+	operation: () => Promise<T>,
+	options: { administrationMutation?: boolean } = {},
+): Promise<T> {
+	const release = beginSessionOperation(sessionId, options);
 	try {
 		return await operation();
 	} finally {
 		release();
+	}
+}
+
+async function safeGooseAdministrationRequest<T>(
+	message: string,
+	request: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await request();
+	} catch (cause) {
+		throw new Error(message, { cause });
 	}
 }
 
@@ -1804,6 +1835,324 @@ export function getCommandsForCwd(cwd: string): Promise<SlashCommandInfo[]> {
 		.then((commands) => commands.map(slashCommand));
 }
 
+/** Browser-safe extension projection. Raw extension configuration never leaves this module. */
+function extensionSummary(extension: GooseExtension): GooseExtensionSummary {
+	return {
+		name: extension.name,
+		type: extension.type,
+		...(extension.displayName === undefined ? {} : { displayName: extension.displayName }),
+		...(extension.description === undefined ? {} : { description: extension.description }),
+		...(extension.bundled === undefined ? {} : { bundled: extension.bundled }),
+		...(extension.availableTools === undefined
+			? {}
+			: { availableTools: [...extension.availableTools] }),
+	};
+}
+
+function configuredExtensionSummary(
+	extension: GooseConfiguredExtension,
+): GooseConfiguredExtensionSummary {
+	return {
+		...extensionSummary(extension),
+		enabled: extension.enabled,
+		...(extension.configKey === undefined ? {} : { configKey: extension.configKey }),
+	};
+}
+
+function toolSummary(tool: import("@gooseberry/goose-client").GooseTool): GooseToolSummary {
+	return {
+		name: tool.name,
+		description: tool.description,
+		parameters: [...tool.parameters],
+		...(tool.permission === undefined ? {} : { permission: tool.permission }),
+	};
+}
+
+function requiredIdentifier(value: unknown, label: string): string {
+	if (typeof value !== "string") throw new Error(`${label} must be text`);
+	if (!value.trim() || value.includes("\0")) throw new Error(`${label} is invalid`);
+	return value;
+}
+
+function requiredBoolean(value: unknown, label: string): boolean {
+	if (typeof value !== "boolean") throw new Error(`${label} must be true or false`);
+	return value;
+}
+
+function requiredToolPermission(value: unknown): GooseToolPermission {
+	if (value === "always_allow" || value === "ask_before" || value === "never_allow") return value;
+	throw new Error("Unknown tool permission");
+}
+
+/** Goose owns global extension configuration. This is only a safe projection. */
+export async function listGooseExtensions(): Promise<GooseExtensionCatalog> {
+	const [configured, available] = await safeGooseAdministrationRequest(
+		"Couldn't load Goose extensions",
+		() => Promise.all([client().listConfiguredExtensions(), client().listAvailableExtensions()]),
+	);
+	return {
+		configured: configured.extensions.map(configuredExtensionSummary),
+		available: available.map(extensionSummary),
+		warningCount: configured.warnings.length,
+	};
+}
+
+async function withGlobalExtensionMutation<T>(operation: () => Promise<T>): Promise<T> {
+	if (globalExtensionMutation) throw new Error("Wait for the Goose extension update to finish");
+	globalExtensionMutation = true;
+	try {
+		return await operation();
+	} finally {
+		globalExtensionMutation = false;
+	}
+}
+
+async function withGlobalToolPermissionMutation<T>(
+	toolName: string,
+	operation: () => Promise<T>,
+): Promise<T> {
+	if (globalToolPermissionMutations.has(toolName)) {
+		throw new Error("Wait for the Goose tool permission update to finish");
+	}
+	globalToolPermissionMutations.add(toolName);
+	try {
+		return await operation();
+	} finally {
+		globalToolPermissionMutations.delete(toolName);
+	}
+}
+
+export async function addGooseExtension(
+	name: unknown,
+	enabled: unknown,
+): Promise<GooseExtensionCatalog> {
+	const requestedName = requiredIdentifier(name, "Extension name");
+	const requestedEnabled = requiredBoolean(enabled, "Extension enabled");
+	return withGlobalExtensionMutation(async () => {
+		const [configured, available] = await safeGooseAdministrationRequest(
+			"Couldn't load Goose extensions",
+			() => Promise.all([client().listConfiguredExtensions(), client().listAvailableExtensions()]),
+		);
+		if (configured.extensions.some((candidate) => candidate.name === requestedName)) {
+			throw new Error(`Extension is already configured: ${requestedName}`);
+		}
+		const extension = available.find((candidate) => candidate.name === requestedName);
+		if (!extension) throw new Error(`Unknown available extension: ${requestedName}`);
+		await safeGooseAdministrationRequest("Goose couldn't add the extension", () =>
+			client().addExtension(extension, requestedEnabled),
+		);
+		return listGooseExtensions();
+	});
+}
+
+export async function setGooseExtensionEnabled(
+	configKey: unknown,
+	enabled: unknown,
+): Promise<GooseExtensionCatalog> {
+	const requestedConfigKey = requiredIdentifier(configKey, "Extension config key");
+	const requestedEnabled = requiredBoolean(enabled, "Extension enabled");
+	return withGlobalExtensionMutation(async () => {
+		const configured = await safeGooseAdministrationRequest("Couldn't load Goose extensions", () =>
+			client().listConfiguredExtensions(),
+		);
+		if (!configured.extensions.some((extension) => extension.configKey === requestedConfigKey)) {
+			throw new Error(`Unknown configured extension key: ${requestedConfigKey}`);
+		}
+		await safeGooseAdministrationRequest("Goose couldn't update the extension", () =>
+			client().setExtensionEnabled(requestedConfigKey, requestedEnabled),
+		);
+		return listGooseExtensions();
+	});
+}
+
+export async function removeGooseExtension(configKey: unknown): Promise<GooseExtensionCatalog> {
+	const requestedConfigKey = requiredIdentifier(configKey, "Extension config key");
+	return withGlobalExtensionMutation(async () => {
+		const configured = await safeGooseAdministrationRequest("Couldn't load Goose extensions", () =>
+			client().listConfiguredExtensions(),
+		);
+		if (!configured.extensions.some((extension) => extension.configKey === requestedConfigKey)) {
+			throw new Error(`Unknown configured extension key: ${requestedConfigKey}`);
+		}
+		await safeGooseAdministrationRequest("Goose couldn't remove the extension", () =>
+			client().removeExtension(requestedConfigKey),
+		);
+		return listGooseExtensions();
+	});
+}
+
+function ensureSessionMutationAvailable(sessionId: string, entry: Entry, action: string): void {
+	if (entry.isStreaming || entry.runId !== undefined) {
+		throw new Error(`Stop the running chat before ${action}`);
+	}
+	if (
+		archivingSessions.has(sessionId) ||
+		forkingSessions.has(sessionId) ||
+		(sessionOperationCounts.get(sessionId) ?? 0) > 0 ||
+		sessionAdministrationMutations.has(sessionId) ||
+		entry.attachment ||
+		entry.replay
+	) {
+		throw new Error(`Wait for the chat to finish loading or updating before ${action}`);
+	}
+}
+
+async function withSessionAdministrationMutation<T>(
+	sessionId: string,
+	entry: Entry,
+	action: string,
+	operation: () => Promise<T>,
+): Promise<T> {
+	ensureSessionMutationAvailable(sessionId, entry, action);
+	sessionAdministrationMutations.add(sessionId);
+	try {
+		return await withSessionOperation(sessionId, operation, { administrationMutation: true });
+	} finally {
+		sessionAdministrationMutations.delete(sessionId);
+	}
+}
+
+export async function listSessionExtensions(sessionId: string): Promise<GooseExtensionSummary[]> {
+	return withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await safeGooseAdministrationRequest("Couldn't load the Goose chat", () =>
+			attachSession(sessionId, entry),
+		);
+		return safeGooseAdministrationRequest("Couldn't load the chat extensions", () =>
+			client()
+				.listSessionExtensions(sessionId, attachedRequest(entry))
+				.then((items) => items.map(extensionSummary)),
+		);
+	});
+}
+
+async function extensionForSession(name: string): Promise<GooseExtension> {
+	const [configured, available] = await safeGooseAdministrationRequest(
+		"Couldn't load Goose extensions",
+		() => Promise.all([client().listConfiguredExtensions(), client().listAvailableExtensions()]),
+	);
+	return (
+		configured.extensions.find((extension) => extension.name === name) ??
+		available.find((extension) => extension.name === name) ??
+		(() => {
+			throw new Error(`Unknown extension: ${name}`);
+		})()
+	);
+}
+
+export async function addSessionExtension(
+	sessionId: string,
+	name: unknown,
+): Promise<GooseExtensionSummary[]> {
+	const requestedName = requiredIdentifier(name, "Extension name");
+	const entry = requireEntry(sessionId);
+	return withSessionAdministrationMutation(
+		sessionId,
+		entry,
+		"changing session extensions",
+		async () => {
+			await safeGooseAdministrationRequest("Couldn't load the Goose chat", () =>
+				attachSession(sessionId, entry),
+			);
+			const extension = await extensionForSession(requestedName);
+			await safeGooseAdministrationRequest("Goose couldn't add the chat extension", () =>
+				client().addSessionExtension(sessionId, extension, attachedRequest(entry)),
+			);
+			return safeGooseAdministrationRequest("Couldn't refresh the chat extensions", () =>
+				client()
+					.listSessionExtensions(sessionId, attachedRequest(entry))
+					.then((items) => items.map(extensionSummary)),
+			);
+		},
+	);
+}
+
+export async function removeSessionExtension(
+	sessionId: string,
+	name: unknown,
+): Promise<GooseExtensionSummary[]> {
+	const requestedName = requiredIdentifier(name, "Extension name");
+	const entry = requireEntry(sessionId);
+	return withSessionAdministrationMutation(
+		sessionId,
+		entry,
+		"changing session extensions",
+		async () => {
+			await safeGooseAdministrationRequest("Couldn't load the Goose chat", () =>
+				attachSession(sessionId, entry),
+			);
+			const extensions = await safeGooseAdministrationRequest(
+				"Couldn't load the chat extensions",
+				() => client().listSessionExtensions(sessionId, attachedRequest(entry)),
+			);
+			if (!extensions.some((extension) => extension.name === requestedName)) {
+				throw new Error(`Extension is not active for this chat: ${requestedName}`);
+			}
+			await safeGooseAdministrationRequest("Goose couldn't remove the chat extension", () =>
+				client().removeSessionExtension(sessionId, requestedName, attachedRequest(entry)),
+			);
+			return safeGooseAdministrationRequest("Couldn't refresh the chat extensions", () =>
+				client()
+					.listSessionExtensions(sessionId, attachedRequest(entry))
+					.then((items) => items.map(extensionSummary)),
+			);
+		},
+	);
+}
+
+export async function listSessionTools(sessionId: string): Promise<GooseToolSummary[]> {
+	return withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		await safeGooseAdministrationRequest("Couldn't load the Goose chat", () =>
+			attachSession(sessionId, entry),
+		);
+		return safeGooseAdministrationRequest("Couldn't load the chat tools", () =>
+			client()
+				.listTools(sessionId, undefined, attachedRequest(entry))
+				.then((tools) => tools.map(toolSummary)),
+		);
+	});
+}
+
+export async function setSessionToolPermission(
+	sessionId: string,
+	toolName: unknown,
+	permission: unknown,
+): Promise<GooseToolSummary[]> {
+	const requestedToolName = requiredIdentifier(toolName, "Tool name");
+	const requestedPermission = requiredToolPermission(permission);
+	const entry = requireEntry(sessionId);
+	return withSessionAdministrationMutation(
+		sessionId,
+		entry,
+		"changing tool permissions",
+		async () => {
+			return withGlobalToolPermissionMutation(requestedToolName, async () => {
+				await safeGooseAdministrationRequest("Couldn't load the Goose chat", () =>
+					attachSession(sessionId, entry),
+				);
+				const inventory = await safeGooseAdministrationRequest("Couldn't load the chat tools", () =>
+					client().listTools(sessionId, undefined, attachedRequest(entry)),
+				);
+				if (!inventory.some((tool) => tool.name === requestedToolName)) {
+					throw new Error(`Unknown tool for this chat: ${requestedToolName}`);
+				}
+				await safeGooseAdministrationRequest("Goose couldn't update the tool permission", () =>
+					client().setToolPermissions(
+						[{ toolName: requestedToolName, permission: requestedPermission }],
+						attachedRequest(entry),
+					),
+				);
+				return safeGooseAdministrationRequest("Couldn't refresh the chat tools", () =>
+					client()
+						.listTools(sessionId, undefined, attachedRequest(entry))
+						.then((tools) => tools.map(toolSummary)),
+				);
+			});
+		},
+	);
+}
+
 function clearSessionProjection(sessionId: string): void {
 	const drainTimer = followUpDrainTimers.get(sessionId);
 	if (drainTimer) clearTimeout(drainTimer);
@@ -1926,6 +2275,9 @@ export function disposeAllSessions(): void {
 	historySuppressedSessions.clear();
 	historyIndexing.clear();
 	sessionOperationCounts.clear();
+	sessionAdministrationMutations.clear();
+	globalToolPermissionMutations.clear();
+	globalExtensionMutation = false;
 	archivingSessions.clear();
 	forkingSessions.clear();
 	sessions.clear();

@@ -119,6 +119,19 @@ test("browser protocol does not allow users to mutate agent-owned tasks", async 
 	).rejects.toThrow("Unknown method");
 });
 
+test("session extension and tool methods require a recorded project session before reaching Goose", async () => {
+	await expect(
+		handleRequest("session.toolList", { projectId: "p1", sessionId: "not-recorded" }, context),
+	).rejects.toThrow("Unknown session");
+	await expect(
+		handleRequest(
+			"session.extensionAdd",
+			{ projectId: "p1", sessionId: "not-recorded", name: "developer" },
+			context,
+		),
+	).rejects.toThrow("Unknown session");
+});
+
 test("settings expose model visibility and optional Signet configuration", async () => {
 	const config = await handleRequest(
 		"settings.update",

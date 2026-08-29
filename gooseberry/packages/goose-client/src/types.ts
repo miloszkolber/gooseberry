@@ -33,9 +33,32 @@ export interface GooseTool {
 	name: string;
 	description: string;
 	parameters: string[];
-	permission?: string;
+	permission?: GooseToolPermission;
 	inputSchema: JsonValue;
 	outputSchema?: JsonValue;
+}
+
+/** Goose v1.48 global permission.yaml values. */
+export type GooseToolPermission = "always_allow" | "ask_before" | "never_allow";
+
+/**
+ * Normalized extension metadata. The raw Goose object is deliberately retained
+ * only in this server-side ACP adapter so callers can pass the exact object
+ * back to Goose without re-serializing sensitive MCP configuration.
+ */
+export interface GooseExtension {
+	name: string;
+	type: "builtin" | "platform" | "mcp";
+	displayName?: string;
+	description?: string;
+	bundled?: boolean;
+	availableTools?: string[];
+	raw: JsonValue;
+}
+
+export interface GooseConfiguredExtension extends GooseExtension {
+	enabled: boolean;
+	configKey?: string;
 }
 
 export interface GoosePermissionRequest {

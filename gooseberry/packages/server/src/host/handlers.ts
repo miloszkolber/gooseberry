@@ -11,6 +11,8 @@ import type {
 import { validateRequestImages } from "@gooseberry/contracts";
 import {
 	abortSession,
+	addGooseExtension,
+	addSessionExtension,
 	archiveSession,
 	cancelProviderLogin,
 	clampSessionThinkingLevel,
@@ -29,13 +31,18 @@ import {
 	gooseRecipes,
 	gooseSchedules,
 	listAvailableModels,
+	listGooseExtensions,
 	listProviderStatus,
+	listSessionExtensions,
 	listSessions,
+	listSessionTools,
 	logoutProvider,
 	promptSession,
 	queueSessionMessage,
 	refreshAvailableModels,
 	refreshGooseStatus,
+	removeGooseExtension,
+	removeSessionExtension,
 	removeSessionQueue,
 	renameSession,
 	replyProviderLogin,
@@ -43,9 +50,11 @@ import {
 	resolveSessionQuestion,
 	searchSessionHistory,
 	setAllModelVisibility,
+	setGooseExtensionEnabled,
 	setModelVisibility,
 	setSessionModel,
 	setSessionThinkingLevel,
+	setSessionToolPermission,
 	startProviderLogin,
 	steerSession,
 	unarchiveSession,
@@ -102,30 +111,41 @@ function recordedCwd(projectId: string, sessionId: string): string | undefined {
 	)?.cwd;
 }
 
-function authorizeRecordedSession(projectId: unknown, sessionId: unknown): string {
-	if (typeof projectId !== "string" || typeof sessionId !== "string") {
+function requestIdentifier(value: unknown, _label: string): string {
+	if (typeof value !== "string" || !value.trim() || value.includes("\0")) {
 		throw new Error("Malformed session request");
 	}
-	const cwd = recordedCwd(projectId, sessionId);
-	if (!cwd) throw new Error(`Unknown session: ${sessionId}`);
-	return assertProjectCwd(projectId, cwd);
+	return value;
+}
+
+function authorizeRecordedSession(projectId: unknown, sessionId: unknown): string {
+	const requestedProjectId = requestIdentifier(projectId, "project identifier");
+	const requestedSessionId = requestIdentifier(sessionId, "session identifier");
+	const cwd = recordedCwd(requestedProjectId, requestedSessionId);
+	if (!cwd) throw new Error(`Unknown session: ${requestedSessionId}`);
+	return assertProjectCwd(requestedProjectId, cwd);
 }
 
 async function authorizeSession(projectId: unknown, sessionId: unknown): Promise<string> {
-	if (typeof projectId !== "string" || typeof sessionId !== "string") {
-		throw new Error("Malformed session request");
-	}
-	const liveCwd = getSessionCwd(sessionId);
+	const requestedProjectId = requestIdentifier(projectId, "project identifier");
+	const requestedSessionId = requestIdentifier(sessionId, "session identifier");
+	const liveCwd = getSessionCwd(requestedSessionId);
 	if (liveCwd) {
-		if (getSessionProjectId(sessionId) !== projectId)
-			throw new Error(`Unknown session: ${sessionId}`);
-		return assertProjectCwd(projectId, liveCwd);
+		if (getSessionProjectId(requestedSessionId) !== requestedProjectId)
+			throw new Error(`Unknown session: ${requestedSessionId}`);
+		return assertProjectCwd(requestedProjectId, liveCwd);
 	}
-	const cwd = recordedCwd(projectId, sessionId);
-	if (!cwd) throw new Error(`Unknown session: ${sessionId}`);
-	const admitted = assertProjectCwd(projectId, cwd);
-	if (!(await ensureSessionAttached(sessionId, projectId, admitted))) {
-		throw new Error(`Unknown session: ${sessionId}`);
+	const cwd = recordedCwd(requestedProjectId, requestedSessionId);
+	if (!cwd) throw new Error(`Unknown session: ${requestedSessionId}`);
+	const admitted = assertProjectCwd(requestedProjectId, cwd);
+	let attached: boolean;
+	try {
+		attached = await ensureSessionAttached(requestedSessionId, requestedProjectId, admitted);
+	} catch (cause) {
+		throw new Error("Couldn't load the Goose chat", { cause });
+	}
+	if (!attached) {
+		throw new Error(`Unknown session: ${requestedSessionId}`);
 	}
 	return admitted;
 }
@@ -429,6 +449,47 @@ const handlers: Record<string, Handler> = {
 	"goose.scheduleKill": (params) =>
 		gooseSchedules().killScheduledJob((params as { scheduleId: string }).scheduleId),
 	"goose.status": () => refreshGooseStatus(),
+	"goose.extensionList": () => listGooseExtensions(),
+	"goose.extensionAdd": (params) => {
+		const value = params as { name?: unknown; enabled?: unknown };
+		return addGooseExtension(value.name, value.enabled);
+	},
+	"goose.extensionSetEnabled": (params) => {
+		const value = params as { configKey?: unknown; enabled?: unknown };
+		return setGooseExtensionEnabled(value.configKey, value.enabled);
+	},
+	"goose.extensionRemove": (params) =>
+		removeGooseExtension((params as { configKey?: unknown }).configKey),
+	"session.extensionList": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		return listSessionExtensions(value.sessionId as string);
+	},
+	"session.extensionAdd": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown; name?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		return addSessionExtension(value.sessionId as string, value.name);
+	},
+	"session.extensionRemove": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown; name?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		return removeSessionExtension(value.sessionId as string, value.name);
+	},
+	"session.toolList": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		return listSessionTools(value.sessionId as string);
+	},
+	"session.toolPermissionSet": async (params) => {
+		const value = params as {
+			projectId?: unknown;
+			sessionId?: unknown;
+			toolName?: unknown;
+			permission?: unknown;
+		};
+		await authorizeSession(value.projectId, value.sessionId);
+		return setSessionToolPermission(value.sessionId as string, value.toolName, value.permission);
+	},
 };
 
 export async function handleRequest(

@@ -11,7 +11,7 @@ import type {
 class FakeConnection implements GooseConnection {
 	readonly calls: { method: string; params: Record<string, unknown> }[] = [];
 	readonly notifications: { method: string; params: Record<string, unknown> }[] = [];
-	#resolveClosed!: () => void;
+	#resolveClosed: (() => void) | undefined;
 	readonly closed = new Promise<void>((resolve) => {
 		this.#resolveClosed = resolve;
 	});
@@ -42,7 +42,7 @@ class FakeConnection implements GooseConnection {
 		return Promise.resolve();
 	}
 	close(): void {
-		this.#resolveClosed();
+		this.#resolveClosed?.();
 	}
 	setPendingRequest(method = "session/list"): void {
 		this.#pendingMethod = method;
@@ -52,7 +52,7 @@ class FakeConnection implements GooseConnection {
 		this.responses.set(method, response);
 	}
 	disconnect(): void {
-		this.#resolveClosed();
+		this.#resolveClosed?.();
 	}
 }
 
@@ -568,6 +568,133 @@ test("dispatches raw Goose custom methods without exposing ACP objects", async (
 	const fixture = fake();
 	await fixture.client.custom("_goose/unstable/recipes/list", {});
 	expect(fixture.connection.calls.at(-1)?.method).toBe("_goose/unstable/recipes/list");
+});
+
+test("uses the pinned extension methods, preserves raw server-side, and normalizes safe identities", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	const rawMcp = {
+		type: "mcp",
+		server: {
+			name: "private-mcp",
+			url: "https://secret.example/mcp",
+			headers: { Authorization: "Bearer secret" },
+		},
+	};
+	fixture.connection.setResponse("_goose/unstable/config/extensions/list", {
+		extensions: [{ extension: rawMcp, enabled: true, configKey: "mcp.private" }],
+		warnings: ["contains private configuration"],
+	});
+	fixture.connection.setResponse("_goose/unstable/extensions/available", {
+		extensions: [
+			{
+				type: "builtin",
+				name: "developer",
+				display_name: "Developer",
+				bundled: true,
+				available_tools: ["developer__shell"],
+			},
+		],
+	});
+	const configured = await fixture.client.listConfiguredExtensions();
+	const available = await fixture.client.listAvailableExtensions();
+	const developer = available[0];
+	if (!developer) throw new Error("available extension fixture is missing developer");
+	fixture.connection.setResponse("_goose/unstable/session/extensions/list", {
+		extensions: [{ type: "builtin", name: "developer" }],
+	});
+	expect(configured).toMatchObject({
+		extensions: [{ name: "private-mcp", type: "mcp", enabled: true, configKey: "mcp.private" }],
+		warnings: ["contains private configuration"],
+	});
+	expect(configured.extensions[0]?.raw).toEqual(rawMcp);
+	expect(available[0]).toMatchObject({
+		displayName: "Developer",
+		availableTools: ["developer__shell"],
+	});
+	expect(await fixture.client.listSessionExtensions("session-1")).toMatchObject([
+		{ name: "developer", type: "builtin" },
+	]);
+	await fixture.client.addExtension(developer, false);
+	await fixture.client.setExtensionEnabled("mcp.private", false);
+	await fixture.client.removeExtension("mcp.private");
+	await fixture.client.addSessionExtension("session-1", developer);
+	await fixture.client.removeSessionExtension("session-1", "developer");
+	expect(fixture.connection.calls.slice(-5)).toEqual([
+		{
+			method: "_goose/unstable/config/extensions/add",
+			params: { extension: developer.raw, enabled: false },
+		},
+		{
+			method: "_goose/unstable/config/extensions/set-enabled",
+			params: { configKey: "mcp.private", enabled: false },
+		},
+		{ method: "_goose/unstable/config/extensions/remove", params: { configKey: "mcp.private" } },
+		{
+			method: "_goose/unstable/session/extensions/add",
+			params: { sessionId: "session-1", extension: developer.raw },
+		},
+		{
+			method: "_goose/unstable/session/extensions/remove",
+			params: { sessionId: "session-1", name: "developer" },
+		},
+	]);
+	expect(fixture.connection.calls).toContainEqual({
+		method: "_goose/unstable/session/extensions/list",
+		params: { sessionId: "session-1" },
+	});
+	await fixture.client.setToolPermissions([
+		{ toolName: "developer__shell", permission: "ask_before" },
+	]);
+	expect(fixture.connection.calls.at(-1)).toEqual({
+		method: "_goose/unstable/tools/permissions/set",
+		params: { toolPermissions: [{ toolName: "developer__shell", permission: "ask_before" }] },
+	});
+});
+
+test("rejects malformed extension identities and unknown tool permissions", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("_goose/unstable/extensions/available", {
+		extensions: [{ type: "mcp", server: { url: "https://missing-name.example" } }],
+	});
+	await expect(fixture.client.listAvailableExtensions()).rejects.toThrow("name");
+	fixture.connection.setResponse("_goose/unstable/tools/list", {
+		tools: [
+			{
+				name: "read",
+				description: "Read",
+				parameters: [],
+				permission: "arbitrary",
+				inputSchema: {},
+			},
+		],
+	});
+	await expect(fixture.client.listTools("s")).rejects.toThrow("Unknown Goose tool permission");
+});
+
+test("treats Goose's null tool permission as an unset global permission", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("_goose/unstable/tools/list", {
+		tools: [
+			{
+				name: "read",
+				description: "Read",
+				parameters: [],
+				permission: null,
+				inputSchema: {},
+			},
+		],
+	});
+	expect(await fixture.client.listTools("s")).toEqual([
+		{
+			name: "read",
+			description: "Read",
+			parameters: [],
+			inputSchema: {},
+		},
+	]);
 });
 
 test("uses Goose v1.48 snake_case recipe schedule and slash command fields", async () => {

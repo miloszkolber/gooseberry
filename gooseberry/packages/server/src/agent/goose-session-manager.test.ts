@@ -17,6 +17,8 @@ import {
 } from "../persistence";
 import {
 	abortSession,
+	addGooseExtension,
+	addSessionExtension,
 	archiveSession,
 	askSessionQuestion,
 	cancelProviderLogin,
@@ -31,11 +33,15 @@ import {
 	gooseSchedules,
 	hasSession,
 	isSessionStreaming,
+	listGooseExtensions,
+	listSessionExtensions,
 	listSessions,
+	listSessionTools,
 	pendingPermissionSnapshot,
 	promptSession,
 	providerLoginSnapshot,
 	queueSessionMessage,
+	removeSessionExtension,
 	removeSessionQueue,
 	renameSession,
 	replyProviderLogin,
@@ -44,6 +50,7 @@ import {
 	resolveSessionQuestion,
 	searchSessionHistory,
 	setGooseClient,
+	setGooseExtensionEnabled,
 	setObjectiveMcpUrl,
 	setPermissionPublisher,
 	setPermissionTimeoutForTests,
@@ -53,6 +60,7 @@ import {
 	setSessionModel,
 	setSessionPublisher,
 	setSessionThinkingLevel,
+	setSessionToolPermission,
 	startProviderLogin,
 	steerSession,
 	unarchiveSession,
@@ -71,6 +79,7 @@ class FakeConnection implements GooseConnection {
 	loadGate: Promise<void> | undefined;
 	loadUpdates: ((sessionId: string) => void) | undefined;
 	loadFailures = 0;
+	sessionNewIds: string[] = [];
 	sessionArchived = false;
 	sessionHasMessages = true;
 	sessionTitle = "Chat";
@@ -79,6 +88,33 @@ class FakeConnection implements GooseConnection {
 	forkGate: Promise<void> | undefined;
 	forkSessionId = "goose-fork";
 	sessionInfoError: unknown;
+	administrationMutationGate: Promise<void> | undefined;
+	administrationMutationError: Error | undefined;
+	configuredExtensions: {
+		extension: Record<string, unknown>;
+		enabled: boolean;
+		configKey: string;
+	}[] = [
+		{
+			extension: {
+				type: "mcp",
+				server: {
+					name: "private",
+					url: "https://secret.example",
+					headers: { token: "secret" },
+				},
+			},
+			enabled: true,
+			configKey: "private-key",
+		},
+	];
+	availableExtensions: Record<string, unknown>[] = [
+		{ type: "builtin", name: "developer", command: "do-not-expose" },
+	];
+	sessionExtensions: Record<string, unknown>[] = [
+		{ type: "mcp", server: { name: "private", url: "https://secret.example" } },
+	];
+	toolPermission = "ask_before";
 	constructor(readonly handlers: Parameters<GooseConnectionFactory["connect"]>[0]) {}
 	async request(method: string, params: Record<string, unknown>): Promise<unknown> {
 		this.calls.push({
@@ -88,7 +124,7 @@ class FakeConnection implements GooseConnection {
 		if (method === "initialize") return {};
 		if (method === "session/new")
 			return {
-				sessionId: "goose-1",
+				sessionId: this.sessionNewIds.shift() ?? "goose-1",
 				configOptions: [
 					{ id: "provider", currentValue: "openai", options: [] },
 					{ id: "model", currentValue: "gpt", options: [] },
@@ -272,6 +308,73 @@ class FakeConnection implements GooseConnection {
 			await this.saveGate;
 			return { status: {}, refresh: {} };
 		}
+		if (method === "_goose/unstable/config/extensions/list")
+			return { extensions: this.configuredExtensions, warnings: ["secret warning"] };
+		if (method === "_goose/unstable/extensions/available")
+			return { extensions: this.availableExtensions };
+		if (method === "_goose/unstable/config/extensions/add") {
+			await this.administrationMutationGate;
+			if (this.administrationMutationError) throw this.administrationMutationError;
+			const extension = params.extension as Record<string, unknown>;
+			this.configuredExtensions.push({
+				extension,
+				enabled: params.enabled === true,
+				configKey: `key-${extensionName(extension)}`,
+			});
+			return {};
+		}
+		if (method === "_goose/unstable/config/extensions/set-enabled") {
+			await this.administrationMutationGate;
+			if (this.administrationMutationError) throw this.administrationMutationError;
+			const configured = this.configuredExtensions.find(
+				(extension) => extension.configKey === params.configKey,
+			);
+			if (configured) configured.enabled = params.enabled === true;
+			return {};
+		}
+		if (method === "_goose/unstable/config/extensions/remove") {
+			await this.administrationMutationGate;
+			if (this.administrationMutationError) throw this.administrationMutationError;
+			this.configuredExtensions = this.configuredExtensions.filter(
+				(extension) => extension.configKey !== params.configKey,
+			);
+			return {};
+		}
+		if (method === "_goose/unstable/session/extensions/list")
+			return { extensions: this.sessionExtensions };
+		if (method === "_goose/unstable/session/extensions/add") {
+			await this.administrationMutationGate;
+			if (this.administrationMutationError) throw this.administrationMutationError;
+			this.sessionExtensions.push(params.extension as Record<string, unknown>);
+			return {};
+		}
+		if (method === "_goose/unstable/session/extensions/remove") {
+			await this.administrationMutationGate;
+			if (this.administrationMutationError) throw this.administrationMutationError;
+			this.sessionExtensions = this.sessionExtensions.filter(
+				(extension) => extensionName(extension) !== params.name,
+			);
+			return {};
+		}
+		if (method === "_goose/unstable/tools/list")
+			return {
+				tools: [
+					{
+						name: "developer__shell",
+						description: "Run a command",
+						parameters: ["command"],
+						permission: this.toolPermission,
+						inputSchema: { secret: "must not reach browser" },
+					},
+				],
+			};
+		if (method === "_goose/unstable/tools/permissions/set") {
+			await this.administrationMutationGate;
+			if (this.administrationMutationError) throw this.administrationMutationError;
+			const permissions = params.toolPermissions as { permission?: unknown }[];
+			this.toolPermission = permissions[0]?.permission as string;
+			return {};
+		}
 		if (method === "_goose/unstable/providers/config/authenticate") {
 			await this.authenticateGate;
 			this.handlers.onGooseNotification("_goose/unstable/providers/authentication/device-code", {
@@ -313,6 +416,16 @@ class FakeConnection implements GooseConnection {
 	disconnect(): void {
 		this.#resolveClosed();
 	}
+}
+
+function extensionName(extension: Record<string, unknown>): string {
+	if (extension.type === "mcp") {
+		const server = extension.server;
+		if (server && typeof server === "object" && typeof Reflect.get(server, "name") === "string") {
+			return Reflect.get(server, "name") as string;
+		}
+	}
+	return typeof extension.name === "string" ? extension.name : "unknown";
 }
 
 function fixture() {
@@ -367,6 +480,174 @@ test("Goose create, replay load, prompt stream, cancel, steer, and thinking are 
 	]);
 	expect(events).toEqual(expect.arrayContaining(["thinking", "tool-start", "usage"]));
 	expect(f.connection.notifications.map((item) => item.method)).toEqual(["session/cancel"]);
+});
+
+test("extension and tool administration re-queries sanitized Goose state and rejects unsafe mutations", async () => {
+	const f = fixture();
+	const catalog = await listGooseExtensions();
+	expect(catalog).toEqual({
+		configured: [{ name: "private", type: "mcp", enabled: true, configKey: "private-key" }],
+		available: [{ name: "developer", type: "builtin" }],
+		warningCount: 1,
+	});
+	expect(JSON.stringify(catalog)).not.toContain("secret");
+	expect(JSON.stringify(catalog)).not.toContain("secret warning");
+	const enabledCatalog = await setGooseExtensionEnabled("private-key", false);
+	expect(enabledCatalog.configured).toEqual([
+		{ name: "private", type: "mcp", enabled: false, configKey: "private-key" },
+	]);
+	expect(f.connection.calls.at(-3)).toEqual({
+		method: "_goose/unstable/config/extensions/set-enabled",
+		params: { configKey: "private-key", enabled: false },
+	});
+	await expect(setGooseExtensionEnabled("missing-key", true)).rejects.toThrow(
+		"Unknown configured extension key",
+	);
+	const addedCatalog = await addGooseExtension("developer", true);
+	expect(addedCatalog.configured).toEqual(
+		expect.arrayContaining([
+			{ name: "developer", type: "builtin", enabled: true, configKey: "key-developer" },
+		]),
+	);
+	expect(f.connection.calls).toContainEqual({
+		method: "_goose/unstable/config/extensions/add",
+		params: {
+			extension: { type: "builtin", name: "developer", command: "do-not-expose" },
+			enabled: true,
+		},
+	});
+	await expect(addGooseExtension("developer", true)).rejects.toThrow("already configured");
+	await expect(addGooseExtension("missing", true)).rejects.toThrow("Unknown available extension");
+
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	await expect(addSessionExtension(created.sessionId, "missing")).rejects.toThrow(
+		"Unknown extension",
+	);
+	await expect(
+		setSessionToolPermission(created.sessionId, "missing", "ask_before"),
+	).rejects.toThrow("Unknown tool");
+	await expect(
+		setSessionToolPermission(created.sessionId, "developer__shell", "invalid"),
+	).rejects.toThrow("Unknown tool permission");
+	const addedSessionExtensions = await addSessionExtension(created.sessionId, "developer");
+	expect(addedSessionExtensions).toEqual(
+		expect.arrayContaining([{ name: "developer", type: "builtin" }]),
+	);
+	expect(f.connection.calls).toContainEqual({
+		method: "_goose/unstable/session/extensions/add",
+		params: {
+			sessionId: created.sessionId,
+			extension: { type: "builtin", name: "developer", command: "do-not-expose" },
+		},
+	});
+	const removedSessionExtensions = await removeSessionExtension(created.sessionId, "developer");
+	expect(removedSessionExtensions).toEqual([{ name: "private", type: "mcp" }]);
+	expect(f.connection.calls).toContainEqual({
+		method: "_goose/unstable/session/extensions/remove",
+		params: { sessionId: created.sessionId, name: "developer" },
+	});
+	const refreshedTools = await setSessionToolPermission(
+		created.sessionId,
+		"developer__shell",
+		"always_allow",
+	);
+	expect(refreshedTools).toEqual([
+		{
+			name: "developer__shell",
+			description: "Run a command",
+			parameters: ["command"],
+			permission: "always_allow",
+		},
+	]);
+	expect(f.connection.calls).toContainEqual({
+		method: "_goose/unstable/tools/permissions/set",
+		params: { toolPermissions: [{ toolName: "developer__shell", permission: "always_allow" }] },
+	});
+	const tools = await listSessionTools(created.sessionId);
+	expect(tools).toEqual([
+		{
+			name: "developer__shell",
+			description: "Run a command",
+			parameters: ["command"],
+			permission: "always_allow",
+		},
+	]);
+	expect(JSON.stringify(tools)).not.toContain("inputSchema");
+	const sessionExtensions = await listSessionExtensions(created.sessionId);
+	expect(sessionExtensions).toEqual([{ name: "private", type: "mcp" }]);
+	expect(JSON.stringify(sessionExtensions)).not.toContain("secret");
+	f.connection.promptGate = new Promise(() => {});
+	await promptSession(created.sessionId, "hold open");
+	await expect(addSessionExtension(created.sessionId, "developer")).rejects.toThrow("running chat");
+	await expect(
+		setSessionToolPermission(created.sessionId, "developer__shell", "ask_before"),
+	).rejects.toThrow("changing tool permissions");
+});
+
+test("extension administration mutations are exclusive with chat activity and each other", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	let releaseSessionMutation: (() => void) | undefined;
+	f.connection.administrationMutationGate = new Promise<void>((resolve) => {
+		releaseSessionMutation = resolve;
+	});
+	const sessionMutation = addSessionExtension(created.sessionId, "developer");
+	await expect(promptSession(created.sessionId, "must wait")).rejects.toThrow(
+		"extension or permission update",
+	);
+	await expect(
+		setSessionToolPermission(created.sessionId, "developer__shell", "ask_before"),
+	).rejects.toThrow("finish loading or updating");
+	releaseSessionMutation?.();
+	await sessionMutation;
+
+	let releaseGlobalMutation: (() => void) | undefined;
+	f.connection.administrationMutationGate = new Promise<void>((resolve) => {
+		releaseGlobalMutation = resolve;
+	});
+	const globalMutation = setGooseExtensionEnabled("private-key", false);
+	await expect(addGooseExtension("developer", true)).rejects.toThrow("Goose extension update");
+	releaseGlobalMutation?.();
+	await globalMutation;
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("extension administration failures retain their cause without exposing it in the browser message", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	f.connection.administrationMutationError = new Error(
+		"command --secret https://private.example Authorization=token ENV_SECRET=value",
+	);
+	const failure = await addSessionExtension(created.sessionId, "developer").then(
+		() => null,
+		(error: unknown) => error,
+	);
+	expect(failure).toBeInstanceOf(Error);
+	if (!(failure instanceof Error)) throw new Error("Expected administration failure");
+	expect(failure.message).toBe("Goose couldn't add the chat extension");
+	expect(failure.message).not.toContain("private.example");
+	expect(failure.message).not.toContain("ENV_SECRET");
+	expect((failure.cause as Error).message).toContain("private.example");
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("global tool permission updates for the same tool are exclusive across chats", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.sessionNewIds = ["goose-1", "goose-2"];
+	const first = await createSession({ projectId: "project", cwd: f.directory });
+	const second = await createSession({ projectId: "project", cwd: f.directory });
+	let releasePermission: (() => void) | undefined;
+	f.connection.administrationMutationGate = new Promise<void>((resolve) => {
+		releasePermission = resolve;
+	});
+	const firstUpdate = setSessionToolPermission(first.sessionId, "developer__shell", "always_allow");
+	await expect(
+		setSessionToolPermission(second.sessionId, "developer__shell", "never_allow"),
+	).rejects.toThrow("Goose tool permission update");
+	releasePermission?.();
+	await firstUpdate;
+	rmSync(f.directory, { recursive: true, force: true });
 });
 
 test("controller queues follow-ups across browser hydration and drains them after settlement", async () => {
