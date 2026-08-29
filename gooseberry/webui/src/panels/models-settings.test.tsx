@@ -19,6 +19,7 @@ const model: WireModel = {
 	thinkingLevels: ["low", "medium", "high"],
 	input: ["text", "image"],
 	cost: {
+		currency: "€",
 		input: 1.25,
 		output: 5,
 		cacheRead: 0.125,
@@ -35,6 +36,7 @@ const provider: ProviderStatus = {
 	configured: true,
 	modelCount: 1,
 	availableModelCount: 1,
+	acp: false,
 };
 
 test("formats model limits and prices for the management UI", () => {
@@ -42,6 +44,7 @@ test("formats model limits and prices for the management UI", () => {
 	expect(formatTokenCount(128_000)).toBe("128K");
 	expect(formatModelPrice(0)).toBe("$0");
 	expect(formatModelPrice(1.25)).toBe("$1.25");
+	expect(formatModelPrice(1.25, "€")).toBe("€1.25");
 });
 
 test("filters by provider and renders context, modality, cost, and visibility", () => {
@@ -60,7 +63,7 @@ test("filters by provider and renders context, modality, cost, and visibility", 
 	expect(markup).toContain("1.1M ctx · 128K out");
 	expect(markup).toContain("Image");
 	expect(markup).toContain("Reasoning");
-	expect(markup).toContain("In $1.25 · Out $5 / 1M");
+	expect(markup).toContain("In €1.25 · Out €5 / 1M");
 	expect(markup).toContain("Hidden");
 	expect(markup).toContain("Unavailable");
 	expect(markup).not.toContain("Routing");

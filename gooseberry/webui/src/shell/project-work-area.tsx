@@ -124,7 +124,11 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 				return (
 					<ErrorBoundary label="chat" resetKeys={[projectAreaId, tab.id]}>
 						<Suspense fallback={<MissingResource label="chat" />}>
-							<ChatView sessionId={tab.sessionId} projectAreaId={projectAreaId} />
+							<ChatView
+								key={tab.sessionId}
+								sessionId={tab.sessionId}
+								projectAreaId={projectAreaId}
+							/>
 						</Suspense>
 					</ErrorBoundary>
 				);

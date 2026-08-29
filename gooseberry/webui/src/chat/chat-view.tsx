@@ -1,9 +1,17 @@
-import type { AskUserQuestionResult, PromptHit } from "@gooseberry/contracts";
+import type { AgentMentionInfo, AskUserQuestionResult, PromptHit } from "@gooseberry/contracts";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { EMPTY_RUNTIME, selectProjectAreaById, toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
+import {
+	agentMentionIdentity,
+	fileMentionCandidateIdentity,
+	type LoadedAgentMentions,
+	type LoadedFileMentionCandidates,
+	visibleAgentMentions,
+	visibleFileMentionCandidates,
+} from "./agent-mention-state";
 import { AskStatesContext, deriveAskStates } from "./ask-state";
 import { ChatActionsContext } from "./chat-actions";
 import { ChatHeader } from "./chat-header";
@@ -56,6 +64,16 @@ function StreamFooter({ context }: { context: ChatListContext }) {
 }
 
 const CHAT_LIST_COMPONENTS = { Footer: StreamFooter };
+
+function isComposerAgentMention(
+	mention: AgentMentionInfo,
+): mention is AgentMentionInfo & { sourceType: "recipe" | "subrecipe" | "agent" } {
+	return (
+		mention.sourceType === "agent" ||
+		mention.sourceType === "recipe" ||
+		mention.sourceType === "subrecipe"
+	);
+}
 
 export default function ChatView({
 	sessionId,
@@ -128,7 +146,25 @@ export default function ChatView({
 	}, [turns]);
 
 	const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-	const [mentionCandidates, setMentionCandidates] = useState<MentionCandidate[]>([]);
+	const fileMentionIdentity = fileMentionCandidateIdentity(
+		projectAreaId,
+		projectAreaRoot,
+		sessionId,
+		mentionQuery,
+	);
+	const [loadedFileMentionCandidates, setLoadedFileMentionCandidates] = useState<
+		LoadedFileMentionCandidates<MentionCandidate>
+	>({ identity: null, candidates: [] });
+	const fileMentionCandidates = visibleFileMentionCandidates(
+		loadedFileMentionCandidates,
+		fileMentionIdentity,
+	);
+	const mentionIdentity = agentMentionIdentity(projectId, sessionId);
+	const [loadedAgentMentions, setLoadedAgentMentions] = useState<LoadedAgentMentions>({
+		identity: null,
+		mentions: [],
+	});
+	const agentMentions = visibleAgentMentions(loadedAgentMentions, mentionIdentity);
 	const permission = useAppStore(
 		(state) => Object.values(state.pendingPermissions[sessionId] ?? {})[0] ?? null,
 	);
@@ -189,8 +225,34 @@ export default function ChatView({
 	}, [sessionId, isStreaming]);
 
 	useEffect(() => {
-		if (mentionQuery === null) {
-			setMentionCandidates([]);
+		const identity = agentMentionIdentity(projectId, sessionId);
+		setLoadedAgentMentions({ identity, mentions: [] });
+		if (!projectId || !identity) {
+			return;
+		}
+		let cancelled = false;
+		getTransport()
+			.request("session.getAgentMentions", { projectId, sessionId })
+			.then((mentions) => {
+				if (!cancelled) setLoadedAgentMentions({ identity, mentions });
+			})
+			.catch(() => {
+				if (!cancelled) setLoadedAgentMentions({ identity, mentions: [] });
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId, sessionId]);
+
+	useEffect(() => {
+		const identity = fileMentionCandidateIdentity(
+			projectAreaId,
+			projectAreaRoot,
+			sessionId,
+			mentionQuery,
+		);
+		setLoadedFileMentionCandidates({ identity, candidates: [] });
+		if (mentionQuery === null || !identity) {
 			return;
 		}
 		const slash = mentionQuery.lastIndexOf("/");
@@ -202,22 +264,44 @@ export default function ChatView({
 				.request("fs.readDir", { projectId: projectAreaId, root: projectAreaRoot ?? "", path: dir })
 				.then((nodes) => {
 					if (cancelled) return;
-					setMentionCandidates(
-						nodes
+					setLoadedFileMentionCandidates({
+						identity,
+						candidates: nodes
 							.filter((n) => n.name.toLowerCase().startsWith(prefix))
 							.slice(0, 12)
 							.map((n) => ({ path: n.path, name: n.name, kind: n.kind })),
-					);
+					});
 				})
 				.catch(() => {
-					if (!cancelled) setMentionCandidates([]);
+					if (!cancelled) setLoadedFileMentionCandidates({ identity, candidates: [] });
 				});
 		}, 120);
 		return () => {
 			cancelled = true;
 			clearTimeout(timer);
 		};
-	}, [mentionQuery, projectAreaId, projectAreaRoot]);
+	}, [mentionQuery, projectAreaId, projectAreaRoot, sessionId]);
+
+	const mentionCandidates = useMemo(() => {
+		if (mentionQuery === null) return [];
+		if (mentionQuery.includes("/")) return fileMentionCandidates;
+		const query = mentionQuery.toLocaleLowerCase();
+		const agentCandidates: MentionCandidate[] = agentMentions
+			.filter(isComposerAgentMention)
+			.filter(({ name, mention }) =>
+				[name, mention.startsWith("@") ? mention.slice(1) : mention].some((value) =>
+					value.toLocaleLowerCase().startsWith(query),
+				),
+			)
+			.map(({ name, description, sourceType, mention }) => ({
+				name,
+				description,
+				sourceType,
+				mention,
+				kind: "agent" as const,
+			}));
+		return [...agentCandidates, ...fileMentionCandidates].slice(0, 12);
+	}, [agentMentions, fileMentionCandidates, mentionQuery]);
 
 	const onMentionQuery = useCallback((q: string | null) => setMentionQuery(q), []);
 

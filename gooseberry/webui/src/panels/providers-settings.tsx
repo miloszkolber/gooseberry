@@ -13,6 +13,36 @@ const KIND_LABEL: Record<ProviderAuthKind, string> = {
 	other: "configured",
 };
 
+export type ProviderReadinessState = "checking" | "ready" | "issue" | "not-ready" | "failed";
+
+export interface ProviderReadinessSnapshot {
+	revision: number;
+	status: ProviderReadinessState | null;
+}
+
+export function invalidateProviderReadiness(
+	snapshot: ProviderReadinessSnapshot,
+): ProviderReadinessSnapshot {
+	return { revision: snapshot.revision + 1, status: null };
+}
+
+export function settleProviderReadiness(
+	snapshot: ProviderReadinessSnapshot,
+	revision: number,
+	status: Exclude<ProviderReadinessState, "checking">,
+): ProviderReadinessSnapshot {
+	return snapshot.revision === revision ? { revision, status } : snapshot;
+}
+
+export function readinessStatusText(readiness: ProviderReadinessState | null): string | null {
+	if (readiness === "checking") return "Checking readiness…";
+	if (readiness === "ready") return "Ready";
+	if (readiness === "issue") return "Ready with an issue";
+	if (readiness === "not-ready") return "Not ready";
+	if (readiness === "failed") return "Couldn't check readiness.";
+	return null;
+}
+
 export function ProvidersSettings() {
 	const [report, setReport] = useState<ProviderStatusReport | null>(null);
 	const [failed, setFailed] = useState(false);
@@ -22,8 +52,13 @@ export function ProvidersSettings() {
 	const activeLogin = useAppStore((s) => s.activeLogin);
 	const providerVersion = useAppStore((s) => s.providerVersion);
 	const loadSequence = useRef(0);
+	const [readinessRevision, setReadinessRevision] = useState(0);
+	const invalidateReadiness = useCallback(() => {
+		setReadinessRevision((revision) => revision + 1);
+	}, []);
 
 	const load = useCallback(async () => {
+		invalidateReadiness();
 		const sequence = ++loadSequence.current;
 		const version = useAppStore.getState().providerVersion;
 		const isCurrent = () =>
@@ -40,7 +75,7 @@ export function ProvidersSettings() {
 		} finally {
 			if (sequence === loadSequence.current) setRefreshing(false);
 		}
-	}, []);
+	}, [invalidateReadiness]);
 
 	useEffect(() => {
 		void load();
@@ -54,24 +89,29 @@ export function ProvidersSettings() {
 		if (activeLogin?.status === "success") void load();
 	}, [activeLogin?.status, load]);
 
-	const startLogin = useCallback(async (providerId: string, type: "oauth" | "api_key") => {
-		setBusyProvider(providerId);
-		try {
-			const { loginId, frame } = await getTransport().request("provider.loginStart", {
-				providerId,
-				type,
-			});
-			useAppStore.getState().beginLogin(loginId, providerId);
-			useAppStore.getState().applyLoginFrame({ loginId, providerId, frame });
-		} catch (err) {
-			toast.error(errorText(err), "Couldn't start the connection");
-		} finally {
-			setBusyProvider(null);
-		}
-	}, []);
+	const startLogin = useCallback(
+		async (providerId: string, type: "oauth" | "api_key") => {
+			invalidateReadiness();
+			setBusyProvider(providerId);
+			try {
+				const { loginId, frame } = await getTransport().request("provider.loginStart", {
+					providerId,
+					type,
+				});
+				useAppStore.getState().beginLogin(loginId, providerId);
+				useAppStore.getState().applyLoginFrame({ loginId, providerId, frame });
+			} catch (err) {
+				toast.error(errorText(err), "Couldn't start the connection");
+			} finally {
+				setBusyProvider(null);
+			}
+		},
+		[invalidateReadiness],
+	);
 
 	const logout = useCallback(
 		async (providerId: string) => {
+			invalidateReadiness();
 			setBusyProvider(providerId);
 			try {
 				await getTransport().request("provider.logout", { providerId });
@@ -84,7 +124,7 @@ export function ProvidersSettings() {
 			}
 			await load();
 		},
-		[load],
+		[invalidateReadiness, load],
 	);
 
 	const providers = report?.providers ?? [];
@@ -156,6 +196,7 @@ export function ProvidersSettings() {
 									key={provider.id}
 									provider={provider}
 									busy={rowBusy(provider.id)}
+									readinessRevision={readinessRevision}
 									onSignIn={(type) => void startLogin(provider.id, type)}
 									onSignOut={() => void logout(provider.id)}
 								/>
@@ -169,6 +210,7 @@ export function ProvidersSettings() {
 									key={provider.id}
 									provider={provider}
 									busy={rowBusy(provider.id)}
+									readinessRevision={readinessRevision}
 									onSignIn={(type) => void startLogin(provider.id, type)}
 									onSignOut={() => void logout(provider.id)}
 								/>
@@ -228,15 +270,58 @@ function modelSummary(provider: ProviderStatus): string {
 export function ProviderCard({
 	provider,
 	busy,
+	readinessRevision = 0,
 	onSignIn,
 	onSignOut,
 }: {
 	provider: ProviderStatus;
 	busy: boolean;
+	readinessRevision?: number;
 	onSignIn: (type: "oauth" | "api_key") => void;
 	onSignOut: () => void;
 }) {
+	const [readiness, setReadiness] = useState<ProviderReadinessSnapshot>({
+		revision: readinessRevision,
+		status: null,
+	});
+	const readinessSequence = useRef(0);
+	useEffect(
+		() => () => {
+			readinessSequence.current++;
+		},
+		[],
+	);
+	useEffect(() => {
+		setReadiness((current) =>
+			current.revision === readinessRevision
+				? current
+				: { revision: readinessRevision, status: null },
+		);
+	}, [readinessRevision]);
 	const configuredLabel = provider.kind ? KIND_LABEL[provider.kind] : "configured";
+	const checkReadiness = useCallback(async () => {
+		const sequence = ++readinessSequence.current;
+		const revision = readinessRevision;
+		setReadiness({ revision, status: "checking" });
+		try {
+			const result = await getTransport().request("provider.readiness", {
+				providerId: provider.id,
+			});
+			if (sequence !== readinessSequence.current) return;
+			setReadiness((current) =>
+				settleProviderReadiness(
+					current,
+					revision,
+					result.ready ? (result.hasIssue ? "issue" : "ready") : "not-ready",
+				),
+			);
+		} catch {
+			if (sequence !== readinessSequence.current) return;
+			setReadiness((current) => settleProviderReadiness(current, revision, "failed"));
+		}
+	}, [provider.id, readinessRevision]);
+	const visibleReadiness = readiness.revision === readinessRevision ? readiness.status : null;
+	const readinessText = readinessStatusText(visibleReadiness);
 	return (
 		<div
 			data-testid="provider-row"
@@ -266,6 +351,26 @@ export function ProviderCard({
 				) : null}
 			</div>
 			<div className="flex shrink-0 items-center gap-xs">
+				{provider.acp ? (
+					<>
+						<Button
+							variant="outline"
+							size="sm"
+							data-testid="provider-readiness"
+							data-provider={provider.id}
+							aria-label={`Check readiness for ${provider.name}`}
+							disabled={busy || visibleReadiness === "checking"}
+							onClick={() => void checkReadiness()}
+						>
+							Check readiness
+						</Button>
+						{readinessText ? (
+							<span aria-live="polite" className="text-text-muted tr-text-metadata">
+								{readinessText}
+							</span>
+						) : null}
+					</>
+				) : null}
 				{provider.configured && provider.canLogout ? (
 					<Button
 						variant="outline"

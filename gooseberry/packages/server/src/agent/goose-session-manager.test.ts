@@ -22,10 +22,12 @@ import {
 	archiveSession,
 	askSessionQuestion,
 	cancelProviderLogin,
+	checkProviderReadiness,
 	createSession,
 	disposeAllSessions,
 	editSessionQueue,
 	forkSession,
+	getSessionAgentMentions,
 	getSessionCommands,
 	getSessionMessages,
 	getSessionStats,
@@ -33,11 +35,13 @@ import {
 	gooseSchedules,
 	hasSession,
 	isSessionStreaming,
+	listAvailableModels,
 	listGooseExtensions,
 	listSessionExtensions,
 	listSessions,
 	listSessionTools,
 	pendingPermissionSnapshot,
+	projectAgentMentions,
 	promptSession,
 	providerLoginSnapshot,
 	queueSessionMessage,
@@ -49,8 +53,10 @@ import {
 	resolvePermission,
 	resolveSessionQuestion,
 	searchSessionHistory,
+	setCanonicalModelProjectionDeadlineForTests,
 	setGooseClient,
 	setGooseExtensionEnabled,
+	setModelVisibility,
 	setObjectiveMcpUrl,
 	setPermissionPublisher,
 	setPermissionTimeoutForTests,
@@ -115,8 +121,22 @@ class FakeConnection implements GooseConnection {
 		{ type: "mcp", server: { name: "private", url: "https://secret.example" } },
 	];
 	toolPermission = "ask_before";
+	providerModels: Record<string, unknown>[] = [];
+	canonicalModels = new Map<string, unknown>();
+	canonicalGate: Promise<void> | undefined;
+	ignoreCanonicalAbort = false;
+	canonicalCalls = 0;
+	maxCanonicalCalls = 0;
+	readinessError: Error | undefined;
+	readinessResponse: unknown = { providerId: "openai", ready: true, error: null };
+	openaiAcp = true;
+	agentMentions: Record<string, unknown>[] = [];
 	constructor(readonly handlers: Parameters<GooseConnectionFactory["connect"]>[0]) {}
-	async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+	async request(
+		method: string,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	): Promise<unknown> {
 		this.calls.push({
 			method,
 			params: JSON.parse(JSON.stringify(params)) as Record<string, unknown>,
@@ -271,7 +291,8 @@ class FakeConnection implements GooseConnection {
 								primary: true,
 							},
 						],
-						models: [],
+						acp: this.openaiAcp,
+						models: this.providerModels,
 					},
 					{
 						providerId: "github_copilot",
@@ -293,6 +314,34 @@ class FakeConnection implements GooseConnection {
 					},
 				],
 			};
+		if (method === "_goose/unstable/providers/canonical-model-info") {
+			this.canonicalCalls++;
+			this.maxCanonicalCalls = Math.max(this.maxCanonicalCalls, this.canonicalCalls);
+			try {
+				if (this.canonicalGate && signal && !this.ignoreCanonicalAbort) {
+					await Promise.race([
+						this.canonicalGate,
+						new Promise<never>((_, reject) =>
+							signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+						),
+					]);
+				} else if (this.canonicalGate) {
+					await Promise.race([this.canonicalGate, this.closed]);
+				}
+				return {
+					modelInfo:
+						this.canonicalModels.get(`${params.provider as string}\0${params.model as string}`) ??
+						null,
+				};
+			} finally {
+				this.canonicalCalls--;
+			}
+		}
+		if (method === "_goose/unstable/providers/readiness/check") {
+			if (this.readinessError) throw this.readinessError;
+			return this.readinessResponse;
+		}
+		if (method === "_goose/unstable/agent-mentions/list") return { agents: this.agentMentions };
 		if (method === "_goose/unstable/providers/config/read")
 			return {
 				fields: [
@@ -454,6 +503,7 @@ function fixture() {
 
 afterEach(() => {
 	setMountedProjectRootsForTesting(undefined);
+	setCanonicalModelProjectionDeadlineForTests(undefined);
 	setProviderLoginTimeoutForTests(undefined);
 	setSessionLifecyclePublisher(() => {});
 });
@@ -1726,6 +1776,308 @@ test("history search reports an incomplete index after bounded load retries", as
 	await Bun.sleep(610);
 	result = await searchSessionHistory({ query: "saved", scope: { kind: "all" } });
 	expect(result).toMatchObject({ indexing: false, incomplete: true });
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("projects current canonical model metadata with a bounded fallback lookup without persisting it", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.providerModels = Array.from({ length: 6 }, (_, index) => ({
+		id: `model-${index}`,
+		name: `Model ${index}`,
+		...(index === 0 ? { contextLimit: 12_000, maxOutputTokens: 500, reasoning: false } : {}),
+	}));
+	for (let index = 0; index < 6; index++) {
+		f.connection.canonicalModels.set(`openai\0model-${index}`, {
+			provider: "openai",
+			model: `model-${index}`,
+			contextLimit: 200_000,
+			maxOutputTokens: 16_000,
+			reasoning: true,
+			inputTokenCost: index === 1 ? -1 : 2.5,
+			outputTokenCost: 10,
+			cacheReadTokenCost: null,
+			cacheWriteTokenCost: 1.25,
+			currency: "€",
+		});
+	}
+	let releaseCanonical!: () => void;
+	f.connection.canonicalGate = new Promise<void>((resolve) => {
+		releaseCanonical = resolve;
+	});
+	const models = listAvailableModels();
+	while (f.connection.maxCanonicalCalls < 4) await Bun.sleep(0);
+	expect(f.connection.maxCanonicalCalls).toBe(4);
+	releaseCanonical();
+	const catalog = await models;
+	expect(catalog).toHaveLength(6);
+	expect(catalog[0]).toMatchObject({
+		id: "model-0",
+		contextWindow: 12_000,
+		maxTokens: 500,
+		reasoning: false,
+		cost: { input: 2.5, output: 10, cacheRead: 0, cacheWrite: 1.25, currency: "€" },
+	});
+	expect(catalog[1]).toMatchObject({
+		id: "model-1",
+		contextWindow: 200_000,
+		maxTokens: 16_000,
+		reasoning: true,
+	});
+	expect(catalog[1]?.cost).toBeUndefined();
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("canonical deadline keeps ignored underlying requests globally capped through disposal", async () => {
+	const f = fixture();
+	await f.client.ready();
+	setCanonicalModelProjectionDeadlineForTests(10);
+	f.connection.providerModels = Array.from({ length: 12 }, (_, index) => ({
+		id: `model-${index}`,
+		name: `Model ${index}`,
+	}));
+	let releaseCanonical!: () => void;
+	f.connection.canonicalGate = new Promise<void>((resolve) => {
+		releaseCanonical = resolve;
+	});
+	f.connection.ignoreCanonicalAbort = true;
+	for (let attempt = 0; attempt < 4; attempt++) {
+		const catalog = await listAvailableModels();
+		expect(catalog).toHaveLength(12);
+	}
+	expect(f.connection.maxCanonicalCalls).toBe(4);
+	expect(f.connection.canonicalCalls).toBe(4);
+	expect(
+		f.connection.calls.filter(
+			(call) => call.method === "_goose/unstable/providers/canonical-model-info",
+		),
+	).toHaveLength(4);
+	disposeAllSessions();
+	await listAvailableModels();
+	expect(f.connection.canonicalCalls).toBe(4);
+	expect(
+		f.connection.calls.filter(
+			(call) => call.method === "_goose/unstable/providers/canonical-model-info",
+		),
+	).toHaveLength(4);
+	releaseCanonical();
+	await Bun.sleep(0);
+	expect(f.connection.canonicalCalls).toBe(0);
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("canonical client replacement closes active flights before another client can acquire slots", async () => {
+	const f = fixture();
+	await f.client.ready();
+	setCanonicalModelProjectionDeadlineForTests(10);
+	f.connection.providerModels = Array.from({ length: 4 }, (_, index) => ({
+		id: `model-${index}`,
+		name: `Model ${index}`,
+	}));
+	f.connection.canonicalGate = new Promise<void>(() => {});
+	f.connection.ignoreCanonicalAbort = true;
+	await listAvailableModels();
+	expect(f.connection.canonicalCalls).toBe(4);
+	const replacement = new GooseClient({
+		connectionFactory: {
+			connect: (handlers) => Promise.resolve(new FakeConnection(handlers)),
+		},
+	});
+	setGooseClient(replacement);
+	await Bun.sleep(0);
+	expect(f.connection.canonicalCalls).toBe(0);
+	setGooseClient(undefined);
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("canonical metadata still enriches a slow lookup before the projection deadline", async () => {
+	const f = fixture();
+	await f.client.ready();
+	setCanonicalModelProjectionDeadlineForTests(40);
+	f.connection.providerModels = [{ id: "model", name: "Model" }];
+	f.connection.canonicalModels.set("openai\0model", {
+		provider: "openai",
+		model: "model",
+		contextLimit: 100_000,
+		reasoning: true,
+		currency: "USD",
+	});
+	let releaseCanonical!: () => void;
+	f.connection.canonicalGate = new Promise<void>((resolve) => {
+		releaseCanonical = resolve;
+	});
+	const models = listAvailableModels();
+	await Bun.sleep(5);
+	releaseCanonical();
+	expect(await models).toEqual([expect.objectContaining({ contextWindow: 100_000 })]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("canonical metadata coalesces concurrent catalog callers without keeping stale results", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.providerModels = Array.from({ length: 6 }, (_, index) => ({
+		id: `model-${index}`,
+		name: `Model ${index}`,
+	}));
+	for (let index = 0; index < 6; index++) {
+		f.connection.canonicalModels.set(`openai\0model-${index}`, {
+			provider: "openai",
+			model: `model-${index}`,
+			contextLimit: 10_000,
+			reasoning: false,
+			currency: "USD",
+		});
+	}
+	let releaseCanonical!: () => void;
+	f.connection.canonicalGate = new Promise<void>((resolve) => {
+		releaseCanonical = resolve;
+	});
+	const first = listAvailableModels();
+	const second = listAvailableModels();
+	while (f.connection.maxCanonicalCalls < 4) await Bun.sleep(0);
+	expect(f.connection.maxCanonicalCalls).toBe(4);
+	releaseCanonical();
+	await Promise.all([first, second]);
+	expect(
+		f.connection.calls.filter(
+			(call) => call.method === "_goose/unstable/providers/canonical-model-info",
+		),
+	).toHaveLength(6);
+	f.connection.canonicalModels.set("openai\0model-0", {
+		provider: "openai",
+		model: "model-0",
+		contextLimit: 20_000,
+		reasoning: true,
+		currency: "USD",
+	});
+	expect((await listAvailableModels()).find((model) => model.id === "model-0")).toMatchObject({
+		contextWindow: 20_000,
+		reasoning: true,
+	});
+	expect(
+		f.connection.calls.filter(
+			(call) => call.method === "_goose/unstable/providers/canonical-model-info",
+		),
+	).toHaveLength(12);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("model visibility updates reuse their bounded catalog projection", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.providerModels = Array.from({ length: 3 }, (_, index) => ({
+		id: `model-${index}`,
+		name: `Model ${index}`,
+	}));
+	const models = await setModelVisibility("openai", "model-0", true);
+	expect(models.find((model) => model.id === "model-0")?.hidden).toBe(true);
+	expect(
+		f.connection.calls.filter(
+			(call) => call.method === "_goose/unstable/providers/canonical-model-info",
+		),
+	).toHaveLength(3);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("attaches an authorized Goose session before returning browser-safe agent mentions", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	f.connection.agentMentions = [
+		{
+			name: "Reviewer",
+			description: "Review the change",
+			sourceType: "agent",
+			mention: "@reviewer",
+			sourcePath: "/private/goose/agents/reviewer.yaml",
+		},
+	];
+	const mentions = await getSessionAgentMentions(created.sessionId);
+	expect(mentions).toEqual([
+		{
+			name: "Reviewer",
+			description: "Review the change",
+			sourceType: "agent",
+			mention: "@reviewer",
+		},
+	]);
+	expect(JSON.stringify(mentions)).not.toContain("sourcePath");
+	expect(f.connection.calls.at(-1)).toEqual({
+		method: "_goose/unstable/agent-mentions/list",
+		params: { cwd: f.directory, sessionId: created.sessionId },
+	});
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("agent mention attachment failures expose only the fixed browser-safe error", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	f.connection.disconnect();
+	await Bun.sleep(0);
+	await f.client.ready();
+	f.connection.loadFailures = 1;
+	const error = await getSessionAgentMentions(created.sessionId).then(
+		() => new Error("agent mention load unexpectedly succeeded"),
+		(cause) => cause as Error,
+	);
+	expect(error.message).toBe("Couldn't load agent mentions");
+	expect(error.message).not.toContain(f.directory);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("agent mention projection drops oversized entries without truncating exact mentions", () => {
+	const mention = {
+		name: "Reviewer",
+		description: "Review",
+		sourceType: "agent" as const,
+		mention: "@reviewer",
+	};
+	expect(projectAgentMentions(Array.from({ length: 65 }, () => mention))).toHaveLength(64);
+	expect(projectAgentMentions([{ ...mention, description: "x".repeat(2_049) }])).toEqual([]);
+	expect(projectAgentMentions([{ ...mention, mention: `@${"x".repeat(512)}` }])).toEqual([]);
+	expect(
+		projectAgentMentions(
+			Array.from({ length: 16 }, (_, index) => ({
+				...mention,
+				name: `Agent ${index}`,
+				description: "x".repeat(2_048),
+			})),
+		),
+	).toHaveLength(15);
+});
+
+test("refuses non-ACP readiness and sanitizes upstream readiness failures", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.openaiAcp = false;
+	await expect(checkProviderReadiness("openai")).rejects.toThrow(
+		"Provider does not support ACP readiness checks",
+	);
+	expect(
+		f.connection.calls.some((call) => call.method === "_goose/unstable/providers/readiness/check"),
+	).toBe(false);
+	f.connection.openaiAcp = true;
+	f.connection.readinessResponse = {
+		providerId: "openai",
+		ready: false,
+		error: "private provider diagnostic",
+	};
+	expect(await checkProviderReadiness("openai")).toEqual({
+		providerId: "openai",
+		ready: false,
+		hasIssue: true,
+	});
+	f.connection.readinessError = new Error("private upstream provider error");
+	await expect(checkProviderReadiness("openai")).rejects.toThrow(
+		"Couldn't check provider readiness",
+	);
 	disposeAllSessions();
 	rmSync(f.directory, { recursive: true, force: true });
 });

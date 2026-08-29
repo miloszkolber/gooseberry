@@ -204,10 +204,20 @@ export interface ProviderStatus {
 	canLogout?: boolean;
 	modelCount: number;
 	availableModelCount: number;
+	/** Goose inventory marks providers that support ACP readiness checks. */
+	acp: boolean;
 }
 
 export interface ProviderStatusReport {
 	providers: ProviderStatus[];
+}
+
+/** Browser-safe agent completion data. Source paths and raw ACP values stay server-side. */
+export interface AgentMentionInfo {
+	name: string;
+	description: string;
+	sourceType: "skill" | "builtinSkill" | "recipe" | "subrecipe" | "agent" | "project";
+	mention: string;
 }
 
 export type LoginFrame =

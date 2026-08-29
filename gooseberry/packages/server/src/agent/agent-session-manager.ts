@@ -1,6 +1,8 @@
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import {
 	type AgentEvent,
+	type AgentMentionInfo,
 	type AgentSettlement,
 	type AskUserQuestionArgs,
 	type AskUserQuestionResult,
@@ -100,6 +102,28 @@ let lifecyclePublisher: (payload: SessionLifecycleChangedPayload) => void = () =
 let configuredClient: GooseClient | undefined;
 let subscribedClient: GooseClient | undefined;
 let objectiveMcpUrl: string | undefined;
+const CANONICAL_MODEL_LOOKUP_CONCURRENCY = 4;
+const CANONICAL_MODEL_PROJECTION_DEADLINE_MS = 2_000;
+let canonicalModelProjectionDeadlineForTests: number | undefined;
+type CanonicalModelInfo = Awaited<ReturnType<GooseClient["canonicalModelInfo"]>>;
+interface CanonicalModelFlight {
+	controller: AbortController;
+	acquired: boolean;
+	consumers: number;
+	promise: Promise<CanonicalModelInfo>;
+}
+interface CanonicalLookupWaiter {
+	resolve: (release: () => void) => void;
+	reject: (reason: unknown) => void;
+	signal: AbortSignal;
+	abort: () => void;
+}
+const canonicalModelFlights = new Map<string, CanonicalModelFlight>();
+const canonicalLookupWaiters: CanonicalLookupWaiter[] = [];
+let canonicalLookupsActive = 0;
+export function setCanonicalModelProjectionDeadlineForTests(timeoutMs: number | undefined): void {
+	canonicalModelProjectionDeadlineForTests = timeoutMs;
+}
 let gooseStatus: { configured: boolean; reachable: boolean; error?: string; version?: string } = {
 	configured: Boolean(process.env.GOOSEBERRY_GOOSE_SECRET_KEY?.trim()),
 	reachable: false,
@@ -310,6 +334,7 @@ function objectiveMcp(token: string): readonly GooseMcpServer[] {
 /** Test and embedding seam. The production client is created from GOOSEBERRY_GOOSE_* once. */
 export function setGooseClient(client: GooseClient | undefined): void {
 	configuredClient?.shutdown();
+	abortCanonicalModelLookups(new Error("Goose ACP client changed"));
 	for (const timer of followUpDrainTimers.values()) clearTimeout(timer);
 	followUpDrainTimers.clear();
 	configuredClient = client;
@@ -2252,6 +2277,7 @@ export async function deleteSession(
 	});
 }
 export function disposeAllSessions(): void {
+	abortCanonicalModelLookups(new Error("Controller is shutting down"));
 	for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
 	for (const pending of pendingQuestions.values()) {
 		clearTimeout(pending.timer);
@@ -2289,24 +2315,201 @@ export async function settleSessionsForShutdown(): Promise<void> {
 export async function listAvailableModels(): Promise<WireModel[]> {
 	const hidden = new Set((getConfig().hiddenModels ?? []).map(modelReferenceKey));
 	const providers = await client().listProviders();
-	return providers
-		.flatMap((provider): WireModel[] =>
-			provider.models.map(
-				(model): WireModel => ({
-					id: model.id,
-					name: model.name ?? model.id,
-					provider: provider.id,
-					...(model.contextLimit === undefined ? {} : { contextWindow: model.contextLimit }),
-					...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-					...(model.modalities === undefined
+	const inventory = providers.flatMap((provider) =>
+		provider.models.map((model) => ({ provider, model })),
+	);
+	const metadata = await canonicalModelMetadata(inventory);
+	return projectAvailableModels(inventory, metadata, hidden);
+}
+
+function projectAvailableModels(
+	inventory: readonly {
+		provider: Awaited<ReturnType<GooseClient["listProviders"]>>[number];
+		model: Awaited<ReturnType<GooseClient["listProviders"]>>[number]["models"][number];
+	}[],
+	metadata: readonly CanonicalModelInfo[],
+	hidden: ReadonlySet<string>,
+): WireModel[] {
+	return inventory
+		.map(({ provider, model }, index): WireModel => {
+			const canonical = metadata[index] ?? null;
+			const cost = canonicalCost(canonical);
+			return {
+				id: model.id,
+				name: model.name ?? model.id,
+				provider: provider.id,
+				...(model.contextLimit === undefined && canonical
+					? { contextWindow: canonical.contextLimit }
+					: model.contextLimit === undefined
 						? {}
-						: { input: model.modalities.includes("image") ? ["text", "image"] : ["text"] }),
-					available: provider.available !== false && provider.configured !== false,
-					hidden: hidden.has(modelReferenceKey({ provider: provider.id, id: model.id })),
-				}),
-			),
-		)
+						: { contextWindow: model.contextLimit }),
+				...(model.maxOutputTokens === undefined && canonical?.maxOutputTokens !== undefined
+					? { maxTokens: canonical.maxOutputTokens }
+					: model.maxOutputTokens === undefined
+						? {}
+						: { maxTokens: model.maxOutputTokens }),
+				...(model.reasoning === undefined && canonical
+					? { reasoning: canonical.reasoning }
+					: model.reasoning === undefined
+						? {}
+						: { reasoning: model.reasoning }),
+				...(model.modalities === undefined
+					? {}
+					: { input: model.modalities.includes("image") ? ["text", "image"] : ["text"] }),
+				...(cost ? { cost } : {}),
+				available: provider.available !== false && provider.configured !== false,
+				hidden: hidden.has(modelReferenceKey({ provider: provider.id, id: model.id })),
+			};
+		})
 		.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+}
+
+function canonicalModelProjectionDeadlineMs(): number {
+	return canonicalModelProjectionDeadlineForTests ?? CANONICAL_MODEL_PROJECTION_DEADLINE_MS;
+}
+
+async function canonicalModelMetadata(
+	inventory: readonly {
+		provider: Awaited<ReturnType<GooseClient["listProviders"]>>[number];
+		model: Awaited<ReturnType<GooseClient["listProviders"]>>[number]["models"][number];
+	}[],
+): Promise<CanonicalModelInfo[]> {
+	const controller = new AbortController();
+	const timer = setTimeout(
+		() => controller.abort(new Error("Canonical model metadata projection timed out")),
+		canonicalModelProjectionDeadlineMs(),
+	);
+	timer.unref?.();
+	try {
+		return await Promise.all(
+			inventory.map(({ provider, model }) =>
+				consumeCanonicalModelInfo(provider.id, model.id, controller.signal).catch(() => null),
+			),
+		);
+	} finally {
+		clearTimeout(timer);
+		if (!controller.signal.aborted) controller.abort(new Error("Canonical model metadata settled"));
+	}
+}
+
+function canonicalModelKey(generation: number, provider: string, model: string): string {
+	return `${generation}\0${provider}\0${model}`;
+}
+
+function acquireCanonicalLookup(signal: AbortSignal): Promise<() => void> {
+	if (signal.aborted) return Promise.reject(signal.reason ?? new Error("Canonical lookup aborted"));
+	if (canonicalLookupsActive < CANONICAL_MODEL_LOOKUP_CONCURRENCY) {
+		canonicalLookupsActive++;
+		return Promise.resolve(releaseCanonicalLookup);
+	}
+	return new Promise((resolve, reject) => {
+		const waiter: CanonicalLookupWaiter = {
+			resolve,
+			reject,
+			signal,
+			abort: () => {
+				const index = canonicalLookupWaiters.indexOf(waiter);
+				if (index >= 0) canonicalLookupWaiters.splice(index, 1);
+				reject(signal.reason ?? new Error("Canonical lookup aborted"));
+			},
+		};
+		signal.addEventListener("abort", waiter.abort, { once: true });
+		canonicalLookupWaiters.push(waiter);
+	});
+}
+
+function releaseCanonicalLookup(): void {
+	canonicalLookupsActive--;
+	while (canonicalLookupsActive < CANONICAL_MODEL_LOOKUP_CONCURRENCY) {
+		const waiter = canonicalLookupWaiters.shift();
+		if (!waiter) return;
+		waiter.signal.removeEventListener("abort", waiter.abort);
+		if (waiter.signal.aborted) continue;
+		canonicalLookupsActive++;
+		waiter.resolve(releaseCanonicalLookup);
+	}
+}
+
+function canonicalModelFlight(provider: string, model: string): CanonicalModelFlight {
+	const goose = client();
+	const key = canonicalModelKey(goose.connectionGeneration, provider, model);
+	const existing = canonicalModelFlights.get(key);
+	if (existing) return existing;
+	const controller = new AbortController();
+	const flight: CanonicalModelFlight = {
+		controller,
+		acquired: false,
+		consumers: 0,
+		promise: Promise.resolve(null),
+	};
+	flight.promise = (async () => {
+		const release = await acquireCanonicalLookup(controller.signal);
+		flight.acquired = true;
+		try {
+			return await goose.canonicalModelInfo(provider, model, {
+				timeoutMs: null,
+			});
+		} finally {
+			release();
+		}
+	})();
+	canonicalModelFlights.set(key, flight);
+	void flight.promise.then(
+		() => {
+			if (canonicalModelFlights.get(key) === flight) canonicalModelFlights.delete(key);
+		},
+		() => {
+			if (canonicalModelFlights.get(key) === flight) canonicalModelFlights.delete(key);
+		},
+	);
+	return flight;
+}
+
+function consumeCanonicalModelInfo(
+	provider: string,
+	model: string,
+	signal: AbortSignal,
+): Promise<CanonicalModelInfo> {
+	const flight = canonicalModelFlight(provider, model);
+	flight.consumers++;
+	return new Promise<CanonicalModelInfo>((resolve, reject) => {
+		const abort = () => reject(signal.reason ?? new Error("Canonical lookup aborted"));
+		signal.addEventListener("abort", abort, { once: true });
+		flight.promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+	}).finally(() => {
+		flight.consumers--;
+		if (flight.consumers === 0 && !flight.acquired && !flight.controller.signal.aborted) {
+			flight.controller.abort(new Error("No canonical metadata consumers remain"));
+		}
+	});
+}
+
+function abortCanonicalModelLookups(reason: Error): void {
+	for (const flight of canonicalModelFlights.values()) {
+		if (!flight.acquired) flight.controller.abort(reason);
+	}
+}
+
+function canonicalCost(canonical: CanonicalModelInfo): WireModel["cost"] | undefined {
+	if (
+		!canonical ||
+		!isNonnegativeFinite(canonical.inputTokenCost) ||
+		!isNonnegativeFinite(canonical.outputTokenCost)
+	) {
+		return undefined;
+	}
+	return {
+		input: canonical.inputTokenCost,
+		output: canonical.outputTokenCost,
+		cacheRead: isNonnegativeFinite(canonical.cacheReadTokenCost) ? canonical.cacheReadTokenCost : 0,
+		cacheWrite: isNonnegativeFinite(canonical.cacheWriteTokenCost)
+			? canonical.cacheWriteTokenCost
+			: 0,
+		currency: canonical.currency,
+	};
+}
+function isNonnegativeFinite(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 export async function listProviderStatus(): Promise<
 	import("@gooseberry/contracts").ProviderStatusReport
@@ -2340,12 +2543,93 @@ export async function listProviderStatus(): Promise<
 					canOAuth,
 					canApiKey,
 					canLogout: configured && provider.configKeys.length > 0,
+					acp: provider.acp,
 					modelCount: provider.models.length,
 					availableModelCount:
 						!configured || provider.available === false ? 0 : provider.models.length,
 				};
 			}),
 	};
+}
+
+export async function getSessionAgentMentions(sessionId: string): Promise<AgentMentionInfo[]> {
+	const entry = requireEntry(sessionId);
+	return safeGooseAdministrationRequest("Couldn't load agent mentions", async () => {
+		await attachSession(sessionId, entry);
+		const mentions = await client().listAgentMentions(
+			{ cwd: entry.cwd, sessionId },
+			attachedRequest(entry),
+		);
+		return projectAgentMentions(mentions);
+	});
+}
+
+const MAX_AGENT_MENTIONS = 64;
+const MAX_AGENT_MENTION_NAME_BYTES = 256;
+const MAX_AGENT_MENTION_DESCRIPTION_BYTES = 2_048;
+const MAX_AGENT_MENTION_SOURCE_TYPE_BYTES = 32;
+const MAX_AGENT_MENTION_BYTES = 512;
+const MAX_AGENT_MENTION_PROJECTION_BYTES = 32 * 1024;
+
+function isBoundedUtf8(value: string, maxBytes: number): boolean {
+	return Buffer.byteLength(value, "utf8") <= maxBytes;
+}
+
+export function projectAgentMentions(
+	mentions: readonly {
+		name: string;
+		description: string;
+		sourceType: AgentMentionInfo["sourceType"];
+		mention: string;
+	}[],
+): AgentMentionInfo[] {
+	const projected: AgentMentionInfo[] = [];
+	let totalBytes = 0;
+	for (const mention of mentions) {
+		if (projected.length >= MAX_AGENT_MENTIONS) break;
+		if (
+			!isBoundedUtf8(mention.name, MAX_AGENT_MENTION_NAME_BYTES) ||
+			!isBoundedUtf8(mention.description, MAX_AGENT_MENTION_DESCRIPTION_BYTES) ||
+			!isBoundedUtf8(mention.sourceType, MAX_AGENT_MENTION_SOURCE_TYPE_BYTES) ||
+			!isBoundedUtf8(mention.mention, MAX_AGENT_MENTION_BYTES)
+		) {
+			continue;
+		}
+		const bytes =
+			Buffer.byteLength(mention.name, "utf8") +
+			Buffer.byteLength(mention.description, "utf8") +
+			Buffer.byteLength(mention.sourceType, "utf8") +
+			Buffer.byteLength(mention.mention, "utf8");
+		if (totalBytes + bytes > MAX_AGENT_MENTION_PROJECTION_BYTES) continue;
+		projected.push({
+			name: mention.name,
+			description: mention.description,
+			sourceType: mention.sourceType,
+			mention: mention.mention,
+		});
+		totalBytes += bytes;
+	}
+	return projected;
+}
+
+export async function checkProviderReadiness(providerId: string): Promise<{
+	providerId: string;
+	ready: boolean;
+	hasIssue: boolean;
+}> {
+	if (typeof providerId !== "string" || !providerId.trim() || providerId.includes("\0")) {
+		throw new Error("Invalid provider identifier");
+	}
+	providerId = providerId.trim();
+	const provider = await safeGooseAdministrationRequest(
+		"Couldn't check provider readiness",
+		async () =>
+			(await client().listProviders([providerId])).find((candidate) => candidate.id === providerId),
+	);
+	if (!provider?.acp) throw new Error("Provider does not support ACP readiness checks");
+	return safeGooseAdministrationRequest("Couldn't check provider readiness", () =>
+		client().checkProviderReadiness(providerId),
+	);
 }
 
 async function completeProviderLogin(login: PendingProviderLogin): Promise<void> {
@@ -2554,14 +2838,16 @@ export async function setModelVisibility(
 	);
 	if (hidden) refs.push({ provider, id });
 	updateConfig({ hiddenModels: refs });
-	return listAvailableModels();
+	return models.map((model) => ({
+		...model,
+		hidden: refs.some((ref) => ref.provider === model.provider && ref.id === model.id),
+	}));
 }
 export async function setAllModelVisibility(hidden: boolean): Promise<WireModel[]> {
 	const models = await listAvailableModels();
-	updateConfig({
-		hiddenModels: hidden ? models.map(({ provider, id }) => ({ provider, id })) : [],
-	});
-	return listAvailableModels();
+	const refs = hidden ? models.map(({ provider, id }) => ({ provider, id })) : [];
+	updateConfig({ hiddenModels: refs });
+	return models.map((model) => ({ ...model, hidden }));
 }
 export async function getDefaultModel(): Promise<{
 	model: WireModel | null;

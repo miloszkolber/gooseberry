@@ -117,15 +117,19 @@ export function SlashCommandMenu({
 	onSelect,
 	className,
 	footer,
+	listboxId = "slash-command-menu",
 }: {
 	commands: readonly SlashCommandInfo[];
 	activeIndex: number;
 	onSelect: (command: SlashCommandInfo) => void;
 	className?: string;
 	footer?: ReactNode;
+	listboxId?: string;
 }) {
 	return (
 		<div
+			id={listboxId}
+			role="listbox"
 			data-testid="slash-menu"
 			className={cn(
 				"max-h-[40vh] w-[min(28rem,90%)] overflow-y-auto rounded-[var(--radius-md)] border border-border-default bg-container-elevated-bg p-xs shadow-[var(--shadow-md)]",
@@ -135,6 +139,9 @@ export function SlashCommandMenu({
 			{commands.map((command, index) => (
 				<button
 					key={`${command.source}:${command.sourceInfo.path}:${command.name}`}
+					id={`${listboxId}-option-${index}`}
+					role="option"
+					aria-selected={index === activeIndex}
 					type="button"
 					data-testid="slash-command"
 					data-source={command.source}
