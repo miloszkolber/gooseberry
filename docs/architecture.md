@@ -18,7 +18,7 @@ Projects are created in the UI and contain absolute directory roots. The control
 
 ## Browser boundary
 
-`gooseberry-browser` is a separate non-root, read-only container with only its browser-state mount. It exposes bounded HTTP visual-QA operations and receives no project mounts, Goose configuration, or provider credentials.
+`gooseberry-browser` is a small Go service in a separate non-root, read-only container with only its browser-state mount. It exposes bounded HTTP visual-QA operations and receives no project mounts, Goose configuration, provider credentials, Node runtime, or build toolchain.
 
 ## Models and agents
 

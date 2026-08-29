@@ -23,4 +23,4 @@ packages/goose-client/ Goose ACP client and normalization
 packages/              controller support and shared contracts
 ```
 
-The separate [`gooseberry-browser`](../gooseberry-browser/) service keeps Chromium away from Goose credentials and project mounts. Compose is the supported runtime.
+The separate Go [`gooseberry-browser`](../gooseberry-browser/) service keeps Chromium away from Goose credentials and project mounts. Validate it with `CGO_ENABLED=0 go test ./...` and `CGO_ENABLED=0 go vet ./...` from that directory. Compose is the supported runtime.

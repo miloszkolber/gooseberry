@@ -8,9 +8,9 @@ A project contains one or more absolute directory roots visible to the controlle
 
 ## Sessions and features
 
-Projects can contain multiple persistent and concurrent Goose sessions. Gooseberry presents streamed text, thinking, tool calls, results, errors, completion, model identity, reasoning, context, and usage reported by Goose. Messages support multiple images. Session controls include steering, interruption, model and reasoning changes, and loading persisted Goose sessions.
+Projects can contain multiple persistent and concurrent Goose sessions. Gooseberry presents streamed text, thinking, tool calls, results, errors, completion, model identity, reasoning, context, and usage reported by Goose. Messages support multiple images. Session controls include steering, interruption, model and reasoning changes, loading persisted Goose sessions, Goose slash-command completion, and bounded incremental history search.
 
-Each session may have one goal and an ordered task list with `pending`, `active`, and `done` states. Objective updates use MCP. Custom agents (`scout`, `builder`, `strategist`, and `auditor`) run through Goose. The browser capability is a lazy skill backed by the separate browser HTTP service. Recipe and schedule settings expose supported Goose controls only.
+Each session may have one goal and an ordered task list with `pending`, `active`, and `done` states. Objective updates use MCP. Custom agents (`scout`, `builder`, `strategist`, and `auditor`) run through Goose. The browser capability is a lazy skill backed by the separate Go browser HTTP service. Settings project Goose provider status, API-key configuration, native OAuth/device-code authentication, models, recipes, and schedules. Schedule controls include run, pause, resume, inspection, termination, recent sessions, update, and deletion.
 
 ## Runtime and trust
 

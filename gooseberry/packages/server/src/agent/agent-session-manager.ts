@@ -3,12 +3,19 @@ import {
 	type AgentEvent,
 	type AgentSettlement,
 	type AssistantMessage,
+	type HistoryScope,
+	type HistorySearchResult,
 	type ImageContent,
+	type LoginFrame,
+	type LoginPush,
+	MAX_HISTORY_LIMIT,
+	MAX_HISTORY_QUERY_LENGTH,
 	modelReferenceKey,
 	type PermissionRequest,
 	type SessionEventPayload,
 	type SessionStats,
 	type SessionSummary,
+	type SlashCommandInfo,
 	type ThinkingLevel,
 	type TranscriptMessage,
 	type UserMessage,
@@ -21,6 +28,7 @@ import {
 	type GooseMcpServer,
 	type GoosePermissionDecision,
 	type GoosePermissionRequest,
+	type GooseProviderConfigKey,
 	type GooseSchedule,
 	type GooseSessionInfo,
 	type GooseUpdate,
@@ -89,6 +97,7 @@ let permissionPublisher: (request: {
 }) => void = () => {};
 let permissionResolvedPublisher: (payload: { sessionId: string; permissionId: string }) => void =
 	() => {};
+let providerLoginPublisher: (clientKey: string, payload: LoginPush) => void = () => {};
 const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60_000;
 let permissionTimeoutOverride: number | undefined;
 export function setPermissionTimeoutForTests(timeoutMs: number | undefined): void {
@@ -111,6 +120,121 @@ export function setPermissionPublisher(fn: typeof permissionPublisher): void {
 }
 export function setPermissionResolvedPublisher(fn: typeof permissionResolvedPublisher): void {
 	permissionResolvedPublisher = fn;
+}
+export function setProviderLoginPublisher(fn: typeof providerLoginPublisher): void {
+	providerLoginPublisher = fn;
+}
+
+interface PendingProviderLogin {
+	loginId: string;
+	providerId: string;
+	clientKey: string;
+	type: "oauth" | "api_key";
+	fields: GooseProviderConfigKey[];
+	fieldIndex: number;
+	values: { key: string; value: string }[];
+	abortController: AbortController;
+	requestInFlight: boolean;
+	expiresTimer?: ReturnType<typeof setTimeout>;
+}
+
+const pendingProviderLogins = new Map<string, PendingProviderLogin>();
+const providerLoginSnapshots = new Map<
+	string,
+	{ push: LoginPush; expiresTimer: ReturnType<typeof setTimeout> }
+>();
+const providerLoginClientReservations = new Set<string>();
+const providerLoginProviderReservations = new Set<string>();
+interface HistoryIndexEntry {
+	projectId: string;
+	sessionId: string;
+	cwd: string;
+	title: string;
+	timestamp: number;
+	messages: { role: "user" | "assistant"; text: string; messageIndex: number }[];
+}
+const historySearchIndex = new Map<string, HistoryIndexEntry>();
+const historyIndexOwnedSessions = new Set<string>();
+const historyIndexFailures = new Map<string, { attempts: number; retryAt: number }>();
+const historyIndexing = new Map<string, Promise<void>>();
+const HISTORY_INDEX_BATCH_SIZE = 8;
+const HISTORY_INDEX_MAX_SESSIONS = 200;
+const HISTORY_INDEX_MAX_MESSAGES = 500;
+const HISTORY_INDEX_MAX_TEXT_CHARS = 256 * 1024;
+const HISTORY_INDEX_MAX_MESSAGE_CHARS = 16 * 1024;
+const HISTORY_INDEX_MAX_ATTEMPTS = 3;
+const PROVIDER_LOGIN_TIMEOUT_MS = 10 * 60_000;
+const PROVIDER_LOGIN_REPLAY_MS = 60_000;
+let providerLoginTimeoutOverride: number | undefined;
+
+export function setProviderLoginTimeoutForTests(timeoutMs: number | undefined): void {
+	providerLoginTimeoutOverride = timeoutMs;
+}
+
+function providerLoginTimeoutMs(): number {
+	return providerLoginTimeoutOverride ?? PROVIDER_LOGIN_TIMEOUT_MS;
+}
+
+function cacheProviderLoginSnapshot(clientKey: string, push: LoginPush): void {
+	const current = providerLoginSnapshots.get(clientKey);
+	if (current) clearTimeout(current.expiresTimer);
+	const expiresTimer = setTimeout(() => {
+		if (providerLoginSnapshots.get(clientKey)?.push === push) {
+			providerLoginSnapshots.delete(clientKey);
+		}
+	}, PROVIDER_LOGIN_REPLAY_MS);
+	expiresTimer.unref?.();
+	providerLoginSnapshots.set(clientKey, { push, expiresTimer });
+}
+
+/** The latest bounded public provider-login frame for a short browser reconnect. */
+export function providerLoginSnapshot(clientKey: string): LoginPush | undefined {
+	return providerLoginSnapshots.get(clientKey)?.push;
+}
+
+function cacheProviderLoginFrame(login: PendingProviderLogin, frame: LoginFrame): LoginPush {
+	const push: LoginPush = {
+		loginId: login.loginId,
+		providerId: login.providerId,
+		frame,
+	};
+	cacheProviderLoginSnapshot(login.clientKey, push);
+	return push;
+}
+
+function publishProviderLogin(login: PendingProviderLogin, frame: LoginFrame): void {
+	const push = cacheProviderLoginFrame(login, frame);
+	providerLoginPublisher(login.clientKey, push);
+}
+
+function clearPendingProviderLogin(login: PendingProviderLogin): void {
+	if (login.expiresTimer) clearTimeout(login.expiresTimer);
+	if (pendingProviderLogins.get(login.loginId) === login) {
+		pendingProviderLogins.delete(login.loginId);
+	}
+}
+
+function armProviderLoginExpiry(login: PendingProviderLogin): void {
+	login.expiresTimer = setTimeout(() => {
+		if (pendingProviderLogins.get(login.loginId) !== login) return;
+		const wasCancelled = login.abortController.signal.aborted;
+		login.abortController.abort(new Error("Provider connection timed out"));
+		if (!wasCancelled) {
+			publishProviderLogin(login, { kind: "error", message: "Provider connection timed out." });
+		}
+		if (login.requestInFlight) client().resetConnection();
+		else clearPendingProviderLogin(login);
+	}, providerLoginTimeoutMs());
+	login.expiresTimer.unref?.();
+}
+
+function providerFieldFrame(field: GooseProviderConfigKey): LoginFrame {
+	return {
+		kind: "prompt",
+		message: `Enter ${field.name}`,
+		...(field.defaultValue ? { placeholder: field.defaultValue, allowEmpty: true } : {}),
+		secret: field.secret,
+	};
 }
 function permissionPayload(id: string, request: GoosePermissionRequest): PermissionRequest {
 	return {
@@ -352,6 +476,24 @@ function onGooseEvent(event: GooseClientEvent): void {
 				errorMessage: "Goose ACP connection closed",
 			};
 			emit(sessionId, { type: "error", error: "Goose ACP connection closed" });
+		}
+		return;
+	}
+	if (event.type === "provider-device-code") {
+		for (const login of pendingProviderLogins.values()) {
+			if (
+				login.type !== "oauth" ||
+				login.providerId !== event.providerId ||
+				login.abortController.signal.aborted
+			) {
+				continue;
+			}
+			publishProviderLogin(login, {
+				kind: "deviceCode",
+				userCode: event.userCode,
+				verificationUri: event.verificationUri,
+				...(event.expiresIn > 0 ? { expiresInSeconds: event.expiresIn } : {}),
+			});
 		}
 		return;
 	}
@@ -684,16 +826,248 @@ export async function getSessionMessages(
 	sessionId: string,
 	projectId: string,
 	cwd: string,
+	options: { historyIndex?: boolean } = {},
 ): Promise<{ summary: SessionSummary; messages: TranscriptMessage[] }> {
+	if (!options.historyIndex) historyIndexOwnedSessions.delete(sessionId);
 	if (!(await ensureSessionAttached(sessionId, projectId, cwd)))
 		throw new Error(`Unknown session: ${sessionId}`);
 	const entry = sessions.get(sessionId);
 	if (!entry) throw new Error(`Unknown session: ${sessionId}`);
 	return { summary: summary(sessionId, entry), messages: entry.messages };
 }
+
+function searchableMessageText(message: TranscriptMessage): string {
+	if (message.role === "toolResult") return "";
+	if (typeof message.content === "string") return message.content;
+	return message.content
+		.flatMap((block) => {
+			if (block.type === "text") return [block.text];
+			if (block.type === "thinking" && message.role === "assistant") return [block.thinking];
+			return [];
+		})
+		.join("\n")
+		.trim();
+}
+
+function historySnippet(text: string, normalizedQuery: string): string {
+	if (!normalizedQuery) return text.slice(0, 240);
+	const index = text.toLocaleLowerCase().indexOf(normalizedQuery);
+	if (index < 0) return text.slice(0, 240);
+	const start = Math.max(0, index - 80);
+	const end = Math.min(text.length, index + normalizedQuery.length + 120);
+	return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
+}
+
+async function indexHistoryRecord(
+	record: {
+		projectId: string;
+		sessionId: string;
+		cwd: string;
+	},
+	source: { title?: string; updatedAt?: string; createdAt?: string },
+): Promise<void> {
+	const loaded = sessions.has(record.sessionId);
+	let indexedEntry: Entry | undefined;
+	const sourceTimestamp = historyTimestamp(source);
+	if (historySearchIndex.get(record.sessionId)?.timestamp === sourceTimestamp && !loaded) return;
+	const failure = historyIndexFailures.get(record.sessionId);
+	if (failure && (failure.attempts >= HISTORY_INDEX_MAX_ATTEMPTS || failure.retryAt > Date.now())) {
+		return;
+	}
+	const active = historyIndexing.get(record.sessionId);
+	if (active) return active;
+	if (!loaded) historyIndexOwnedSessions.add(record.sessionId);
+	const task = getSessionMessages(record.sessionId, record.projectId, record.cwd, {
+		historyIndex: true,
+	})
+		.then(({ summary: loadedSummary, messages }) => {
+			indexedEntry = sessions.get(record.sessionId);
+			let remainingChars = HISTORY_INDEX_MAX_TEXT_CHARS;
+			const indexedMessages: HistoryIndexEntry["messages"] = [];
+			const first = Math.max(0, messages.length - HISTORY_INDEX_MAX_MESSAGES);
+			for (
+				let messageIndex = first;
+				messageIndex < messages.length && remainingChars > 0;
+				messageIndex++
+			) {
+				const message = messages[messageIndex];
+				if (!message || (message.role !== "user" && message.role !== "assistant")) continue;
+				const text = searchableMessageText(message).slice(
+					0,
+					Math.min(HISTORY_INDEX_MAX_MESSAGE_CHARS, remainingChars),
+				);
+				if (!text) continue;
+				remainingChars -= text.length;
+				indexedMessages.push({ role: message.role, text, messageIndex });
+			}
+			const entry: HistoryIndexEntry = {
+				projectId: record.projectId,
+				sessionId: record.sessionId,
+				cwd: record.cwd,
+				title: source.title ?? loadedSummary.title,
+				timestamp: sourceTimestamp,
+				messages: indexedMessages,
+			};
+			historySearchIndex.delete(record.sessionId);
+			historySearchIndex.set(record.sessionId, entry);
+			while (historySearchIndex.size > HISTORY_INDEX_MAX_SESSIONS) {
+				const oldest = historySearchIndex.keys().next().value;
+				if (typeof oldest !== "string") break;
+				historySearchIndex.delete(oldest);
+			}
+			historyIndexFailures.delete(record.sessionId);
+		})
+		.catch(() => {
+			const attempts = (historyIndexFailures.get(record.sessionId)?.attempts ?? 0) + 1;
+			historyIndexFailures.set(record.sessionId, {
+				attempts,
+				retryAt: Date.now() + Math.min(5_000, 300 * 2 ** (attempts - 1)),
+			});
+		})
+		.finally(() => {
+			historyIndexing.delete(record.sessionId);
+			if (
+				!loaded &&
+				historyIndexOwnedSessions.has(record.sessionId) &&
+				sessions.get(record.sessionId) === indexedEntry
+			) {
+				sessions.delete(record.sessionId);
+			}
+			historyIndexOwnedSessions.delete(record.sessionId);
+		});
+	historyIndexing.set(record.sessionId, task);
+	return task;
+}
+
+function historyTimestamp(source: { updatedAt?: string; createdAt?: string }): number {
+	const value = source.updatedAt ?? source.createdAt;
+	const parsed = value ? Date.parse(value) : 0;
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export async function searchSessionHistory(input: {
+	query: string;
+	scope: HistoryScope;
+	limit?: number;
+}): Promise<HistorySearchResult> {
+	if (typeof input.query !== "string") throw new Error("History query must be text");
+	const query = input.query.trim();
+	if (query.length > MAX_HISTORY_QUERY_LENGTH) {
+		throw new Error(`History query must be ${MAX_HISTORY_QUERY_LENGTH} characters or fewer`);
+	}
+	const limit = Math.min(
+		MAX_HISTORY_LIMIT,
+		Math.max(1, Number.isSafeInteger(input.limit) ? (input.limit as number) : 50),
+	);
+	let records = loadProjectSessionRecords();
+	if (input.scope.kind === "chat") {
+		const { sessionId } = input.scope;
+		records = records.filter((record) => record.sessionId === sessionId);
+	} else if (input.scope.kind === "project") {
+		const { projectId } = input.scope;
+		records = records.filter((record) => record.projectId === projectId);
+	} else if (input.scope.kind !== "all") {
+		throw new Error("Invalid history scope");
+	}
+	const remote = await client().listSessions({ limit: HISTORY_INDEX_MAX_SESSIONS });
+	const remoteById = new Map(remote.sessions.map((session) => [session.sessionId, session]));
+	const remoteOrder = new Map(remote.sessions.map((session, index) => [session.sessionId, index]));
+	records = records
+		.filter((record) => !remoteById.get(record.sessionId)?.archived)
+		.filter((record) => remoteById.has(record.sessionId))
+		.sort(
+			(a, b) =>
+				historyTimestamp(remoteById.get(b.sessionId) ?? {}) -
+					historyTimestamp(remoteById.get(a.sessionId) ?? {}) ||
+				(remoteOrder.get(a.sessionId) ?? Number.MAX_SAFE_INTEGER) -
+					(remoteOrder.get(b.sessionId) ?? Number.MAX_SAFE_INTEGER),
+		)
+		.slice(0, HISTORY_INDEX_MAX_SESSIONS);
+
+	const indexable = records.filter((record) => {
+		const source = remoteById.get(record.sessionId);
+		const cached = historySearchIndex.get(record.sessionId);
+		if (
+			sessions.has(record.sessionId) ||
+			!cached ||
+			cached.timestamp !== historyTimestamp(source ?? {})
+		) {
+			const failure = historyIndexFailures.get(record.sessionId);
+			return (
+				!failure || (failure.attempts < HISTORY_INDEX_MAX_ATTEMPTS && failure.retryAt <= Date.now())
+			);
+		}
+		return false;
+	});
+	await Promise.all(
+		indexable
+			.slice(0, HISTORY_INDEX_BATCH_SIZE)
+			.map((record) => indexHistoryRecord(record, remoteById.get(record.sessionId) ?? {})),
+	);
+	const indexing = records.some((record) => {
+		const source = remoteById.get(record.sessionId);
+		const cached = historySearchIndex.get(record.sessionId);
+		if (cached && cached.timestamp === historyTimestamp(source ?? {})) {
+			return false;
+		}
+		const failure = historyIndexFailures.get(record.sessionId);
+		return !failure || failure.attempts < HISTORY_INDEX_MAX_ATTEMPTS;
+	});
+	const incomplete = records.some(
+		(record) =>
+			(historyIndexFailures.get(record.sessionId)?.attempts ?? 0) >= HISTORY_INDEX_MAX_ATTEMPTS,
+	);
+	const normalizedQuery = query.toLocaleLowerCase();
+	const prompts: HistorySearchResult["prompts"] = [];
+	const messages: HistorySearchResult["messages"] = [];
+	let promptTotal = 0;
+	let messageTotal = 0;
+	for (const record of records) {
+		const entry = historySearchIndex.get(record.sessionId);
+		if (!entry) continue;
+		for (let index = entry.messages.length - 1; index >= 0; index--) {
+			const message = entry.messages[index];
+			if (!message) continue;
+			const { text, messageIndex } = message;
+			const matches = !normalizedQuery || text.toLocaleLowerCase().includes(normalizedQuery);
+			if (!matches) continue;
+			const shared = {
+				text,
+				timestamp: entry.timestamp,
+				sessionId: record.sessionId,
+				sessionTitle: entry.title,
+				projectId: record.projectId,
+				cwd: record.cwd,
+				messageIndex,
+				anchorText: text,
+			};
+			if (message.role === "user") {
+				promptTotal++;
+				if (prompts.length < limit) prompts.push(shared);
+			}
+			messageTotal++;
+			if (messages.length < limit) {
+				messages.push({
+					...shared,
+					role: message.role,
+					snippet: historySnippet(text, normalizedQuery),
+				});
+			}
+		}
+	}
+	return {
+		prompts,
+		messages,
+		promptTotal,
+		messageTotal,
+		indexing,
+		incomplete,
+	};
+}
 function requireEntry(sessionId: string): Entry {
 	const entry = sessions.get(sessionId);
 	if (!entry) throw new Error(`Unknown session: ${sessionId}`);
+	historyIndexOwnedSessions.delete(sessionId);
 	return entry;
 }
 
@@ -883,8 +1257,32 @@ export function sessionForObjectiveToken(
 		if (entry.objectiveToken === token) return { projectId: entry.projectId, sessionId };
 	return undefined;
 }
-export function getSessionCommands(): [] {
-	return [];
+function slashCommand(
+	command: import("@gooseberry/goose-client").GooseSlashCommand,
+): SlashCommandInfo {
+	return {
+		name: command.name,
+		...(command.description ? { description: command.description } : {}),
+		source: "goose",
+		sourceInfo: {
+			path: command.name,
+			source: "Goose",
+			scope: "temporary",
+			origin: "top-level",
+		},
+	};
+}
+export async function getSessionCommands(sessionId: string): Promise<SlashCommandInfo[]> {
+	const entry = requireEntry(sessionId);
+	await attachSession(sessionId, entry);
+	return client()
+		.listSlashCommands({ sessionId }, attachedRequest(entry))
+		.then((commands) => commands.map(slashCommand));
+}
+export function getCommandsForCwd(cwd: string): Promise<SlashCommandInfo[]> {
+	return client()
+		.listSlashCommands({ cwd })
+		.then((commands) => commands.map(slashCommand));
 }
 export async function deleteSession(
 	sessionId: string,
@@ -892,16 +1290,32 @@ export async function deleteSession(
 	cwd: string,
 ): Promise<void> {
 	cancelPermissions(sessionId);
+	historyIndexOwnedSessions.delete(sessionId);
 	if (!(await ensureSessionAttached(sessionId, projectId, cwd)))
 		throw new Error(`Unknown session: ${sessionId}`);
 	await attachSession(sessionId, requireEntry(sessionId));
 	await client().deleteSession(sessionId, attachedRequest(requireEntry(sessionId)));
 	sessions.delete(sessionId);
+	historySearchIndex.delete(sessionId);
+	historyIndexFailures.delete(sessionId);
 	forgetProjectSession(projectId, sessionId);
 	deletedPublisher({ projectId, sessionId });
 }
 export function disposeAllSessions(): void {
 	for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
+	for (const login of pendingProviderLogins.values()) {
+		if (login.expiresTimer) clearTimeout(login.expiresTimer);
+		login.abortController.abort(new Error("Controller is shutting down"));
+	}
+	pendingProviderLogins.clear();
+	for (const snapshot of providerLoginSnapshots.values()) clearTimeout(snapshot.expiresTimer);
+	providerLoginSnapshots.clear();
+	providerLoginClientReservations.clear();
+	providerLoginProviderReservations.clear();
+	historyIndexFailures.clear();
+	historySearchIndex.clear();
+	historyIndexOwnedSessions.clear();
+	historyIndexing.clear();
 	sessions.clear();
 }
 export async function settleSessionsForShutdown(): Promise<void> {
@@ -935,21 +1349,232 @@ export async function listProviderStatus(): Promise<
 > {
 	const providers = await client().listProviders();
 	return {
-		providers: providers.map((provider) => ({
-			id: provider.id,
-			name: provider.name ?? provider.id,
-			configured: provider.configured === true,
-			kind: "other" as const,
-			modelCount: provider.models.length,
-			availableModelCount:
-				provider.configured === false || provider.available === false ? 0 : provider.models.length,
-		})),
+		providers: providers
+			.filter((provider) => provider.visibleInSetup !== false || provider.configured === true)
+			.map((provider) => {
+				const canOAuth = provider.configKeys.some((key) => key.oauthFlow);
+				const canApiKey = provider.configKeys.some(
+					(key) => !key.oauthFlow && (key.primary || key.required),
+				);
+				const configured = provider.configured === true;
+				return {
+					id: provider.id,
+					name: provider.name ?? provider.id,
+					configured,
+					kind: configured
+						? ("other" as const)
+						: canOAuth
+							? ("oauth" as const)
+							: canApiKey
+								? ("api-key" as const)
+								: ("other" as const),
+					...(provider.lastRefreshError
+						? { detail: provider.lastRefreshError }
+						: provider.available === false
+							? { detail: "Provider runtime is unavailable" }
+							: {}),
+					canOAuth,
+					canApiKey,
+					canLogout: configured && provider.configKeys.length > 0,
+					modelCount: provider.models.length,
+					availableModelCount:
+						!configured || provider.available === false ? 0 : provider.models.length,
+				};
+			}),
 	};
+}
+
+async function completeProviderLogin(login: PendingProviderLogin): Promise<void> {
+	if (login.abortController.signal.aborted) return;
+	login.requestInFlight = true;
+	publishProviderLogin(login, { kind: "progress", message: "Saving provider configuration…" });
+	try {
+		await client().saveProviderConfig(login.providerId, login.values, { timeoutMs: null });
+		publishProviderLogin(login, { kind: "success" });
+	} catch (error) {
+		if (!login.abortController.signal.aborted) {
+			publishProviderLogin(login, {
+				kind: "error",
+				message: error instanceof Error ? error.message : String(error),
+			});
+		}
+	} finally {
+		clearPendingProviderLogin(login);
+	}
+}
+
+async function authenticateProviderLogin(login: PendingProviderLogin): Promise<void> {
+	if (login.abortController.signal.aborted) return;
+	login.requestInFlight = true;
+	try {
+		await client().authenticateProvider(login.providerId, {
+			timeoutMs: null,
+		});
+		if (!login.abortController.signal.aborted) publishProviderLogin(login, { kind: "success" });
+	} catch (error) {
+		if (!login.abortController.signal.aborted) {
+			publishProviderLogin(login, {
+				kind: "error",
+				message: error instanceof Error ? error.message : String(error),
+			});
+		}
+	} finally {
+		clearPendingProviderLogin(login);
+	}
+}
+
+export async function startProviderLogin(
+	clientKey: string,
+	providerId: string,
+	type: "oauth" | "api_key",
+): Promise<{ loginId: string; frame: LoginFrame }> {
+	if (!providerId || providerId.includes("\0")) throw new Error("Invalid provider identifier");
+	if (type !== "oauth" && type !== "api_key") throw new Error("Invalid provider login type");
+	if (
+		providerLoginClientReservations.has(clientKey) ||
+		[...pendingProviderLogins.values()].some((login) => login.clientKey === clientKey)
+	) {
+		throw new Error("Another provider connection is already in progress");
+	}
+	if (
+		providerLoginProviderReservations.has(providerId) ||
+		[...pendingProviderLogins.values()].some((login) => login.providerId === providerId)
+	) {
+		throw new Error("A connection is already in progress for this provider");
+	}
+	providerLoginClientReservations.add(clientKey);
+	providerLoginProviderReservations.add(providerId);
+	let provider: Awaited<ReturnType<GooseClient["listProviders"]>>[number] | undefined;
+	try {
+		provider = (await client().listProviders([providerId])).find(
+			(candidate) => candidate.id === providerId,
+		);
+	} finally {
+		providerLoginClientReservations.delete(clientKey);
+		providerLoginProviderReservations.delete(providerId);
+	}
+	if (!provider) throw new Error(`Unknown provider: ${providerId}`);
+	const login: PendingProviderLogin = {
+		loginId: randomUUID(),
+		providerId,
+		clientKey,
+		type,
+		fields: [],
+		fieldIndex: 0,
+		values: [],
+		abortController: new AbortController(),
+		requestInFlight: false,
+	};
+
+	if (type === "oauth") {
+		if (!provider.configKeys.some((key) => key.oauthFlow)) {
+			throw new Error(`${provider.name} does not support native authentication`);
+		}
+		pendingProviderLogins.set(login.loginId, login);
+		armProviderLoginExpiry(login);
+		setTimeout(() => void authenticateProviderLogin(login), 0).unref?.();
+		const frame: LoginFrame = {
+			kind: "progress",
+			message: "Waiting for Goose authentication…",
+		};
+		cacheProviderLoginFrame(login, frame);
+		return {
+			loginId: login.loginId,
+			frame,
+		};
+	}
+
+	pendingProviderLogins.set(login.loginId, login);
+	armProviderLoginExpiry(login);
+	let currentFields: Awaited<ReturnType<GooseClient["providerConfig"]>>;
+	try {
+		currentFields = await client().providerConfig(providerId);
+	} catch (error) {
+		clearPendingProviderLogin(login);
+		throw error;
+	}
+	const configuredKeys = new Set(
+		currentFields.filter((field) => field.isSet).map((field) => field.key),
+	);
+	login.fields = provider.configKeys.filter(
+		(key) => !key.oauthFlow && (key.primary || key.required) && !configuredKeys.has(key.name),
+	);
+	if (login.fields.length === 0) {
+		const hasManualConfiguration = provider.configKeys.some(
+			(key) => !key.oauthFlow && (key.primary || key.required),
+		);
+		if (!hasManualConfiguration) {
+			clearPendingProviderLogin(login);
+			throw new Error(`${provider.name} does not accept provider configuration fields`);
+		}
+		setTimeout(() => void completeProviderLogin(login), 0).unref?.();
+		const frame: LoginFrame = {
+			kind: "progress",
+			message: "Checking provider configuration…",
+		};
+		cacheProviderLoginFrame(login, frame);
+		return {
+			loginId: login.loginId,
+			frame,
+		};
+	}
+	const frame = providerFieldFrame(login.fields[0] as GooseProviderConfigKey);
+	cacheProviderLoginFrame(login, frame);
+	return {
+		loginId: login.loginId,
+		frame,
+	};
+}
+
+export async function replyProviderLogin(
+	clientKey: string,
+	loginId: string,
+	value: string,
+): Promise<void> {
+	const login = pendingProviderLogins.get(loginId);
+	if (!login || login.clientKey !== clientKey || login.type !== "api_key") {
+		throw new Error("Unknown or expired provider connection");
+	}
+	const field = login.fields[login.fieldIndex];
+	if (!field) throw new Error("Provider connection is not waiting for input");
+	const submitted = field.secret ? value : value.trim();
+	const normalized = value.trim() ? submitted : field.defaultValue;
+	if (!normalized) throw new Error(`${field.name} cannot be empty`);
+	login.values.push({ key: field.name, value: normalized });
+	login.fieldIndex += 1;
+	const next = login.fields[login.fieldIndex];
+	if (next) {
+		publishProviderLogin(login, providerFieldFrame(next));
+		return;
+	}
+	await completeProviderLogin(login);
+}
+
+export function cancelProviderLogin(clientKey: string, loginId: string): void {
+	const login = pendingProviderLogins.get(loginId);
+	const snapshot = providerLoginSnapshots.get(clientKey);
+	if ((!login || login.clientKey !== clientKey) && snapshot?.push.loginId !== loginId) {
+		throw new Error("Unknown or expired provider connection");
+	}
+	if (login?.clientKey === clientKey) {
+		login.abortController.abort(new Error("Provider connection cancelled"));
+		if (!login.requestInFlight) clearPendingProviderLogin(login);
+	}
+	if (snapshot?.push.loginId === loginId) {
+		clearTimeout(snapshot.expiresTimer);
+		providerLoginSnapshots.delete(clientKey);
+	}
+}
+
+export async function logoutProvider(providerId: string): Promise<void> {
+	if (!providerId || providerId.includes("\0")) throw new Error("Invalid provider identifier");
+	await client().deleteProviderConfig(providerId);
 }
 export async function refreshAvailableModels(): Promise<{
 	models: WireModel[];
 	complete: boolean;
 }> {
+	await client().refreshProviderInventory();
 	return { models: await listAvailableModels(), complete: true };
 }
 export async function setModelVisibility(

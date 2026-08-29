@@ -17,11 +17,14 @@ import type {
 	GoosePermissionRequest,
 	GoosePromptContent,
 	GooseProvider,
+	GooseProviderConfigField,
 	GooseRecipe,
 	GooseRecipeListEntry,
 	GooseSchedule,
+	GooseScheduledJobInspection,
 	GooseSession,
 	GooseSessionInfo,
+	GooseSlashCommand,
 	GooseTool,
 	GooseUpdate,
 	GooseUsage,
@@ -296,8 +299,15 @@ export class GooseClient {
 	providerCatalog(format?: string, options?: GooseRequestOptions): Promise<unknown> {
 		return this.custom("_goose/unstable/providers/catalog/list", format ? { format } : {}, options);
 	}
-	providerConfig(providerId: string, options?: GooseRequestOptions): Promise<unknown> {
-		return this.custom("_goose/unstable/providers/config/read", { providerId }, options);
+	providerConfig(
+		providerId: string,
+		options?: GooseRequestOptions,
+	): Promise<GooseProviderConfigField[]> {
+		return this.custom<{ fields?: unknown }>(
+			"_goose/unstable/providers/config/read",
+			{ providerId },
+			options,
+		).then((response) => array(response.fields).map(normalizeProviderConfigField));
 	}
 	providerConfigStatus(
 		providerIds: string[] = [],
@@ -464,8 +474,23 @@ export class GooseClient {
 	killScheduledJob(jobId: string, options?: GooseRequestOptions): Promise<{ message: string }> {
 		return this.custom("_goose/unstable/schedules/running-job/kill", { jobId }, options);
 	}
-	inspectScheduledJob(jobId: string, options?: GooseRequestOptions): Promise<unknown> {
-		return this.custom("_goose/unstable/schedules/running-job/inspect", { jobId }, options);
+	inspectScheduledJob(
+		jobId: string,
+		options?: GooseRequestOptions,
+	): Promise<GooseScheduledJobInspection> {
+		return this.custom("_goose/unstable/schedules/running-job/inspect", { jobId }, options).then(
+			normalizeScheduledJobInspection,
+		);
+	}
+	listSlashCommands(
+		input: { sessionId?: string; cwd?: string },
+		options?: GooseRequestOptions,
+	): Promise<GooseSlashCommand[]> {
+		return this.custom<{ availableCommands?: unknown }>(
+			"_goose/unstable/slash-commands/list",
+			input,
+			options,
+		).then((response) => array(response.availableCommands).map(normalizeSlashCommand));
 	}
 	listTools(
 		sessionId: string,
@@ -490,6 +515,11 @@ export class GooseClient {
 	shutdown(): void {
 		this.#closed = true;
 		this.#dropConnection();
+	}
+
+	/** Drop a stuck transport while keeping this client reusable for the next request. */
+	resetConnection(): void {
+		if (!this.#closed) this.#dropConnection();
 	}
 
 	async #setConfig(
@@ -809,6 +839,7 @@ function normalizeProvider(value: unknown): GooseProvider {
 	const name = string(p.providerName ?? p.name) ?? requiredString(p, "providerId");
 	const description = string(p.description);
 	const defaultModel = string(p.defaultModel);
+	const lastRefreshError = string(p.lastRefreshError);
 	return {
 		id: requiredString(p, "providerId"),
 		name,
@@ -818,8 +849,36 @@ function normalizeProvider(value: unknown): GooseProvider {
 		...(defaultModel === undefined ? {} : { defaultModel }),
 		...(typeof p.supportsRefresh === "boolean" ? { supportsRefresh: p.supportsRefresh } : {}),
 		...(typeof p.refreshing === "boolean" ? { refreshing: p.refreshing } : {}),
+		...(typeof p.visibleInSetup === "boolean" ? { visibleInSetup: p.visibleInSetup } : {}),
+		...(typeof p.deprecated === "boolean" ? { deprecated: p.deprecated } : {}),
+		...(lastRefreshError === undefined ? {} : { lastRefreshError }),
+		configKeys: array(p.configKeys).map((candidate) => {
+			const key = object(candidate);
+			const defaultValue = string(key.default);
+			return {
+				name: requiredString(key, "name"),
+				required: key.required === true,
+				secret: key.secret === true,
+				...(defaultValue === undefined ? {} : { defaultValue }),
+				oauthFlow: key.oauthFlow === true,
+				deviceCodeFlow: key.deviceCodeFlow === true,
+				primary: key.primary === true,
+			};
+		}),
+		setupSteps: array(p.setupSteps).filter((step): step is string => typeof step === "string"),
 		models: array(p.models).map(normalizeModel),
 		raw: raw(value),
+	};
+}
+function normalizeProviderConfigField(value: unknown): GooseProviderConfigField {
+	const p = object(value);
+	const fieldValue = string(p.value);
+	return {
+		key: requiredString(p, "key"),
+		...(fieldValue === undefined ? {} : { value: fieldValue }),
+		isSet: p.isSet === true,
+		isSecret: p.isSecret === true,
+		required: p.required === true,
 	};
 }
 function normalizeConfigOptions(value: unknown): GooseConfigOption[] {
@@ -923,6 +982,30 @@ function normalizeSchedule(value: unknown): GooseSchedule {
 		paused: p.paused === true,
 		...(currentSessionId === undefined ? {} : { currentSessionId }),
 		...(jobStartTime === undefined ? {} : { jobStartTime }),
+		raw: raw(value),
+	};
+}
+function normalizeScheduledJobInspection(value: unknown): GooseScheduledJobInspection {
+	const p = object(value);
+	const sessionId = string(p.sessionId);
+	const jobStartTime = string(p.jobStartTime);
+	const runningDurationSeconds = number(p.runningDurationSeconds);
+	return {
+		running: p.running === true,
+		...(sessionId === undefined ? {} : { sessionId }),
+		...(jobStartTime === undefined ? {} : { jobStartTime }),
+		...(runningDurationSeconds === undefined ? {} : { runningDurationSeconds }),
+	};
+}
+function normalizeSlashCommand(value: unknown): GooseSlashCommand {
+	const p = object(value);
+	const description = string(p.description);
+	const input = object(p.input);
+	const inputHint = string(input.hint ?? input.inputHint);
+	return {
+		name: requiredString(p, "name"),
+		...(description === undefined ? {} : { description }),
+		...(inputHint === undefined ? {} : { inputHint }),
 		raw: raw(value),
 	};
 }

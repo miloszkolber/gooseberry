@@ -9,3 +9,5 @@ Browser API authentication is also disabled by default because the service binds
 Compose mounts `${GOOSEBERRY_DATA_PATH}/app` at `/var/lib/gooseberry`, `${GOOSEBERRY_DATA_PATH}/browser` at `/var/lib/gooseberry-browser`, and `${HOME}/.config/goose` read-only at `/home/goose/.config/goose`. Setup writes the Goose service environment to `$HOME/.config/goose/gooseberry.env` with mode `0600` and preserves unrelated entries. Protect `.gooseberry`, Goose configuration, and provider credentials.
 
 Projects use absolute directories that are visible through explicit read-only controller mounts. File browsing is bounded and read only. Git is observational in Gooseberry. Agents perform mutations through Goose tools.
+
+Provider setup is a same-origin WebSocket operation. Submitted API keys exist transiently in the browser and controller request, are forwarded directly to Goose ACP, are omitted from replay storage and logs, and are persisted only by Goose. OAuth and device-code values are projected from Goose without granting the browser direct access to Goose configuration. Enable controller authentication and trusted TLS before using provider setup across a network.

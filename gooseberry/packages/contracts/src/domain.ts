@@ -343,4 +343,5 @@ export interface HistorySearchResult {
 	promptTotal: number;
 	messageTotal: number;
 	indexing: boolean;
+	incomplete: boolean;
 }

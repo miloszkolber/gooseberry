@@ -13,6 +13,7 @@ Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SEC
 - Custom agents are installed as Goose agents and summoned in Goose sessions.
 - The browser capability is a lazy Goose skill backed by `gooseberry-browser`.
 - Gooseberry projects Git status and diffs, read-only files, session presentation, and Web UI state.
+- Provider setup, slash commands, history search, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state.
 
 ## Installation
 
