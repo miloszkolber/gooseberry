@@ -12,6 +12,7 @@ import type {
 	WireModel,
 } from "./agent-protocol";
 import type {
+	AgentMentionInfo,
 	AppConfig,
 	AppConfigPatch,
 	DirectoryListing,
@@ -34,7 +35,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 62;
+export const PROTOCOL_VERSION = 63;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -96,6 +97,7 @@ export const WS_METHODS = {
 	sessionSetThinkingLevel: "session.setThinkingLevel",
 	sessionGetStats: "session.getStats",
 	sessionGetCommands: "session.getCommands",
+	sessionGetAgentMentions: "session.getAgentMentions",
 	sessionGoalGet: "session.goalGet",
 	sessionGoalSet: "session.goalSet",
 	sessionGoalClear: "session.goalClear",
@@ -109,6 +111,7 @@ export const WS_METHODS = {
 	modelSetVisibility: "model.setVisibility",
 	modelSetAllVisibility: "model.setAllVisibility",
 	providerStatus: "provider.status",
+	providerReadiness: "provider.readiness",
 	providerLoginStart: "provider.loginStart",
 	providerLoginReply: "provider.loginReply",
 	providerLoginCancel: "provider.loginCancel",
@@ -245,6 +248,10 @@ export interface WsMethodMap {
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };
 	"session.getCommands": { params: { sessionId: string }; result: SlashCommandInfo[] };
+	"session.getAgentMentions": {
+		params: { projectId: string; sessionId: string };
+		result: AgentMentionInfo[];
+	};
 	"session.goalGet": {
 		params: { projectId: string; sessionId: string };
 		result: SessionGoal;
@@ -288,6 +295,10 @@ export interface WsMethodMap {
 		result: WireModel[];
 	};
 	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
+	"provider.readiness": {
+		params: { providerId: string };
+		result: { providerId: string; ready: boolean; hasIssue: boolean };
+	};
 	"provider.loginStart": {
 		params: { providerId: string; type?: "oauth" | "api_key" };
 		result: { loginId: string; frame: LoginFrame };

@@ -56,10 +56,30 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(62);
+	expect(PROTOCOL_VERSION).toBe(63);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");
 	expect(JSON.stringify(catalog)).not.toContain("raw");
 	expect(JSON.stringify(catalog)).not.toContain("warning text");
+});
+
+test("agent mentions and provider readiness use browser-safe typed protocol surfaces", () => {
+	const mentions: WsResult<"session.getAgentMentions"> = [
+		{
+			name: "Reviewer",
+			description: "Review the change",
+			sourceType: "agent",
+			mention: "@reviewer",
+		},
+	];
+	const readiness: WsResult<"provider.readiness"> = {
+		providerId: "openai",
+		ready: false,
+		hasIssue: true,
+	};
+	expect(WS_METHODS.sessionGetAgentMentions).toBe("session.getAgentMentions");
+	expect(WS_METHODS.providerReadiness).toBe("provider.readiness");
+	expect(JSON.stringify(mentions)).not.toContain("sourcePath");
+	expect(JSON.stringify(readiness)).not.toContain("error");
 });

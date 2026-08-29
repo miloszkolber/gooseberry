@@ -15,6 +15,7 @@ import {
 	addSessionExtension,
 	archiveSession,
 	cancelProviderLogin,
+	checkProviderReadiness,
 	clampSessionThinkingLevel,
 	createSession,
 	deleteSession,
@@ -23,6 +24,7 @@ import {
 	forkSession,
 	getCommandsForCwd,
 	getDefaultModel,
+	getSessionAgentMentions,
 	getSessionCommands,
 	getSessionCwd,
 	getSessionMessages,
@@ -321,6 +323,11 @@ const handlers: Record<string, Handler> = {
 	"session.getStats": (params) => getSessionStats((params as { sessionId: string }).sessionId),
 	"session.getCommands": (params) =>
 		getSessionCommands((params as { sessionId: string }).sessionId),
+	"session.getAgentMentions": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		await authorizeSession(value.projectId, value.sessionId);
+		return getSessionAgentMentions(value.sessionId as string);
+	},
 	"session.list": (params) => {
 		const value = params as { projectId?: unknown; archived?: unknown };
 		if (
@@ -369,6 +376,17 @@ const handlers: Record<string, Handler> = {
 	"model.setAllVisibility": (params) =>
 		setAllModelVisibility((params as { hidden: boolean }).hidden === true),
 	"provider.status": () => listProviderStatus(),
+	"provider.readiness": (params) => {
+		const value = params as { providerId?: unknown };
+		if (
+			typeof value.providerId !== "string" ||
+			!value.providerId.trim() ||
+			value.providerId.includes("\0")
+		) {
+			throw new Error("Malformed provider readiness request");
+		}
+		return checkProviderReadiness(value.providerId.trim());
+	},
 	"provider.loginStart": (params, ctx) => {
 		const value = params as { providerId: string; type?: "oauth" | "api_key" };
 		return startProviderLogin(ctx.clientKey, value.providerId, value.type ?? "oauth");

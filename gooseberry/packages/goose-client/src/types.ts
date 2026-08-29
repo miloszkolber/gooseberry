@@ -101,9 +101,49 @@ export interface GooseModel {
 	providerId?: string;
 	family?: string;
 	contextLimit?: number;
+	maxOutputTokens?: number;
 	reasoning?: boolean;
 	recommended?: boolean;
 	modalities?: readonly string[];
+	raw: JsonValue;
+}
+
+/** Exact safe fields returned by Goose's canonical bundled model registry. */
+export interface GooseCanonicalModelInfo {
+	provider: string;
+	model: string;
+	contextLimit: number;
+	maxOutputTokens?: number;
+	reasoning: boolean;
+	inputTokenCost?: number;
+	outputTokenCost?: number;
+	cacheReadTokenCost?: number;
+	cacheWriteTokenCost?: number;
+	currency: string;
+}
+
+export interface GooseProviderReadiness {
+	providerId: string;
+	ready: boolean;
+	/** Whether Goose reported a non-null readiness issue. Its text is never retained. */
+	hasIssue: boolean;
+}
+
+export type GooseAgentMentionSourceType =
+	| "skill"
+	| "builtinSkill"
+	| "recipe"
+	| "subrecipe"
+	| "agent"
+	| "project";
+
+/** Raw and source path remain available only to the controller. */
+export interface GooseAgentMention {
+	name: string;
+	description: string;
+	sourceType: GooseAgentMentionSourceType;
+	mention: string;
+	sourcePath?: string;
 	raw: JsonValue;
 }
 
@@ -118,6 +158,7 @@ export interface GooseProvider {
 	refreshing?: boolean;
 	visibleInSetup?: boolean;
 	deprecated?: boolean;
+	acp: boolean;
 	lastRefreshError?: string;
 	configKeys: readonly GooseProviderConfigKey[];
 	setupSteps: readonly string[];

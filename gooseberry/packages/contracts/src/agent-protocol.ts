@@ -65,6 +65,8 @@ export interface WireModelCostRates {
 	cacheWrite: number;
 }
 export interface WireModelCost extends WireModelCostRates {
+	/** Currency symbol reported by Goose for these per-million-token rates. */
+	currency: string;
 	tiers?: (WireModelCostRates & { inputTokensAbove: number })[];
 }
 export type WireModelCostTier = WireModelCostRates & { inputTokensAbove: number };

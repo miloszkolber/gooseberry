@@ -1,5 +1,5 @@
 import { REQUEST_IMAGE_BASE64_BUDGET, type SlashCommandInfo } from "@gooseberry/contracts";
-import { ArrowUp, ChevronUp, FileIcon, FolderIcon, History, Square, X } from "lucide-react";
+import { ArrowUp, Bot, ChevronUp, FileIcon, FolderIcon, History, Square, X } from "lucide-react";
 import {
 	type ClipboardEvent,
 	type DragEvent,
@@ -7,6 +7,7 @@ import {
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
+	useId,
 	useImperativeHandle,
 	useLayoutEffect,
 	useRef,
@@ -48,10 +49,59 @@ const STREAMING_SEND_MODES = [
 	},
 ];
 
-export interface MentionCandidate {
-	path: string;
-	name: string;
-	kind: "file" | "dir";
+export type MentionCandidate =
+	| { path: string; name: string; kind: "file" | "dir" }
+	| {
+			name: string;
+			description: string;
+			sourceType: "recipe" | "subrecipe" | "agent";
+			mention: string;
+			kind: "agent";
+	  };
+
+export function insertedMention(candidate: MentionCandidate): string {
+	return candidate.kind === "agent"
+		? candidate.mention
+		: candidate.kind === "dir"
+			? `@${candidate.path}/`
+			: `@${candidate.path}`;
+}
+
+export function agentMentionLabel(candidate: Extract<MentionCandidate, { kind: "agent" }>): string {
+	return `${candidate.sourceType} mention: ${candidate.name}. ${candidate.description}`;
+}
+
+export function agentMentionSummary(
+	candidate: Extract<MentionCandidate, { kind: "agent" }>,
+): string {
+	return `${candidate.sourceType} · ${candidate.description}`;
+}
+
+export function clampedMentionActiveIndex(activeIndex: number, candidateCount: number): number {
+	return candidateCount > 0 ? Math.min(Math.max(activeIndex, 0), candidateCount - 1) : 0;
+}
+
+export type MentionCompletionKeyAction =
+	| { type: "none" }
+	| { type: "move"; index: number }
+	| { type: "select"; index: number }
+	| { type: "dismiss" };
+
+export function mentionCompletionKeyAction(
+	key: string,
+	open: boolean,
+	activeIndex: number,
+	candidateCount: number,
+): MentionCompletionKeyAction {
+	if (!open || candidateCount === 0) return { type: "none" };
+	const visibleIndex = clampedMentionActiveIndex(activeIndex, candidateCount);
+	if (key === "ArrowDown") return { type: "move", index: (visibleIndex + 1) % candidateCount };
+	if (key === "ArrowUp") {
+		return { type: "move", index: (visibleIndex - 1 + candidateCount) % candidateCount };
+	}
+	if (key === "Enter" || key === "Tab") return { type: "select", index: visibleIndex };
+	if (key === "Escape") return { type: "dismiss" };
+	return { type: "none" };
 }
 
 interface PendingImage extends AttachedImage {
@@ -111,7 +161,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	handleRef,
 ) {
 	const ref = useRef<HTMLTextAreaElement>(null);
-	const [caret, setCaret] = useState(0);
+	const [caret, setCaret] = useState(value.length);
 	const [images, setImages] = useState<PendingImage[]>([]);
 	const imagesRef = useRef<PendingImage[]>([]);
 	const commitImages = (next: PendingImage[]) => {
@@ -134,8 +184,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		setMentionActiveIndex(0);
 		setMentionDismissed(false);
 	}, [mentionQuery]);
+	useEffect(() => {
+		setMentionActiveIndex((index) => clampedMentionActiveIndex(index, mentionCandidates.length));
+	}, [mentionCandidates.length]);
 
 	const mentionOpen = !mentionDismissed && mentionQuery !== null && mentionCandidates.length > 0;
+	const visibleMentionActiveIndex = clampedMentionActiveIndex(
+		mentionActiveIndex,
+		mentionCandidates.length,
+	);
+	const mentionListboxId = useId();
+	const slashListboxId = useId();
 
 	const [pendingSelection, setPendingSelection] = useState<{ start: number; end: number } | null>(
 		null,
@@ -185,7 +244,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const pickMention = (c: MentionCandidate) => {
 		const before = value.slice(0, start);
 		const after = value.slice(caret);
-		const insert = c.kind === "dir" ? `@${c.path}/` : `@${c.path}`;
+		const insert = insertedMention(c);
 		const suffix = c.kind === "dir" ? "" : " ";
 		replaceDraft(
 			`${before}${insert}${suffix}${after}`,
@@ -198,6 +257,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		commands,
 		onSelect: (command) => replaceDraft(selectedSlashCommandValue(command)),
 	});
+	const completionOpen = mentionOpen || slashCompletion.open;
+	const activeCompletionId = mentionOpen
+		? `${mentionListboxId}-option-${visibleMentionActiveIndex}`
+		: slashCompletion.open
+			? `${slashListboxId}-option-${slashCompletion.activeIndex}`
+			: undefined;
+	const completionListboxId = mentionOpen ? mentionListboxId : slashListboxId;
 
 	const openHistory = () => {
 		setMentionDismissed(true);
@@ -255,26 +321,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
 		if (mentionOpen) {
-			const menuLen = mentionCandidates.length;
-			if (e.key === "ArrowDown") {
+			const action = mentionCompletionKeyAction(
+				e.key,
+				mentionOpen,
+				visibleMentionActiveIndex,
+				mentionCandidates.length,
+			);
+			if (action.type !== "none") {
 				e.preventDefault();
-				setMentionActiveIndex((i) => (i + 1) % menuLen);
-				return;
-			}
-			if (e.key === "ArrowUp") {
-				e.preventDefault();
-				setMentionActiveIndex((i) => (i - 1 + menuLen) % menuLen);
-				return;
-			}
-			if (e.key === "Escape") {
-				e.preventDefault();
-				setMentionDismissed(true);
-				return;
-			}
-			if (e.key === "Enter" || e.key === "Tab") {
-				e.preventDefault();
-				const candidate = mentionCandidates[mentionActiveIndex];
-				if (candidate) pickMention(candidate);
+				if (action.type === "move") setMentionActiveIndex(action.index);
+				if (action.type === "dismiss") setMentionDismissed(true);
+				if (action.type === "select") {
+					const candidate = mentionCandidates[action.index];
+					if (candidate) pickMention(candidate);
+				}
 				return;
 			}
 		}
@@ -340,23 +400,40 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		<div className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-projectArea-bg">
 			{mentionOpen ? (
 				<div
+					id={mentionListboxId}
+					role="listbox"
 					data-testid="mention-menu"
 					className="absolute bottom-full left-sm mb-xs max-h-[40vh] w-[min(28rem,90%)] overflow-y-auto rounded-[var(--radius-md)] border border-border-default bg-container-elevated-bg p-xs shadow-[var(--shadow-md)]"
 				>
 					{mentionCandidates.map((candidate, index) => (
 						<button
-							key={candidate.path}
+							key={candidate.kind === "agent" ? candidate.mention : candidate.path}
+							id={`${mentionListboxId}-option-${index}`}
+							role="option"
+							aria-selected={index === visibleMentionActiveIndex}
 							type="button"
 							data-testid="mention-item"
+							aria-label={candidate.kind === "agent" ? agentMentionLabel(candidate) : undefined}
 							onClick={() => pickMention(candidate)}
-							className={`flex w-full items-center gap-sm rounded-[var(--radius-sm)] px-sm py-xs text-left tr-text-ui ${index === mentionActiveIndex ? "bg-control-bg-selected text-text-default" : "text-text-muted"}`}
+							className={`flex w-full items-center gap-sm rounded-[var(--radius-sm)] px-sm py-xs text-left tr-text-ui ${index === visibleMentionActiveIndex ? "bg-control-bg-selected text-text-default" : "text-text-muted"}`}
 						>
-							{candidate.kind === "dir" ? (
+							{candidate.kind === "agent" ? (
+								<Bot className="size-3.5 shrink-0" />
+							) : candidate.kind === "dir" ? (
 								<FolderIcon className="size-3.5 shrink-0" />
 							) : (
 								<FileIcon className="size-3.5 shrink-0" />
 							)}
-							<span className="truncate">{candidate.path}</span>
+							{candidate.kind === "agent" ? (
+								<span className="min-w-0">
+									<span className="block truncate">{candidate.name}</span>
+									<span className="block truncate text-text-muted tr-text-metadata">
+										{agentMentionSummary(candidate)}
+									</span>
+								</span>
+							) : (
+								<span className="truncate">{candidate.path}</span>
+							)}
 						</button>
 					))}
 				</div>
@@ -366,6 +443,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					activeIndex={slashCompletion.activeIndex}
 					onSelect={slashCompletion.pick}
 					className="absolute bottom-full left-sm mb-xs"
+					listboxId={slashListboxId}
 				/>
 			) : null}
 
@@ -432,6 +510,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					<textarea
 						ref={ref}
 						data-testid="chat-input"
+						role="combobox"
+						aria-autocomplete="list"
+						aria-expanded={completionOpen}
+						aria-controls={completionOpen ? completionListboxId : undefined}
+						aria-activedescendant={activeCompletionId}
 						value={value}
 						onChange={(e) => {
 							const next = e.target.value;

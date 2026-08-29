@@ -2,7 +2,7 @@ import type {
 	ProviderStatus,
 	ProviderStatusReport,
 	WireModel,
-	WireModelCostRates,
+	WireModelCost,
 	WireModelCostTier,
 } from "@gooseberry/contracts";
 import { BrainCircuit, Eye, EyeOff, Image, RefreshCw, Search, Type } from "lucide-react";
@@ -24,25 +24,25 @@ export function formatTokenCount(value: number): string {
 	return String(value);
 }
 
-export function formatModelPrice(value: number): string {
+export function formatModelPrice(value: number, currency = "$"): string {
 	if (!Number.isFinite(value) || value < 0) return "—";
-	if (value === 0) return "$0";
-	if (value < 0.01) return `$${value.toFixed(4)}`;
-	if (value < 1) return `$${value.toFixed(2)}`;
-	return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+	if (value === 0) return `${currency}0`;
+	if (value < 0.01) return `${currency}${value.toFixed(4)}`;
+	if (value < 1) return `${currency}${value.toFixed(2)}`;
+	return `${currency}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-function rateText(rates: WireModelCostRates): string {
-	return `In ${formatModelPrice(rates.input)} · Out ${formatModelPrice(rates.output)}`;
+function rateText(rates: WireModelCost): string {
+	return `In ${formatModelPrice(rates.input, rates.currency)} · Out ${formatModelPrice(rates.output, rates.currency)}`;
 }
 
-function cacheText(rates: WireModelCostRates): string | null {
+function cacheText(rates: WireModelCost): string | null {
 	if (rates.cacheRead === 0 && rates.cacheWrite === 0) return null;
-	return `Cache read ${formatModelPrice(rates.cacheRead)} · write ${formatModelPrice(rates.cacheWrite)}`;
+	return `Cache read ${formatModelPrice(rates.cacheRead, rates.currency)} · write ${formatModelPrice(rates.cacheWrite, rates.currency)}`;
 }
 
-function tierText(tier: WireModelCostTier): string {
-	return `Over ${formatTokenCount(tier.inputTokensAbove)} input: ${rateText(tier)}`;
+function tierText(tier: WireModelCostTier, currency: string): string {
+	return `Over ${formatTokenCount(tier.inputTokensAbove)} input: In ${formatModelPrice(tier.input, currency)} · Out ${formatModelPrice(tier.output, currency)}`;
 }
 
 function providerName(provider: string, providers: ReadonlyMap<string, ProviderStatus>): string {
@@ -343,7 +343,7 @@ export function ModelRow({
 				{cache ? <span className="text-text-muted tr-text-metadata">{cache}</span> : null}
 				{model.cost?.tiers?.map((tier) => (
 					<span key={tier.inputTokensAbove} className="text-text-muted tr-text-metadata">
-						{tierText(tier)}
+						{tierText(tier, model.cost?.currency ?? "")}
 					</span>
 				))}
 			</div>

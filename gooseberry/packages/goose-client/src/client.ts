@@ -4,6 +4,8 @@ import {
 	type WebSocketConstructor,
 } from "@agentclientprotocol/sdk/experimental/ws-client";
 import type {
+	GooseAgentMention,
+	GooseCanonicalModelInfo,
 	GooseClientEvent,
 	GooseConfigOption,
 	GooseConfiguredExtension,
@@ -20,6 +22,7 @@ import type {
 	GoosePromptContent,
 	GooseProvider,
 	GooseProviderConfigField,
+	GooseProviderReadiness,
 	GooseRecipe,
 	GooseRecipeListEntry,
 	GooseSchedule,
@@ -313,6 +316,60 @@ export class GooseClient {
 					: normalizeModel(model),
 			),
 		);
+	}
+	async canonicalModelInfo(
+		provider: string,
+		model: string,
+		options?: GooseRequestOptions,
+	): Promise<GooseCanonicalModelInfo | null> {
+		const response = object(
+			await this.custom(
+				"_goose/unstable/providers/canonical-model-info",
+				{ provider, model },
+				options,
+			),
+		);
+		if (response.modelInfo === null || response.modelInfo === undefined) return null;
+		return normalizeCanonicalModelInfo(response.modelInfo, provider, model);
+	}
+	async checkProviderReadiness(
+		providerId: string,
+		options?: GooseRequestOptions,
+	): Promise<GooseProviderReadiness> {
+		const response = object(
+			await this.custom("_goose/unstable/providers/readiness/check", { providerId }, options),
+		);
+		if (requiredString(response, "providerId") !== providerId) {
+			throw new Error("Goose readiness response providerId does not match the request");
+		}
+		if (typeof response.ready !== "boolean") {
+			throw new Error("Goose readiness response is missing ready");
+		}
+		if (
+			response.error !== undefined &&
+			response.error !== null &&
+			typeof response.error !== "string"
+		) {
+			throw new Error("Goose readiness response has an invalid error");
+		}
+		return {
+			providerId,
+			ready: response.ready,
+			hasIssue: typeof response.error === "string",
+		};
+	}
+	listAgentMentions(
+		input: { cwd?: string | null; sessionId?: string | null },
+		options?: GooseRequestOptions,
+	): Promise<GooseAgentMention[]> {
+		return this.custom<{ agents?: unknown }>(
+			"_goose/unstable/agent-mentions/list",
+			input,
+			options,
+		).then((response) => {
+			if (!Array.isArray(response.agents)) throw new Error("Goose response is missing agents");
+			return response.agents.map(normalizeAgentMention);
+		});
 	}
 	providerCatalog(format?: string, options?: GooseRequestOptions): Promise<unknown> {
 		return this.custom("_goose/unstable/providers/catalog/list", format ? { format } : {}, options);
@@ -878,6 +935,30 @@ function string(value: unknown): string | undefined {
 function number(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
+function requiredBoolean(value: Record<string, unknown>, key: string): boolean {
+	if (typeof value[key] !== "boolean") throw new Error(`Goose response is missing ${key}`);
+	return value[key];
+}
+function requiredNonnegativeInteger(value: Record<string, unknown>, key: string): number {
+	const result = value[key];
+	if (typeof result !== "number" || !Number.isSafeInteger(result) || result < 0) {
+		throw new Error(`Goose response has an invalid ${key}`);
+	}
+	return result;
+}
+function nullableNonnegativeInteger(
+	value: Record<string, unknown>,
+	key: string,
+): number | undefined {
+	if (value[key] === undefined || value[key] === null) return undefined;
+	return requiredNonnegativeInteger(value, key);
+}
+function nullableFiniteNumber(value: Record<string, unknown>, key: string): number | undefined {
+	if (value[key] === undefined || value[key] === null) return undefined;
+	const result = number(value[key]);
+	if (result === undefined) throw new Error(`Goose response has an invalid ${key}`);
+	return result;
+}
 function requiredString(value: unknown, key: string): string {
 	const result = string(object(value)[key]);
 	if (!result) throw new Error(`Goose response is missing ${key}`);
@@ -935,6 +1016,7 @@ function normalizeModel(value: unknown): GooseModel {
 	const providerId = string(p.providerId);
 	const family = string(p.family);
 	const contextLimit = number(p.contextLimit);
+	const maxOutputTokens = number(p.maxOutputTokens);
 	const modalities = array(p.modalities ?? p.input).filter(
 		(x): x is string => typeof x === "string",
 	);
@@ -944,6 +1026,7 @@ function normalizeModel(value: unknown): GooseModel {
 		...(providerId === undefined ? {} : { providerId }),
 		...(family === undefined ? {} : { family }),
 		...(contextLimit === undefined ? {} : { contextLimit }),
+		...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
 		...(typeof p.reasoning === "boolean" ? { reasoning: p.reasoning } : {}),
 		...(typeof p.recommended === "boolean" ? { recommended: p.recommended } : {}),
 		...(modalities.length ? { modalities } : {}),
@@ -967,6 +1050,7 @@ function normalizeProvider(value: unknown): GooseProvider {
 		...(typeof p.refreshing === "boolean" ? { refreshing: p.refreshing } : {}),
 		...(typeof p.visibleInSetup === "boolean" ? { visibleInSetup: p.visibleInSetup } : {}),
 		...(typeof p.deprecated === "boolean" ? { deprecated: p.deprecated } : {}),
+		acp: p.acp === true,
 		...(lastRefreshError === undefined ? {} : { lastRefreshError }),
 		configKeys: array(p.configKeys).map((candidate) => {
 			const key = object(candidate);
@@ -983,6 +1067,66 @@ function normalizeProvider(value: unknown): GooseProvider {
 		}),
 		setupSteps: array(p.setupSteps).filter((step): step is string => typeof step === "string"),
 		models: array(p.models).map(normalizeModel),
+		raw: raw(value),
+	};
+}
+function normalizeCanonicalModelInfo(
+	value: unknown,
+	expectedProvider: string,
+	expectedModel: string,
+): GooseCanonicalModelInfo {
+	const p = object(value);
+	const provider = requiredString(p, "provider");
+	const model = requiredString(p, "model");
+	if (provider !== expectedProvider || model !== expectedModel) {
+		throw new Error("Goose canonical model response does not match the request");
+	}
+	const currency = requiredString(p, "currency");
+	const maxOutputTokens = nullableNonnegativeInteger(p, "maxOutputTokens");
+	return {
+		provider,
+		model,
+		contextLimit: requiredNonnegativeInteger(p, "contextLimit"),
+		reasoning: requiredBoolean(p, "reasoning"),
+		...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+		...optionalCanonicalCosts(p),
+		currency,
+	};
+}
+function optionalCanonicalCosts(value: Record<string, unknown>): Partial<GooseCanonicalModelInfo> {
+	const inputTokenCost = nullableFiniteNumber(value, "inputTokenCost");
+	const outputTokenCost = nullableFiniteNumber(value, "outputTokenCost");
+	const cacheReadTokenCost = nullableFiniteNumber(value, "cacheReadTokenCost");
+	const cacheWriteTokenCost = nullableFiniteNumber(value, "cacheWriteTokenCost");
+	return {
+		...(inputTokenCost === undefined ? {} : { inputTokenCost }),
+		...(outputTokenCost === undefined ? {} : { outputTokenCost }),
+		...(cacheReadTokenCost === undefined ? {} : { cacheReadTokenCost }),
+		...(cacheWriteTokenCost === undefined ? {} : { cacheWriteTokenCost }),
+	};
+}
+function normalizeAgentMention(value: unknown): GooseAgentMention {
+	const p = object(value);
+	const sourceType = p.sourceType;
+	if (
+		sourceType !== "skill" &&
+		sourceType !== "builtinSkill" &&
+		sourceType !== "recipe" &&
+		sourceType !== "subrecipe" &&
+		sourceType !== "agent" &&
+		sourceType !== "project"
+	) {
+		throw new Error("Goose agent mention has an unsupported sourceType");
+	}
+	if (p.sourcePath !== undefined && p.sourcePath !== null && typeof p.sourcePath !== "string") {
+		throw new Error("Goose agent mention has an invalid sourcePath");
+	}
+	return {
+		name: requiredString(p, "name"),
+		description: requiredString(p, "description"),
+		sourceType,
+		mention: requiredString(p, "mention"),
+		...(typeof p.sourcePath === "string" ? { sourcePath: p.sourcePath } : {}),
 		raw: raw(value),
 	};
 }

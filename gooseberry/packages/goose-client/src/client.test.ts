@@ -410,6 +410,7 @@ test("preserves Goose v1.48 session run updates, provider inventory, and recipe 
 				providerName: "OpenAI",
 				configured: true,
 				available: false,
+				acp: true,
 				visibleInSetup: true,
 				configKeys: [
 					{
@@ -441,6 +442,7 @@ test("preserves Goose v1.48 session run updates, provider inventory, and recipe 
 			id: "openai",
 			configured: true,
 			available: false,
+			acp: true,
 			visibleInSetup: true,
 			configKeys: [{ name: "OPENAI_API_KEY", required: true, secret: true, primary: true }],
 			models: [{ id: "o3", reasoning: true, contextLimit: 200000 }],
@@ -568,6 +570,104 @@ test("dispatches raw Goose custom methods without exposing ACP objects", async (
 	const fixture = fake();
 	await fixture.client.custom("_goose/unstable/recipes/list", {});
 	expect(fixture.connection.calls.at(-1)?.method).toBe("_goose/unstable/recipes/list");
+});
+
+test("uses the pinned canonical metadata, readiness, and agent mention methods with strict safe normalization", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("_goose/unstable/providers/canonical-model-info", {
+		modelInfo: {
+			provider: "openai",
+			model: "gpt-next",
+			contextLimit: 200_000,
+			maxOutputTokens: null,
+			reasoning: true,
+			inputTokenCost: 2.5,
+			outputTokenCost: 10,
+			cacheReadTokenCost: null,
+			cacheWriteTokenCost: 1.25,
+			currency: "€",
+		},
+	});
+	fixture.connection.setResponse("_goose/unstable/providers/readiness/check", {
+		providerId: "openai",
+		ready: false,
+		error: "private upstream diagnostic",
+	});
+	fixture.connection.setResponse("_goose/unstable/agent-mentions/list", {
+		agents: [
+			{
+				name: "Reviewer",
+				description: "Review the change",
+				sourceType: "agent",
+				sourcePath: "/private/goose/agents/reviewer.yaml",
+				mention: "@reviewer",
+			},
+		],
+	});
+	expect(await fixture.client.canonicalModelInfo("openai", "gpt-next")).toEqual({
+		provider: "openai",
+		model: "gpt-next",
+		contextLimit: 200_000,
+		reasoning: true,
+		inputTokenCost: 2.5,
+		outputTokenCost: 10,
+		cacheWriteTokenCost: 1.25,
+		currency: "€",
+	});
+	expect(await fixture.client.checkProviderReadiness("openai")).toEqual({
+		providerId: "openai",
+		ready: false,
+		hasIssue: true,
+	});
+	expect(
+		await fixture.client.listAgentMentions({ cwd: "/workspace", sessionId: "session-1" }),
+	).toMatchObject([
+		{
+			name: "Reviewer",
+			sourceType: "agent",
+			mention: "@reviewer",
+			sourcePath: "/private/goose/agents/reviewer.yaml",
+		},
+	]);
+	expect(fixture.connection.calls.slice(-3)).toEqual([
+		{
+			method: "_goose/unstable/providers/canonical-model-info",
+			params: { provider: "openai", model: "gpt-next" },
+		},
+		{
+			method: "_goose/unstable/providers/readiness/check",
+			params: { providerId: "openai" },
+		},
+		{
+			method: "_goose/unstable/agent-mentions/list",
+			params: { cwd: "/workspace", sessionId: "session-1" },
+		},
+	]);
+});
+
+test("rejects canonical metadata and readiness responses that do not match their requests", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("_goose/unstable/providers/canonical-model-info", {
+		modelInfo: {
+			provider: "other",
+			model: "gpt-next",
+			contextLimit: 1,
+			reasoning: false,
+			currency: "$",
+		},
+	});
+	await expect(fixture.client.canonicalModelInfo("openai", "gpt-next")).rejects.toThrow("match");
+	fixture.connection.setResponse("_goose/unstable/providers/readiness/check", {
+		providerId: "other",
+		ready: true,
+	});
+	await expect(fixture.client.checkProviderReadiness("openai")).rejects.toThrow("providerId");
+	fixture.connection.setResponse("_goose/unstable/agent-mentions/list", {
+		agents: [{ name: "Bad", description: "Bad", sourceType: "unexpected", mention: "@bad" }],
+	});
+	await expect(fixture.client.listAgentMentions({})).rejects.toThrow("sourceType");
 });
 
 test("uses the pinned extension methods, preserves raw server-side, and normalizes safe identities", async () => {

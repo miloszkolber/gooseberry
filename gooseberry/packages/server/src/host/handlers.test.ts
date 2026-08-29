@@ -130,6 +130,21 @@ test("session extension and tool methods require a recorded project session befo
 			context,
 		),
 	).rejects.toThrow("Unknown session");
+	await expect(
+		handleRequest(
+			"session.getAgentMentions",
+			{ projectId: "p1", sessionId: "not-recorded" },
+			context,
+		),
+	).rejects.toThrow("Unknown session");
+});
+
+test("provider readiness rejects malformed identifiers before reaching Goose", async () => {
+	for (const providerId of [undefined, 1, "", "   ", "openai\0private"] as const) {
+		await expect(handleRequest("provider.readiness", { providerId }, context)).rejects.toThrow(
+			"Malformed provider readiness request",
+		);
+	}
 });
 
 test("settings expose model visibility and optional Signet configuration", async () => {
