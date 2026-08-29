@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	type AgentEvent,
 	type AgentMentionInfo,
@@ -7,9 +7,12 @@ import {
 	type AskUserQuestionArgs,
 	type AskUserQuestionResult,
 	type AssistantMessage,
+	type GooseAgentCatalogEntry,
 	type GooseConfiguredExtensionSummary,
 	type GooseExtensionCatalog,
 	type GooseExtensionSummary,
+	type GoosePreferences,
+	type GooseProviderDefaults,
 	type GooseToolPermission,
 	type GooseToolSummary,
 	type HistoryScope,
@@ -34,6 +37,7 @@ import {
 	type WireModel,
 } from "@gooseberry/contracts";
 import {
+	type GooseAgentSource,
 	GooseClient,
 	type GooseClientEvent,
 	type GooseConfigOption,
@@ -2304,6 +2308,7 @@ export function disposeAllSessions(): void {
 	sessionAdministrationMutations.clear();
 	globalToolPermissionMutations.clear();
 	globalExtensionMutation = false;
+	agentMutationTail = Promise.resolve();
 	archivingSessions.clear();
 	forkingSessions.clear();
 	sessions.clear();
@@ -2524,10 +2529,12 @@ export async function listProviderStatus(): Promise<
 					(key) => !key.oauthFlow && (key.primary || key.required),
 				);
 				const configured = provider.configured === true;
+				const available = provider.available !== false;
 				return {
 					id: provider.id,
 					name: provider.name ?? provider.id,
 					configured,
+					available,
 					kind: configured
 						? ("other" as const)
 						: canOAuth
@@ -2537,7 +2544,7 @@ export async function listProviderStatus(): Promise<
 								: ("other" as const),
 					...(provider.lastRefreshError
 						? { detail: provider.lastRefreshError }
-						: provider.available === false
+						: !available
 							? { detail: "Provider runtime is unavailable" }
 							: {}),
 					canOAuth,
@@ -2545,8 +2552,7 @@ export async function listProviderStatus(): Promise<
 					canLogout: configured && provider.configKeys.length > 0,
 					acp: provider.acp,
 					modelCount: provider.models.length,
-					availableModelCount:
-						!configured || provider.available === false ? 0 : provider.models.length,
+					availableModelCount: !configured || !available ? 0 : provider.models.length,
 				};
 			}),
 	};
@@ -2857,6 +2863,241 @@ export async function getDefaultModel(): Promise<{
 		(await listAvailableModels()).find((candidate) => candidate.available && !candidate.hidden) ??
 		null;
 	return { model, thinkingLevel: "off" };
+}
+
+const AGENT_NAME_MAX_BYTES = 80;
+const AGENT_DESCRIPTION_MAX_BYTES = 1_000;
+const AGENT_INSTRUCTIONS_MAX_BYTES = 64 * 1024;
+const AGENT_MODEL_MAX_BYTES = 256;
+const AGENT_CATALOG_MAX_ENTRIES = 100;
+let agentMutationTail: Promise<void> = Promise.resolve();
+
+async function withAgentMutation<T>(operation: () => Promise<T>): Promise<T> {
+	let release!: () => void;
+	const previous = agentMutationTail;
+	agentMutationTail = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await previous;
+	try {
+		return await operation();
+	} finally {
+		release();
+	}
+}
+
+function agentText(value: unknown, label: string, maxBytes: number, allowEmpty = false): string {
+	if (typeof value !== "string") throw new Error(`Agent ${label} must be text`);
+	const text = value.trim();
+	if ((!allowEmpty && !text) || text.includes("\0") || Buffer.byteLength(text, "utf8") > maxBytes) {
+		throw new Error(`Agent ${label} is invalid`);
+	}
+	return text;
+}
+
+function agentName(value: unknown): string {
+	const name = agentText(value, "name", AGENT_NAME_MAX_BYTES);
+	if (name.includes("/") || name.includes("\\")) throw new Error("Agent name is invalid");
+	return name;
+}
+
+function agentModelId(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	return agentText(value, "model", AGENT_MODEL_MAX_BYTES);
+}
+
+function opaqueAgentId(source: GooseAgentSource): string {
+	return createHash("sha256")
+		.update(`agent\0${source.global ? "global" : "project"}\0${source.path}`)
+		.digest("base64url");
+}
+
+function projectAgentSource(source: GooseAgentSource): GooseAgentCatalogEntry | null {
+	if (source.properties.kind === "check") return null;
+	try {
+		const instructions = agentText(
+			source.content,
+			"instructions",
+			AGENT_INSTRUCTIONS_MAX_BYTES,
+			true,
+		);
+		let modelId: string | undefined;
+		try {
+			modelId = agentModelId(source.properties.model);
+		} catch {
+			// Unsupported source metadata must not hide an otherwise editable agent.
+		}
+		return {
+			id: opaqueAgentId(source),
+			name: agentName(source.name),
+			description: agentText(source.description, "description", AGENT_DESCRIPTION_MAX_BYTES, true),
+			instructions,
+			scope: source.global ? "global" : "project",
+			writable: source.writable,
+			...(modelId === undefined ? {} : { modelId }),
+		};
+	} catch {
+		return null;
+	}
+}
+
+async function assertValidProviderDefault(defaults: GooseProviderDefaults): Promise<void> {
+	if (!defaults.providerId) throw new Error("Default provider is required");
+	const provider = (await client().listProviders()).find(
+		(candidate) => candidate.id === defaults.providerId,
+	);
+	if (provider?.configured !== true || provider.available === false) {
+		throw new Error("Selected default provider is unavailable");
+	}
+}
+
+export async function readGoosePreferences(): Promise<GoosePreferences> {
+	return safeGooseAdministrationRequest("Couldn't load Goose preferences", () =>
+		client().readPreferences(),
+	);
+}
+
+export async function saveGoosePreferences(
+	preferences: GoosePreferences,
+): Promise<GoosePreferences> {
+	return safeGooseAdministrationRequest("Couldn't save Goose preferences", async () => {
+		await client().savePreferences(preferences);
+		return client().readPreferences();
+	});
+}
+
+export async function resetGoosePreferences(
+	keys: ("autoCompactThreshold" | "gooseThinkingEffort")[],
+): Promise<GoosePreferences> {
+	return safeGooseAdministrationRequest("Couldn't reset Goose preferences", async () => {
+		await client().removePreferences(keys);
+		return client().readPreferences();
+	});
+}
+
+export async function readGooseProviderDefaults(): Promise<GooseProviderDefaults> {
+	return safeGooseAdministrationRequest("Couldn't load Goose defaults", () =>
+		client().readProviderDefaults(),
+	);
+}
+
+export async function saveGooseProviderDefaults(
+	defaults: GooseProviderDefaults,
+): Promise<GooseProviderDefaults> {
+	return safeGooseAdministrationRequest("Couldn't save Goose defaults", async () => {
+		await assertValidProviderDefault(defaults);
+		return client().saveProviderDefaults(defaults);
+	});
+}
+
+export async function clearGooseProviderDefaults(): Promise<GooseProviderDefaults> {
+	return safeGooseAdministrationRequest("Couldn't clear Goose defaults", () =>
+		client().clearProviderDefaults(),
+	);
+}
+
+async function freshAgentSources(projectDir?: string): Promise<GooseAgentSource[]> {
+	return safeGooseAdministrationRequest("Couldn't load Goose agents", () =>
+		client().listAgentSources(projectDir),
+	);
+}
+
+export async function listGooseAgents(projectDir?: string): Promise<GooseAgentCatalogEntry[]> {
+	return (await freshAgentSources(projectDir))
+		.flatMap((source) => {
+			const entry = projectAgentSource(source);
+			return entry ? [entry] : [];
+		})
+		.slice(0, AGENT_CATALOG_MAX_ENTRIES);
+}
+
+async function resolveWritableAgent(id: string, projectDir?: string): Promise<GooseAgentSource> {
+	const source = (await freshAgentSources(projectDir)).find(
+		(candidate) => opaqueAgentId(candidate) === id && candidate.properties.kind !== "check",
+	);
+	if (!source?.writable) throw new Error("Agent is unavailable or read-only");
+	return source;
+}
+
+export async function createGooseAgent(input: {
+	name: unknown;
+	description: unknown;
+	instructions: unknown;
+	scope: "global" | "project";
+	projectDir?: string;
+	modelId?: unknown;
+}): Promise<GooseAgentCatalogEntry> {
+	const name = agentName(input.name);
+	const description = agentText(
+		input.description,
+		"description",
+		AGENT_DESCRIPTION_MAX_BYTES,
+		true,
+	);
+	const content = agentText(input.instructions, "instructions", AGENT_INSTRUCTIONS_MAX_BYTES, true);
+	const modelId = agentModelId(input.modelId);
+	if ((input.scope === "project") !== Boolean(input.projectDir))
+		throw new Error("Invalid agent scope");
+	return withAgentMutation(() =>
+		safeGooseAdministrationRequest("Couldn't create Goose agent", async () => {
+			const source = await client().createAgentSource({
+				name,
+				description,
+				content,
+				target:
+					input.scope === "global"
+						? { scope: "global" }
+						: { scope: "projectDir", projectDir: input.projectDir as string },
+				...(modelId === undefined ? {} : { properties: { model: modelId } }),
+			});
+			const result = projectAgentSource(source);
+			if (!result) throw new Error("Goose returned an invalid agent");
+			return result;
+		}),
+	);
+}
+
+export async function updateGooseAgent(input: {
+	id: unknown;
+	name: unknown;
+	description: unknown;
+	instructions: unknown;
+	projectDir?: string;
+	modelId?: unknown;
+}): Promise<GooseAgentCatalogEntry> {
+	const id = agentText(input.id, "identifier", 128);
+	const modelChanged = Object.hasOwn(input, "modelId");
+	return withAgentMutation(() =>
+		safeGooseAdministrationRequest("Couldn't update Goose agent", async () => {
+			const source = await resolveWritableAgent(id, input.projectDir);
+			const modelId = input.modelId === null ? undefined : agentModelId(input.modelId);
+			const properties = modelChanged ? { ...source.properties } : undefined;
+			if (properties) {
+				if (modelId === undefined) delete properties.model;
+				else properties.model = modelId;
+			}
+			const updated = await client().updateAgentSource({
+				path: source.path,
+				name: agentName(input.name),
+				description: agentText(input.description, "description", AGENT_DESCRIPTION_MAX_BYTES, true),
+				content: agentText(input.instructions, "instructions", AGENT_INSTRUCTIONS_MAX_BYTES, true),
+				...(properties ? { properties } : {}),
+			});
+			const result = projectAgentSource(updated);
+			if (!result) throw new Error("Goose returned an invalid agent");
+			return result;
+		}),
+	);
+}
+
+export async function deleteGooseAgent(id: unknown, projectDir?: string): Promise<void> {
+	const identifier = agentText(id, "identifier", 128);
+	await withAgentMutation(() =>
+		safeGooseAdministrationRequest("Couldn't remove Goose agent", async () => {
+			const source = await resolveWritableAgent(identifier, projectDir);
+			await client().deleteAgentSource(source.path);
+		}),
+	);
 }
 
 export const gooseRecipes = () => client();

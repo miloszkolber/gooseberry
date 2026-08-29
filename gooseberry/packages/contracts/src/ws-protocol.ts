@@ -21,8 +21,11 @@ import type {
 	GitDiffFile,
 	GitDiffScope,
 	GitRepository,
+	GooseAgentCatalogEntry,
 	GooseExtensionCatalog,
 	GooseExtensionSummary,
+	GoosePreferences,
+	GooseProviderDefaults,
 	GooseToolPermission,
 	GooseToolSummary,
 	HistoryScope,
@@ -35,7 +38,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 63;
+export const PROTOCOL_VERSION = 64;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -110,6 +113,16 @@ export const WS_METHODS = {
 	modelClampThinking: "model.clampThinking",
 	modelSetVisibility: "model.setVisibility",
 	modelSetAllVisibility: "model.setAllVisibility",
+	goosePreferencesRead: "goose.preferencesRead",
+	goosePreferencesSave: "goose.preferencesSave",
+	goosePreferencesReset: "goose.preferencesReset",
+	gooseDefaultsRead: "goose.defaultsRead",
+	gooseDefaultsSave: "goose.defaultsSave",
+	gooseDefaultsClear: "goose.defaultsClear",
+	gooseAgentList: "goose.agentList",
+	gooseAgentCreate: "goose.agentCreate",
+	gooseAgentUpdate: "goose.agentUpdate",
+	gooseAgentDelete: "goose.agentDelete",
 	providerStatus: "provider.status",
 	providerReadiness: "provider.readiness",
 	providerLoginStart: "provider.loginStart",
@@ -293,6 +306,50 @@ export interface WsMethodMap {
 	"model.setAllVisibility": {
 		params: { hidden: boolean };
 		result: WireModel[];
+	};
+	"goose.preferencesRead": { params: Record<string, never>; result: GoosePreferences };
+	"goose.preferencesSave": { params: GoosePreferences; result: GoosePreferences };
+	"goose.preferencesReset": {
+		params: { keys: ("autoCompactThreshold" | "gooseThinkingEffort")[] };
+		result: GoosePreferences;
+	};
+	"goose.defaultsRead": { params: Record<string, never>; result: GooseProviderDefaults };
+	"goose.defaultsSave": {
+		params: { providerId: string; modelId: string | null };
+		result: GooseProviderDefaults;
+	};
+	"goose.defaultsClear": { params: Record<string, never>; result: GooseProviderDefaults };
+	"goose.agentList": {
+		params: { projectId?: string; root?: string };
+		result: GooseAgentCatalogEntry[];
+	};
+	"goose.agentCreate": {
+		params: {
+			name: string;
+			description: string;
+			instructions: string;
+			scope: "global" | "project";
+			projectId?: string;
+			root?: string;
+			modelId?: string;
+		};
+		result: GooseAgentCatalogEntry;
+	};
+	"goose.agentUpdate": {
+		params: {
+			id: string;
+			name: string;
+			description: string;
+			instructions: string;
+			projectId?: string;
+			root?: string;
+			modelId?: string | null;
+		};
+		result: GooseAgentCatalogEntry;
+	};
+	"goose.agentDelete": {
+		params: { id: string; projectId?: string; root?: string };
+		result: Ack;
 	};
 	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
 	"provider.readiness": {

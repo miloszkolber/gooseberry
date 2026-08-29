@@ -2,7 +2,7 @@
 
 Gooseberry uses the unchanged upstream Goose v1.48.0 distribution at source commit `25021517f12cab87c94bed0874fe7d28168dc264`. The release workflow verifies that commit and publishes the version and commit in `GOOSE-PROVENANCE`. The release artifact installs as `/usr/local/bin/goose` and runs as the technical host user.
 
-The distribution builds the upstream CLI with code mode, local inference, AWS providers, Nostr, Rustls TLS, and system keyring support. It omits the optional self-updater, telemetry consent, and OpenTelemetry exporter because deployment updates are operator-managed and the baseline does not use telemetry. The archive contains only the `goose` executable.
+The distribution builds the upstream CLI with code mode, AWS providers, Nostr, Rustls TLS, and system keyring support. It omits the optional self-updater, telemetry consent, and OpenTelemetry exporter because deployment updates are operator-managed and the baseline does not use telemetry. Local models are handled externally through Llama/OpenVINO. The archive contains only the `goose` executable.
 
 ## Service
 

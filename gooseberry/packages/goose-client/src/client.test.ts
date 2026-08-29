@@ -670,6 +670,75 @@ test("rejects canonical metadata and readiness responses that do not match their
 	await expect(fixture.client.listAgentMentions({})).rejects.toThrow("sourceType");
 });
 
+test("normalizes only allowlisted preferences, defaults, and agent sources", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("_goose/unstable/preferences/read", {
+		values: [
+			{ key: "autoCompactThreshold", value: 0.8 },
+			{ key: "gooseThinkingEffort", value: "high" },
+		],
+	});
+	fixture.connection.setResponse("_goose/unstable/defaults/read", {
+		providerId: "openai",
+		modelId: "gpt-next",
+	});
+	fixture.connection.setResponse("_goose/unstable/sources/list", {
+		sources: [
+			{
+				type: "agent",
+				name: "Reviewer",
+				description: "Review code",
+				content: "Use plain text.",
+				path: "/private/agents/reviewer.md",
+				global: true,
+				writable: true,
+				properties: { model: "gpt-next", private: "kept server-side" },
+			},
+		],
+	});
+	expect(await fixture.client.readPreferences()).toEqual({
+		autoCompactThreshold: 0.8,
+		gooseThinkingEffort: "high",
+	});
+	expect(await fixture.client.readProviderDefaults()).toEqual({
+		providerId: "openai",
+		modelId: "gpt-next",
+	});
+	expect(await fixture.client.listAgentSources("/workspace")).toMatchObject([
+		{
+			type: "agent",
+			path: "/private/agents/reviewer.md",
+			properties: { private: "kept server-side" },
+		},
+	]);
+	expect(fixture.connection.calls.slice(-3)).toEqual([
+		{
+			method: "_goose/unstable/preferences/read",
+			params: { keys: ["autoCompactThreshold", "gooseThinkingEffort"] },
+		},
+		{ method: "_goose/unstable/defaults/read", params: {} },
+		{
+			method: "_goose/unstable/sources/list",
+			params: { type: "agent", projectDir: "/workspace", includeProjectSources: false },
+		},
+	]);
+	fixture.connection.setResponse("_goose/unstable/preferences/read", {
+		values: [{ key: "voiceDictationProvider", value: "private" }],
+	});
+	await expect(fixture.client.readPreferences()).rejects.toThrow("preferences");
+	fixture.connection.setResponse("_goose/unstable/preferences/read", {
+		values: [
+			{ key: "autoCompactThreshold", value: null },
+			{ key: "gooseThinkingEffort", value: null },
+		],
+	});
+	expect(await fixture.client.readPreferences()).toEqual({});
+	const callsBeforeUnsetSave = fixture.connection.calls.length;
+	await fixture.client.savePreferences({});
+	expect(fixture.connection.calls.slice(callsBeforeUnsetSave)).toEqual([]);
+});
+
 test("uses the pinned extension methods, preserves raw server-side, and normalizes safe identities", async () => {
 	const fixture = fake();
 	await fixture.client.ready();

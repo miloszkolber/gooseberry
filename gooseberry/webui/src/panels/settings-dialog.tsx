@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SettingsSection, useAppStore } from "@/store";
 import { GooseAutomationSettings } from "./goose-automation-settings";
+import { GooseSettings } from "./goose-settings";
 import { GooseToolsSettings } from "./goose-tools-settings";
 import { ModelsSettings } from "./models-settings";
 import { ProvidersSettings } from "./providers-settings";
@@ -20,7 +21,9 @@ export function SettingsDialog() {
 				</DialogHeader>
 				<SettingsNavigation section={section} />
 				<div className="min-h-0 flex-1 overflow-y-auto p-lg">
-					{section === SettingsSection.Models ? (
+					{section === SettingsSection.Goose ? (
+						<GooseSettings />
+					) : section === SettingsSection.Models ? (
 						<ModelsSettings />
 					) : section === SettingsSection.Automation ? (
 						<GooseAutomationSettings />
@@ -43,6 +46,12 @@ export function SettingsNavigation({ section }: { section: SettingsSection }) {
 			className="flex gap-xs overflow-x-auto whitespace-nowrap border-border-default border-b px-lg py-sm"
 			aria-label="Settings"
 		>
+			<SettingsTab
+				active={section === SettingsSection.Goose}
+				onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Goose)}
+			>
+				Goose
+			</SettingsTab>
 			<SettingsTab
 				active={section === SettingsSection.Automation}
 				onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Automation)}

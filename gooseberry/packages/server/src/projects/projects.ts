@@ -153,6 +153,16 @@ export function assertProjectCwd(projectId: string, cwd?: string): string {
 	return candidate;
 }
 
+/** Require one canonical admitted root, rather than any descendant directory. */
+export function assertProjectRoot(projectId: string, root: string): string {
+	const project = getProject(projectId);
+	const candidate = assertMountedDirectory(root, "Project root");
+	if (!project.roots.includes(candidate)) {
+		throw new Error("Project root must exactly match an admitted project root");
+	}
+	return candidate;
+}
+
 function newestFirst(projects: Project[]): Project[] {
 	return projects.sort((a, b) => b.lastOpened - a.lastOpened);
 }

@@ -197,6 +197,8 @@ export interface ProviderStatus {
 	id: string;
 	name: string;
 	configured: boolean;
+	/** Whether Goose reports that this configured provider can run. */
+	available?: boolean;
 	kind?: ProviderAuthKind;
 	detail?: string;
 	canOAuth?: boolean;
@@ -218,6 +220,30 @@ export interface AgentMentionInfo {
 	description: string;
 	sourceType: "skill" | "builtinSkill" | "recipe" | "subrecipe" | "agent" | "project";
 	mention: string;
+}
+
+/** The focused, allowlisted Goose preference projection. */
+export interface GoosePreferences {
+	autoCompactThreshold?: number;
+	gooseThinkingEffort?: "off" | "low" | "medium" | "high" | "max";
+}
+
+/** Goose's global provider/model default, never persisted by Gooseberry. */
+export interface GooseProviderDefaults {
+	providerId: string | null;
+	modelId: string | null;
+}
+
+/** Opaque catalog identity. Paths and arbitrary source properties never cross this boundary. */
+export interface GooseAgentCatalogEntry {
+	id: string;
+	name: string;
+	description: string;
+	instructions: string;
+	scope: "global" | "project";
+	writable: boolean;
+	/** Goose supports model ID preference only. The agent inherits its provider. */
+	modelId?: string;
 }
 
 export type LoginFrame =

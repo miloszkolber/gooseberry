@@ -1,5 +1,17 @@
 import { REQUEST_IMAGE_BASE64_BUDGET, type SlashCommandInfo } from "@gooseberry/contracts";
-import { ArrowUp, Bot, ChevronUp, FileIcon, FolderIcon, History, Square, X } from "lucide-react";
+import {
+	ArrowUp,
+	BookOpen,
+	Bot,
+	ChevronUp,
+	FileIcon,
+	FolderIcon,
+	History,
+	Puzzle,
+	Square,
+	Wrench,
+	X,
+} from "lucide-react";
 import {
 	type ClipboardEvent,
 	type DragEvent,
@@ -54,7 +66,7 @@ export type MentionCandidate =
 	| {
 			name: string;
 			description: string;
-			sourceType: "recipe" | "subrecipe" | "agent";
+			sourceType: "skill" | "builtinSkill" | "recipe" | "subrecipe" | "agent" | "project";
 			mention: string;
 			kind: "agent";
 	  };
@@ -68,13 +80,38 @@ export function insertedMention(candidate: MentionCandidate): string {
 }
 
 export function agentMentionLabel(candidate: Extract<MentionCandidate, { kind: "agent" }>): string {
-	return `${candidate.sourceType} mention: ${candidate.name}. ${candidate.description}`;
+	return `${agentMentionTypeLabel(candidate.sourceType)} mention: ${candidate.name}. ${candidate.description}`;
 }
 
 export function agentMentionSummary(
 	candidate: Extract<MentionCandidate, { kind: "agent" }>,
 ): string {
-	return `${candidate.sourceType} · ${candidate.description}`;
+	return `${agentMentionTypeLabel(candidate.sourceType)} · ${candidate.description}`;
+}
+
+export function agentMentionTypeLabel(
+	sourceType: Extract<MentionCandidate, { kind: "agent" }>["sourceType"],
+): string {
+	return {
+		skill: "skill",
+		builtinSkill: "built-in skill",
+		recipe: "recipe",
+		subrecipe: "subrecipe",
+		agent: "agent",
+		project: "project",
+	}[sourceType];
+}
+
+function AgentMentionIcon({
+	sourceType,
+}: {
+	sourceType: Extract<MentionCandidate, { kind: "agent" }>["sourceType"];
+}) {
+	const props = { className: "size-3.5 shrink-0", "aria-hidden": true };
+	if (sourceType === "skill" || sourceType === "builtinSkill") return <Wrench {...props} />;
+	if (sourceType === "recipe" || sourceType === "subrecipe") return <BookOpen {...props} />;
+	if (sourceType === "project") return <Puzzle {...props} />;
+	return <Bot {...props} />;
 }
 
 export function clampedMentionActiveIndex(activeIndex: number, candidateCount: number): number {
@@ -418,7 +455,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							className={`flex w-full items-center gap-sm rounded-[var(--radius-sm)] px-sm py-xs text-left tr-text-ui ${index === visibleMentionActiveIndex ? "bg-control-bg-selected text-text-default" : "text-text-muted"}`}
 						>
 							{candidate.kind === "agent" ? (
-								<Bot className="size-3.5 shrink-0" />
+								<AgentMentionIcon sourceType={candidate.sourceType} />
 							) : candidate.kind === "dir" ? (
 								<FolderIcon className="size-3.5 shrink-0" />
 							) : (

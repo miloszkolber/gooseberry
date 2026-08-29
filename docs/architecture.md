@@ -22,4 +22,4 @@ Projects are created in the UI and contain absolute directory roots plus present
 
 ## Models and agents
 
-Goose is the sole provider and model authority. Gooseberry projects sanitized information and stores model visibility. Custom agents are Goose agents installed by the distribution. Gooseberry summons them and presents their progress without creating a second runtime.
+Goose is the sole provider and model authority. Gooseberry projects sanitized information and stores model visibility. Goose owns global provider/model defaults and the allowlisted preferences exposed by the UI. Custom agents are Goose agents installed by the distribution or created through Goose source CRUD. Gooseberry summons them, presents their progress, and provides an opaque-ID catalog editor without creating a second runtime or source registry.

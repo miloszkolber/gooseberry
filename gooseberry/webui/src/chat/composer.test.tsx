@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
 	agentMentionLabel,
 	agentMentionSummary,
+	agentMentionTypeLabel,
 	Composer,
 	clampedMentionActiveIndex,
 	insertedMention,
@@ -34,6 +35,27 @@ test("defines a distinct accessible agent mention completion entry", () => {
 		"agent mention: Reviewer. Review the current change",
 	);
 	expect(agentMentionSummary(agentMention)).toBe("agent · Review the current change");
+});
+
+test("supports every official mention source type without inventing discovery", () => {
+	for (const sourceType of [
+		"skill",
+		"builtinSkill",
+		"recipe",
+		"subrecipe",
+		"agent",
+		"project",
+	] as const) {
+		const candidate: MentionCandidate = {
+			kind: "agent",
+			name: "Source",
+			description: "Exact Goose target",
+			sourceType,
+			mention: "@exact-goose-target",
+		};
+		expect(insertedMention(candidate)).toBe("@exact-goose-target");
+		expect(agentMentionLabel(candidate)).toContain(agentMentionTypeLabel(sourceType));
+	}
 });
 
 test("shrinking mention candidates clamps the active option and selects the visible entry", () => {
