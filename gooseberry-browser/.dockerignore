@@ -1,6 +1,4 @@
 .git
-node_modules
 *.log
 artifacts
-test
-*.test.mjs
+*_test.go

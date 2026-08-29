@@ -9,10 +9,12 @@ import type {
 import { validateRequestImages } from "@gooseberry/contracts";
 import {
 	abortSession,
+	cancelProviderLogin,
 	clampSessionThinkingLevel,
 	createSession,
 	deleteSession,
 	ensureSessionAttached,
+	getCommandsForCwd,
 	getDefaultModel,
 	getSessionCommands,
 	getSessionCwd,
@@ -24,14 +26,18 @@ import {
 	listAvailableModels,
 	listProviderStatus,
 	listSessions,
+	logoutProvider,
 	promptSession,
 	refreshAvailableModels,
 	refreshGooseStatus,
+	replyProviderLogin,
 	resolvePermission,
+	searchSessionHistory,
 	setAllModelVisibility,
 	setModelVisibility,
 	setSessionModel,
 	setSessionThinkingLevel,
+	startProviderLogin,
 	steerSession,
 } from "../agent";
 import { listDirectories } from "../directory-browser";
@@ -48,6 +54,7 @@ import {
 	addProjectRoot,
 	assertProjectCwd,
 	closeProject,
+	getProject,
 	listProjects,
 	openProject,
 	removeProjectRoot,
@@ -160,7 +167,11 @@ const handlers: Record<string, Handler> = {
 		const value = params as { projectId: string; repository: string };
 		return listCommits(value.projectId, value.repository);
 	},
-	"skill.list": () => [],
+	"skill.list": (params) => {
+		const project = getProject((params as { projectId: string }).projectId);
+		const cwd = project.roots[0];
+		return cwd ? getCommandsForCwd(cwd) : [];
+	},
 	"session.create": async (params) => {
 		const value = params as {
 			projectId: string;
@@ -211,7 +222,8 @@ const handlers: Record<string, Handler> = {
 		return { ok: true } as const;
 	},
 	"session.getStats": (params) => getSessionStats((params as { sessionId: string }).sessionId),
-	"session.getCommands": () => getSessionCommands(),
+	"session.getCommands": (params) =>
+		getSessionCommands((params as { sessionId: string }).sessionId),
 	"session.list": (params) => listSessions((params as { projectId: string }).projectId),
 	"session.getMessages": async (params) => {
 		const value = params as { sessionId: string; projectId: string };
@@ -255,25 +267,33 @@ const handlers: Record<string, Handler> = {
 	"model.setAllVisibility": (params) =>
 		setAllModelVisibility((params as { hidden: boolean }).hidden === true),
 	"provider.status": () => listProviderStatus(),
-	"provider.loginStart": () => {
-		throw new Error("Goose provider authentication is configured in Goose, not Gooseberry.");
+	"provider.loginStart": (params, ctx) => {
+		const value = params as { providerId: string; type?: "oauth" | "api_key" };
+		return startProviderLogin(ctx.clientKey, value.providerId, value.type ?? "oauth");
 	},
-	"provider.loginReply": () => {
-		throw new Error("Goose provider authentication is configured in Goose, not Gooseberry.");
+	"provider.loginReply": async (params, ctx) => {
+		const value = params as { loginId: string; value: string };
+		await replyProviderLogin(ctx.clientKey, value.loginId, value.value);
+		return { ok: true } as const;
 	},
-	"provider.loginCancel": () => ({ ok: true }) as const,
-	"provider.logout": () => {
-		throw new Error("Goose provider credentials are managed by Goose.");
+	"provider.loginCancel": (params, ctx) => {
+		cancelProviderLogin(ctx.clientKey, (params as { loginId: string }).loginId);
+		return { ok: true } as const;
+	},
+	"provider.logout": async (params) => {
+		await logoutProvider((params as { providerId: string }).providerId);
+		return { ok: true } as const;
 	},
 	"settings.update": (params) => updateConfig((params as { config: AppConfigPatch }).config),
 	"signet.status": () => getSignetStatus(),
-	"history.search": () => ({
-		prompts: [],
-		messages: [],
-		promptTotal: 0,
-		messageTotal: 0,
-		indexing: false,
-	}),
+	"history.search": (params) =>
+		searchSessionHistory(
+			params as {
+				query: string;
+				scope: import("@gooseberry/contracts").HistoryScope;
+				limit?: number;
+			},
+		),
 	"goose.recipeList": () => gooseRecipes().listRecipes(),
 	"goose.recipeSave": (params) => {
 		const value = params as { recipe: import("@gooseberry/goose-client").GooseRecipe; id?: string };
@@ -322,6 +342,10 @@ const handlers: Record<string, Handler> = {
 		const v = params as { scheduleId: string; limit?: number };
 		return gooseSchedules().listScheduleSessions(v.scheduleId, v.limit ?? 10);
 	},
+	"goose.scheduleInspect": (params) =>
+		gooseSchedules().inspectScheduledJob((params as { scheduleId: string }).scheduleId),
+	"goose.scheduleKill": (params) =>
+		gooseSchedules().killScheduledJob((params as { scheduleId: string }).scheduleId),
 	"goose.status": () => refreshGooseStatus(),
 };
 

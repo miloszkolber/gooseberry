@@ -1,26 +1,19 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUN_VERSION=1.3.14
-ARG NODE_VERSION=24.18.1-bookworm-slim
-ARG BUN_IMAGE=oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
-ARG NODE_IMAGE=node:24.18.1-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+ARG GO_IMAGE=golang:1.25.13-bookworm@sha256:e401dae1bf814e29204a8cb7915682e1780951e609ca0dd8865ee1937f510c48
+ARG DEBIAN_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 ARG AGENT_BROWSER_VERSION=0.34.0
 
-FROM ${BUN_IMAGE} AS build
-ARG BUN_VERSION
+FROM ${GO_IMAGE} AS build
 WORKDIR /build
 
-RUN test "$(bun --version)" = "${BUN_VERSION}"
-COPY package.json config.json ./
-COPY src ./src
-RUN bun build src/server.mjs --outfile /build/server.mjs --target node
+COPY go.mod ./
+COPY main.go policy.go service.go token.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/gooseberry-browser .
 
-FROM ${NODE_IMAGE} AS browser
-ARG NODE_VERSION
+FROM ${DEBIAN_IMAGE} AS browser
 ARG AGENT_BROWSER_VERSION
 ARG TARGETARCH
-
-RUN test "$(node --version)" = "v${NODE_VERSION%%-*}"
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
@@ -51,26 +44,23 @@ RUN apt-get update \
         > /usr/local/bin/agent-browser \
     && chmod 0755 /usr/local/bin/agent-browser \
     && apt-get purge -y --auto-remove curl \
-    && rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache \
-    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
-        /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+    && rm -rf /var/lib/apt/lists/* /root/.cache
 
 WORKDIR /app
 RUN mkdir -p /app /var/lib/gooseberry-browser/artifacts /var/lib/gooseberry-browser/state \
-	&& chown -R node:node /app /var/lib/gooseberry-browser
-COPY --from=build --chown=node:node /build/server.mjs /app/server.mjs
-COPY --from=build --chown=node:node /build/config.json /app/config.json
-COPY --chown=node:node LICENSE NOTICE.md /app/legal/
+	&& chown -R 1000:1000 /app /var/lib/gooseberry-browser
+COPY --from=build --chown=1000:1000 /out/gooseberry-browser /app/gooseberry-browser
+COPY --chown=1000:1000 config.json /app/config.json
+COPY --chown=1000:1000 LICENSE NOTICE.md /app/legal/
 
-ENV NODE_ENV=production \
-	GOOSEBERRY_BROWSER_HOST=127.0.0.1 \
+ENV GOOSEBERRY_BROWSER_HOST=127.0.0.1 \
 	GOOSEBERRY_BROWSER_PORT=8787 \
 	GOOSEBERRY_BROWSER_TOKEN="" \
 	GOOSEBERRY_BROWSER_AUTH=false
 
-USER node
+USER 1000:1000
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.GOOSEBERRY_BROWSER_PORT || '8787') + '/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    CMD ["/app/gooseberry-browser", "healthcheck"]
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["node", "/app/server.mjs"]
+CMD ["/app/gooseberry-browser"]

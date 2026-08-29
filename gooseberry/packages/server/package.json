@@ -14,8 +14,7 @@
 	"dependencies": {
 		"@gooseberry/contracts": "workspace:*",
 		"@gooseberry/goose-client": "workspace:*",
-		"@gooseberry/shared": "workspace:*",
-		"typebox": "catalog:"
+		"@gooseberry/shared": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/bun": "catalog:",

@@ -20,6 +20,7 @@ import type {
 	GitRepository,
 	HistoryScope,
 	HistorySearchResult,
+	LoginFrame,
 	LoginReply,
 	Project,
 	ProviderStatusReport,
@@ -27,7 +28,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 57;
+export const PROTOCOL_VERSION = 58;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -113,6 +114,8 @@ export const WS_METHODS = {
 	gooseScheduleDelete: "goose.scheduleDelete",
 	gooseScheduleRunNow: "goose.scheduleRunNow",
 	gooseScheduleSessions: "goose.scheduleSessions",
+	gooseScheduleInspect: "goose.scheduleInspect",
+	gooseScheduleKill: "goose.scheduleKill",
 	gooseStatus: "goose.status",
 } as const;
 
@@ -236,7 +239,7 @@ export interface WsMethodMap {
 	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
 	"provider.loginStart": {
 		params: { providerId: string; type?: "oauth" | "api_key" };
-		result: { loginId: string };
+		result: { loginId: string; frame: LoginFrame };
 	};
 	"provider.loginReply": { params: LoginReply; result: Ack };
 	"provider.loginCancel": { params: { loginId: string }; result: Ack };
@@ -268,6 +271,19 @@ export interface WsMethodMap {
 		result: { status: string; sessionId?: string };
 	};
 	"goose.scheduleSessions": { params: { scheduleId: string; limit?: number }; result: unknown[] };
+	"goose.scheduleInspect": {
+		params: { scheduleId: string };
+		result: {
+			running: boolean;
+			sessionId?: string;
+			jobStartTime?: string;
+			runningDurationSeconds?: number;
+		};
+	};
+	"goose.scheduleKill": {
+		params: { scheduleId: string };
+		result: { message: string };
+	};
 	"goose.status": {
 		params: Record<string, never>;
 		result: { configured: boolean; reachable: boolean; error?: string; version?: string };

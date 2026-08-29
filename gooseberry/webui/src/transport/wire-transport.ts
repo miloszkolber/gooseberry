@@ -1,5 +1,6 @@
 import type {
 	AppConfig,
+	LoginPush,
 	PermissionRequest,
 	PermissionResolvedPayload,
 	Project,
@@ -77,6 +78,10 @@ export function initTransport(): WsTransport {
 
 	transport.subscribe(WS_CHANNELS.settingsChanged, (data) => {
 		useAppStore.getState().applyConfig(data as AppConfig);
+	});
+
+	transport.subscribe(WS_CHANNELS.providerLogin, (data) => {
+		useAppStore.getState().applyLoginFrame(data as LoginPush);
 	});
 
 	transport.connect();

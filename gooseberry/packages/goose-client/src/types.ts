@@ -91,8 +91,31 @@ export interface GooseProvider {
 	defaultModel?: string;
 	supportsRefresh?: boolean;
 	refreshing?: boolean;
+	visibleInSetup?: boolean;
+	deprecated?: boolean;
+	lastRefreshError?: string;
+	configKeys: readonly GooseProviderConfigKey[];
+	setupSteps: readonly string[];
 	models: readonly GooseModel[];
 	raw: JsonValue;
+}
+
+export interface GooseProviderConfigKey {
+	name: string;
+	required: boolean;
+	secret: boolean;
+	defaultValue?: string;
+	oauthFlow: boolean;
+	deviceCodeFlow: boolean;
+	primary: boolean;
+}
+
+export interface GooseProviderConfigField {
+	key: string;
+	value?: string;
+	isSet: boolean;
+	isSecret: boolean;
+	required: boolean;
 }
 
 export interface GooseConfigOption {
@@ -157,6 +180,20 @@ export interface GooseSchedule {
 	paused: boolean;
 	currentSessionId?: string;
 	jobStartTime?: string;
+	raw: JsonValue;
+}
+
+export interface GooseScheduledJobInspection {
+	running: boolean;
+	sessionId?: string;
+	jobStartTime?: string;
+	runningDurationSeconds?: number;
+}
+
+export interface GooseSlashCommand {
+	name: string;
+	description?: string;
+	inputHint?: string;
 	raw: JsonValue;
 }
 

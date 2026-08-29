@@ -1,6 +1,6 @@
 # Gooseberry
 
-Gooseberry is a focused Web UI for Goose. It provides directory-based projects, persistent sessions, goals and tasks, custom agents, multi-image prompts, provider and model projection, Git visibility, and read-only file browsing.
+Gooseberry is a focused Web UI for Goose. It provides directory-based projects, persistent sessions and history search, goals and tasks, custom agents, multi-image prompts, provider authentication and model projection, Goose recipes and scheduling, Git visibility, and read-only file browsing.
 
 Goose is the agent runtime and remains authoritative for sessions, history, providers, models, tools, compaction, permissions, recipes, and scheduling. Gooseberry connects to its loopback ACP service.
 

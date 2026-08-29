@@ -57,8 +57,12 @@ export function ProvidersSettings() {
 	const startLogin = useCallback(async (providerId: string, type: "oauth" | "api_key") => {
 		setBusyProvider(providerId);
 		try {
-			const { loginId } = await getTransport().request("provider.loginStart", { providerId, type });
+			const { loginId, frame } = await getTransport().request("provider.loginStart", {
+				providerId,
+				type,
+			});
 			useAppStore.getState().beginLogin(loginId, providerId);
+			useAppStore.getState().applyLoginFrame({ loginId, providerId, frame });
 		} catch (err) {
 			toast.error(errorText(err), "Couldn't start the connection");
 		} finally {
@@ -107,7 +111,7 @@ export function ProvidersSettings() {
 				<div className="flex flex-col gap-xs">
 					<h3 className="tr-title-section text-text-default">Providers</h3>
 					<p className="text-text-muted tr-text-metadata">
-						Provider availability is reported by Goose. Configure credentials in Goose.
+						Provider credentials are stored and managed by Goose.
 					</p>
 				</div>
 				<Button
@@ -192,6 +196,9 @@ export function ProvidersSettings() {
 						useAppStore.getState().clearLogin();
 					}}
 					onClose={() => {
+						getTransport()
+							.request("provider.loginCancel", { loginId: activeLogin.loginId })
+							.catch(() => {});
 						useAppStore.getState().clearLogin();
 						useAppStore.getState().noteProviderChanged();
 						void load();

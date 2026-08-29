@@ -407,6 +407,11 @@ export function HistoryOverlay({
 					indexing history…
 				</div>
 			) : null}
+			{result.incomplete ? (
+				<div className="px-sm py-1 text-center text-feedback-warning tr-text-metadata">
+					some history could not be indexed
+				</div>
+			) : null}
 			{hasResults ? (
 				<div className="flex flex-col gap-xs p-xs">
 					{result.prompts.length > 0 ? (
@@ -419,7 +424,7 @@ export function HistoryOverlay({
 							</div>
 							{result.prompts.map((hit, i) => (
 								<PromptRow
-									key={`${hit.sessionId}:${hit.timestamp}`}
+									key={`${hit.sessionId}:${hit.messageIndex}`}
 									hit={hit}
 									query={query}
 									scope={scope}

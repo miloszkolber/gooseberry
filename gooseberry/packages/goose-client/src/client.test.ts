@@ -332,6 +332,17 @@ test("preserves Goose v1.48 session run updates, provider inventory, and recipe 
 				providerName: "OpenAI",
 				configured: true,
 				available: false,
+				visibleInSetup: true,
+				configKeys: [
+					{
+						name: "OPENAI_API_KEY",
+						required: true,
+						secret: true,
+						oauthFlow: false,
+						deviceCodeFlow: false,
+						primary: true,
+					},
+				],
 				models: [{ id: "o3", name: "o3", contextLimit: 200000, reasoning: true }],
 			},
 		],
@@ -352,6 +363,8 @@ test("preserves Goose v1.48 session run updates, provider inventory, and recipe 
 			id: "openai",
 			configured: true,
 			available: false,
+			visibleInSetup: true,
+			configKeys: [{ name: "OPENAI_API_KEY", required: true, secret: true, primary: true }],
 			models: [{ id: "o3", reasoning: true, contextLimit: 200000 }],
 		},
 	]);
@@ -396,6 +409,46 @@ test("preserves Goose v1.48 session run updates, provider inventory, and recipe 
 	});
 	expect(await fixture.client.listSchedules()).toMatchObject([
 		{ id: "daily-review", lastRun: "2026-08-28T09:00:00Z", currentSessionId: "session-1" },
+	]);
+	fixture.connection.setResponse("_goose/unstable/providers/config/read", {
+		fields: [
+			{
+				key: "OPENAI_API_KEY",
+				value: "sk-a...xyz",
+				isSet: true,
+				isSecret: true,
+				required: true,
+			},
+		],
+	});
+	expect(await fixture.client.providerConfig("openai")).toEqual([
+		{
+			key: "OPENAI_API_KEY",
+			value: "sk-a...xyz",
+			isSet: true,
+			isSecret: true,
+			required: true,
+		},
+	]);
+	fixture.connection.setResponse("_goose/unstable/schedules/running-job/inspect", {
+		running: true,
+		sessionId: "session-1",
+		jobStartTime: "2026-08-28T09:00:00Z",
+		runningDurationSeconds: 42,
+	});
+	expect(await fixture.client.inspectScheduledJob("daily-review")).toEqual({
+		running: true,
+		sessionId: "session-1",
+		jobStartTime: "2026-08-28T09:00:00Z",
+		runningDurationSeconds: 42,
+	});
+	fixture.connection.setResponse("_goose/unstable/slash-commands/list", {
+		availableCommands: [
+			{ name: "daily", description: "Run daily review", input: { hint: "topic" } },
+		],
+	});
+	expect(await fixture.client.listSlashCommands({ sessionId: "session-1" })).toMatchObject([
+		{ name: "daily", description: "Run daily review", inputHint: "topic" },
 	]);
 });
 

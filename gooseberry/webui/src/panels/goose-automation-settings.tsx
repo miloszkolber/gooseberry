@@ -21,6 +21,14 @@ interface Schedule {
 	cron: string;
 	paused: boolean;
 	currentlyRunning: boolean;
+	currentSessionId?: string;
+	jobStartTime?: string;
+}
+interface RunningJobInspection {
+	running: boolean;
+	sessionId?: string;
+	jobStartTime?: string;
+	runningDurationSeconds?: number;
 }
 
 /** Goose owns recipe and scheduler persistence. Gooseberry only projects the useful controls. */
@@ -32,6 +40,7 @@ export function GooseAutomationSettings() {
 	const [selectedRecipe, setSelectedRecipe] = useState("");
 	const [scheduleCron, setScheduleCron] = useState<Record<string, string>>({});
 	const [recentSessions, setRecentSessions] = useState<Record<string, unknown[]>>({});
+	const [inspections, setInspections] = useState<Record<string, RunningJobInspection>>({});
 	const load = useCallback(async () => {
 		try {
 			const [nextRecipes, nextSchedules] = await Promise.all([
@@ -96,6 +105,28 @@ export function GooseAutomationSettings() {
 			setRecentSessions((current) => ({ ...current, [scheduleId]: sessions }));
 		} catch (error) {
 			toast.error(errorText(error), "Couldn't load schedule sessions");
+		}
+	};
+	const inspectSchedule = async (scheduleId: string) => {
+		try {
+			const inspection = await getTransport().request("goose.scheduleInspect", { scheduleId });
+			setInspections((current) => ({ ...current, [scheduleId]: inspection }));
+		} catch (error) {
+			toast.error(errorText(error), "Couldn't inspect the running schedule");
+		}
+	};
+	const killSchedule = async (scheduleId: string) => {
+		try {
+			const result = await getTransport().request("goose.scheduleKill", { scheduleId });
+			toast.success(result.message);
+			setInspections((current) => {
+				const next = { ...current };
+				delete next[scheduleId];
+				return next;
+			});
+			await load();
+		} catch (error) {
+			toast.error(errorText(error), "Couldn't stop the running schedule");
 		}
 	};
 	return (
@@ -176,6 +207,9 @@ export function GooseAutomationSettings() {
 					>
 						<div className="flex flex-wrap items-center gap-xs text-text-default">
 							<span>{schedule.source} ·</span>
+							{schedule.currentlyRunning ? (
+								<span className="text-feedback-success tr-text-metadata">Running ·</span>
+							) : null}
 							<input
 								aria-label={`Cron for ${schedule.source}`}
 								value={scheduleCron[schedule.id] ?? schedule.cron}
@@ -198,6 +232,9 @@ export function GooseAutomationSettings() {
 											scheduleId: schedule.id,
 										})
 										.then(load)
+										.catch((error) =>
+											toast.error(errorText(error), "Couldn't change the schedule state"),
+										)
 								}
 							>
 								{schedule.paused ? "Resume" : "Pause"}
@@ -209,6 +246,7 @@ export function GooseAutomationSettings() {
 									void getTransport()
 										.request("goose.scheduleRunNow", { scheduleId: schedule.id })
 										.then(load)
+										.catch((error) => toast.error(errorText(error), "Couldn't run the schedule"))
 								}
 							>
 								Run now
@@ -220,6 +258,20 @@ export function GooseAutomationSettings() {
 							>
 								Recent sessions
 							</Button>
+							{schedule.currentlyRunning ? (
+								<>
+									<Button
+										size="sm"
+										variant="ghost"
+										onClick={() => void inspectSchedule(schedule.id)}
+									>
+										Inspect
+									</Button>
+									<Button size="sm" variant="ghost" onClick={() => void killSchedule(schedule.id)}>
+										Stop
+									</Button>
+								</>
+							) : null}
 							<Button
 								size="sm"
 								variant="ghost"
@@ -227,6 +279,7 @@ export function GooseAutomationSettings() {
 									void getTransport()
 										.request("goose.scheduleDelete", { scheduleId: schedule.id })
 										.then(load)
+										.catch((error) => toast.error(errorText(error), "Couldn't delete the schedule"))
 								}
 							>
 								Delete
@@ -257,6 +310,13 @@ export function GooseAutomationSettings() {
 												</div>
 											);
 										})}
+							</div>
+						) : null}
+						{inspections[schedule.id] ? (
+							<div className="w-full text-text-muted tr-text-metadata">
+								{inspections[schedule.id]?.running
+									? `Session ${inspections[schedule.id]?.sessionId ?? "starting"} · ${inspections[schedule.id]?.runningDurationSeconds ?? 0}s`
+									: "No running job"}
 							</div>
 						) : null}
 					</div>

@@ -16,11 +16,13 @@ import {
 	currentGooseStatus,
 	disposeAllSessions,
 	pendingPermissionSnapshot,
+	providerLoginSnapshot,
 	refreshGooseStatus,
 	sessionForObjectiveToken,
 	setObjectiveMcpUrl,
 	setPermissionPublisher,
 	setPermissionResolvedPublisher,
+	setProviderLoginPublisher,
 	setSessionDeletedPublisher,
 	setSessionPublisher,
 } from "../agent";
@@ -353,6 +355,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			if (ws.send(message) === 0) ws.close();
 		}
 	};
+	const publishToClient = (clientKey: string, channel: string, data: unknown): void => {
+		const ws = sockets.get(clientKey);
+		if (!ws) return;
+		if (!isSocketSessionActive(ws)) {
+			ws.close(1008, "authentication expired");
+			return;
+		}
+		if (ws.send(JSON.stringify({ channel, data })) === 0) ws.close();
+	};
 	const objectiveMcp = createObjectiveMcpHandler({
 		sessionForToken: sessionForObjectiveToken,
 		readObjective: sessionGoalState,
@@ -445,6 +456,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 					...(appVersion ? { appVersion } : {}),
 				};
 				if (ws.send(JSON.stringify({ channel: WS_CHANNELS.serverWelcome, data: welcome })) === 0) {
+					ws.close();
+					return;
+				}
+				const providerLogin = providerLoginSnapshot(ws.data.clientKey);
+				if (
+					providerLogin &&
+					ws.send(JSON.stringify({ channel: WS_CHANNELS.providerLogin, data: providerLogin })) === 0
+				) {
 					ws.close();
 				}
 			},
@@ -554,6 +573,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	setPermissionResolvedPublisher((payload) =>
 		publishToSockets(WS_CHANNELS.permissionResolved, payload),
 	);
+	setProviderLoginPublisher((clientKey, payload) =>
+		publishToClient(clientKey, WS_CHANNELS.providerLogin, payload),
+	);
 	void refreshGooseStatus();
 
 	return {
@@ -574,6 +596,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			setSettingsPublisher(null);
 			setPermissionPublisher(() => {});
 			setPermissionResolvedPublisher(() => {});
+			setProviderLoginPublisher(() => {});
 			server.stop(true);
 		},
 	};

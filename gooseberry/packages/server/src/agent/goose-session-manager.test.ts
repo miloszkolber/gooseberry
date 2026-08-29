@@ -11,22 +11,30 @@ import { setMountedProjectRootsForTesting } from "../path-admission";
 import { setDataDirForTests } from "../persistence";
 import {
 	abortSession,
+	cancelProviderLogin,
 	createSession,
 	disposeAllSessions,
+	getSessionCommands,
 	getSessionMessages,
 	gooseRecipes,
 	gooseSchedules,
 	pendingPermissionSnapshot,
 	promptSession,
+	providerLoginSnapshot,
+	replyProviderLogin,
 	requestPermission,
 	resolvePermission,
+	searchSessionHistory,
 	setGooseClient,
 	setObjectiveMcpUrl,
 	setPermissionPublisher,
 	setPermissionTimeoutForTests,
+	setProviderLoginPublisher,
+	setProviderLoginTimeoutForTests,
 	setSessionModel,
 	setSessionPublisher,
 	setSessionThinkingLevel,
+	startProviderLogin,
 	steerSession,
 } from "./agent-session-manager";
 
@@ -38,7 +46,11 @@ class FakeConnection implements GooseConnection {
 		this.#resolveClosed = resolve;
 	});
 	promptGate: Promise<void> | undefined;
+	authenticateGate: Promise<void> | undefined;
+	saveGate: Promise<void> | undefined;
+	loadGate: Promise<void> | undefined;
 	loadUpdates: ((sessionId: string) => void) | undefined;
+	loadFailures = 0;
 	constructor(readonly handlers: Parameters<GooseConnectionFactory["connect"]>[0]) {}
 	async request(method: string, params: Record<string, unknown>): Promise<unknown> {
 		this.calls.push({ method, params });
@@ -52,6 +64,11 @@ class FakeConnection implements GooseConnection {
 				],
 			};
 		if (method === "session/load") {
+			await this.loadGate;
+			if (this.loadFailures > 0) {
+				this.loadFailures--;
+				throw new Error("temporary load failure");
+			}
 			if (this.loadUpdates) {
 				this.loadUpdates(params.sessionId as string);
 				return { sessionId: params.sessionId, configOptions: [] };
@@ -131,7 +148,79 @@ class FakeConnection implements GooseConnection {
 					},
 				],
 			};
-		if (method === "session/list") return { sessions: [{ sessionId: "goose-1", title: "Chat" }] };
+		if (method === "_goose/unstable/providers/list")
+			return {
+				entries: [
+					{
+						providerId: "openai",
+						providerName: "OpenAI",
+						configured: false,
+						available: true,
+						visibleInSetup: true,
+						configKeys: [
+							{
+								name: "OPENAI_API_KEY",
+								required: true,
+								secret: true,
+								oauthFlow: false,
+								primary: true,
+							},
+						],
+						models: [],
+					},
+					{
+						providerId: "github_copilot",
+						providerName: "GitHub Copilot",
+						configured: false,
+						available: true,
+						visibleInSetup: true,
+						configKeys: [
+							{
+								name: "GITHUB_COPILOT_TOKEN",
+								required: true,
+								secret: true,
+								oauthFlow: true,
+								deviceCodeFlow: true,
+								primary: true,
+							},
+						],
+						models: [],
+					},
+				],
+			};
+		if (method === "_goose/unstable/providers/config/read")
+			return {
+				fields: [
+					{
+						key: "OPENAI_API_KEY",
+						isSet: false,
+						isSecret: true,
+						required: true,
+					},
+				],
+			};
+		if (method === "_goose/unstable/providers/config/save") {
+			await this.saveGate;
+			return { status: {}, refresh: {} };
+		}
+		if (method === "_goose/unstable/providers/config/authenticate") {
+			await this.authenticateGate;
+			this.handlers.onGooseNotification("_goose/unstable/providers/authentication/device-code", {
+				providerId: params.providerId,
+				userCode: "ABCD-EFGH",
+				verificationUri: "https://github.com/login/device",
+				expiresIn: 900,
+			});
+			return { status: {}, refresh: {} };
+		}
+		if (method === "_goose/unstable/slash-commands/list")
+			return {
+				availableCommands: [{ name: "review", description: "Review the current work" }],
+			};
+		if (method === "session/list")
+			return {
+				sessions: [{ sessionId: "goose-1", title: "Chat", updatedAt: "2026-01-02T03:04:05Z" }],
+			};
 		return {};
 	}
 	async notify(method: string, params: Record<string, unknown>): Promise<void> {
@@ -171,6 +260,7 @@ function fixture() {
 
 afterEach(() => {
 	setMountedProjectRootsForTesting(undefined);
+	setProviderLoginTimeoutForTests(undefined);
 });
 
 test("Goose create, replay load, prompt stream, cancel, steer, and thinking are projected", async () => {
@@ -594,6 +684,224 @@ test("Goose recipe and schedule adapters use the native custom methods", async (
 	fixture();
 	expect((await gooseRecipes().listRecipes())[0]?.id).toBe("recipe");
 	expect((await gooseSchedules().listSchedules())[0]?.id).toBe("job");
+});
+
+test("provider API-key and OAuth flows remain owned by Goose and publish bounded UI frames", async () => {
+	const f = fixture();
+	const pushes: { providerId: string; frame: { kind: string } }[] = [];
+	setProviderLoginPublisher((_clientKey, payload) => pushes.push(payload));
+
+	const apiKey = await startProviderLogin("browser", "openai", "api_key");
+	expect(apiKey.frame).toMatchObject({ kind: "prompt", secret: true });
+	await replyProviderLogin("browser", apiKey.loginId, "  secret-value  ");
+	expect(pushes.map((push) => push.frame.kind)).toEqual(["progress", "success"]);
+	expect(f.connection.calls.at(-1)).toMatchObject({
+		method: "_goose/unstable/providers/config/save",
+		params: {
+			providerId: "openai",
+			fields: [{ key: "OPENAI_API_KEY", value: "  secret-value  " }],
+		},
+	});
+
+	pushes.length = 0;
+	const oauth = await startProviderLogin("browser", "github_copilot", "oauth");
+	expect(oauth.frame.kind).toBe("progress");
+	await Bun.sleep(10);
+	expect(pushes.map((push) => push.frame.kind)).toEqual(["deviceCode", "success"]);
+	expect(providerLoginSnapshot("browser")?.loginId).toBe(oauth.loginId);
+	cancelProviderLogin("browser", oauth.loginId);
+	expect(providerLoginSnapshot("browser")).toBeUndefined();
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("provider login serializes a provider while allowing a different provider", async () => {
+	const f = fixture();
+	const oauth = await startProviderLogin("browser-a", "github_copilot", "oauth");
+	await expect(startProviderLogin("browser-b", "github_copilot", "oauth")).rejects.toThrow(
+		"already in progress for this provider",
+	);
+	const apiKey = await startProviderLogin("browser-b", "openai", "api_key");
+	cancelProviderLogin("browser-b", apiKey.loginId);
+	await Bun.sleep(10);
+	cancelProviderLogin("browser-a", oauth.loginId);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("cancelled OAuth retains provider ownership until the ACP request settles", async () => {
+	const f = fixture();
+	await f.client.ready();
+	let releaseAuthentication = () => {};
+	f.connection.authenticateGate = new Promise<void>((resolve) => {
+		releaseAuthentication = resolve;
+	});
+	const pushes: { clientKey: string; kind: string }[] = [];
+	setProviderLoginPublisher((clientKey, payload) =>
+		pushes.push({ clientKey, kind: payload.frame.kind }),
+	);
+	const first = await startProviderLogin("browser-a", "github_copilot", "oauth");
+	while (
+		!f.connection.calls.some(
+			(call) => call.method === "_goose/unstable/providers/config/authenticate",
+		)
+	) {
+		await Bun.sleep(1);
+	}
+	cancelProviderLogin("browser-a", first.loginId);
+	await expect(startProviderLogin("browser-b", "github_copilot", "oauth")).rejects.toThrow(
+		"already in progress for this provider",
+	);
+	releaseAuthentication();
+	await Bun.sleep(10);
+	expect(pushes).toEqual([]);
+	const second = await startProviderLogin("browser-b", "github_copilot", "oauth");
+	await Bun.sleep(10);
+	cancelProviderLogin("browser-b", second.loginId);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("expired provider requests reset a stuck ACP transport before allowing overlap", async () => {
+	setProviderLoginTimeoutForTests(30);
+	const f = fixture();
+	await f.client.ready();
+	const stuckConnection = f.connection;
+	stuckConnection.authenticateGate = new Promise<void>(() => {});
+	await startProviderLogin("browser-a", "github_copilot", "oauth");
+	while (
+		!stuckConnection.calls.some(
+			(call) => call.method === "_goose/unstable/providers/config/authenticate",
+		)
+	) {
+		await Bun.sleep(1);
+	}
+	await Bun.sleep(40);
+	const replacement = await startProviderLogin("browser-b", "github_copilot", "oauth");
+	await Bun.sleep(10);
+	cancelProviderLogin("browser-b", replacement.loginId);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("API-key save stays serialized until transport settlement or bounded reset", async () => {
+	setProviderLoginTimeoutForTests(30);
+	const f = fixture();
+	await f.client.ready();
+	const stuckConnection = f.connection;
+	stuckConnection.saveGate = new Promise<void>(() => {});
+	const first = await startProviderLogin("browser-a", "openai", "api_key");
+	const saving = replyProviderLogin("browser-a", first.loginId, "secret");
+	while (
+		!stuckConnection.calls.some((call) => call.method === "_goose/unstable/providers/config/save")
+	) {
+		await Bun.sleep(1);
+	}
+	await expect(startProviderLogin("browser-b", "openai", "api_key")).rejects.toThrow(
+		"already in progress for this provider",
+	);
+	await Bun.sleep(40);
+	await saving;
+	const replacement = await startProviderLogin("browser-b", "openai", "api_key");
+	cancelProviderLogin("browser-b", replacement.loginId);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("Goose slash commands and mapped session history are projected", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	await promptSession(created.sessionId, "new prompt");
+	await Bun.sleep(0);
+	expect(await getSessionCommands(created.sessionId)).toMatchObject([
+		{ name: "review", source: "goose" },
+	]);
+	const result = await searchSessionHistory({
+		query: "new prompt",
+		scope: { kind: "project", projectId: "project" },
+		limit: 10,
+	});
+	expect(result).toMatchObject({
+		indexing: false,
+		incomplete: false,
+		promptTotal: 1,
+		prompts: [
+			{
+				sessionId: created.sessionId,
+				projectId: "project",
+				text: "new prompt",
+				timestamp: Date.parse("2026-01-02T03:04:05Z"),
+			},
+		],
+	});
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("history indexing releases replay state and retries transient loads", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	disposeAllSessions();
+	f.connection.loadFailures = 1;
+	const first = await searchSessionHistory({
+		query: "saved prompt",
+		scope: { kind: "project", projectId: "project" },
+	});
+	expect(first).toMatchObject({ indexing: true, incomplete: false, promptTotal: 0 });
+	await Bun.sleep(310);
+	const second = await searchSessionHistory({
+		query: "saved prompt",
+		scope: { kind: "project", projectId: "project" },
+	});
+	expect(second).toMatchObject({ indexing: false, incomplete: false, promptTotal: 1 });
+	const loadsBeforeOpen = f.connection.calls.filter(
+		(call) => call.method === "session/load",
+	).length;
+	await getSessionMessages(created.sessionId, "project", f.directory);
+	const loadsAfterOpen = f.connection.calls.filter((call) => call.method === "session/load").length;
+	expect(loadsAfterOpen).toBe(loadsBeforeOpen + 1);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("a normal session operation adopts a concurrently indexed session", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	disposeAllSessions();
+	let releaseLoad = () => {};
+	f.connection.loadGate = new Promise<void>((resolve) => {
+		releaseLoad = resolve;
+	});
+	const search = searchSessionHistory({ query: "saved", scope: { kind: "all" } });
+	while (!f.connection.calls.some((call) => call.method === "session/load")) await Bun.sleep(0);
+	const commands = getSessionCommands(created.sessionId);
+	releaseLoad();
+	await Promise.all([search, commands]);
+	const loadsBeforeRead = f.connection.calls.filter(
+		(call) => call.method === "session/load",
+	).length;
+	await getSessionMessages(created.sessionId, "project", f.directory);
+	const loadsAfterRead = f.connection.calls.filter((call) => call.method === "session/load").length;
+	expect(loadsAfterRead).toBe(loadsBeforeRead);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("history search reports an incomplete index after bounded load retries", async () => {
+	const f = fixture();
+	await createSession({ projectId: "project", cwd: f.directory });
+	disposeAllSessions();
+	f.connection.loadFailures = 3;
+	let result = await searchSessionHistory({ query: "saved", scope: { kind: "all" } });
+	expect(result).toMatchObject({ indexing: true, incomplete: false });
+	await Bun.sleep(310);
+	result = await searchSessionHistory({ query: "saved", scope: { kind: "all" } });
+	expect(result).toMatchObject({ indexing: true, incomplete: false });
+	await Bun.sleep(610);
+	result = await searchSessionHistory({ query: "saved", scope: { kind: "all" } });
+	expect(result).toMatchObject({ indexing: false, incomplete: true });
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
 });
 
 test("an unconfigured Goose client fails clearly", async () => {
