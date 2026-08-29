@@ -17,7 +17,10 @@ import {
 	cancelProviderLogin,
 	checkProviderReadiness,
 	clampSessionThinkingLevel,
+	clearGooseProviderDefaults,
+	createGooseAgent,
 	createSession,
+	deleteGooseAgent,
 	deleteSession,
 	editSessionQueue,
 	ensureSessionAttached,
@@ -33,6 +36,7 @@ import {
 	gooseRecipes,
 	gooseSchedules,
 	listAvailableModels,
+	listGooseAgents,
 	listGooseExtensions,
 	listProviderStatus,
 	listSessionExtensions,
@@ -41,6 +45,8 @@ import {
 	logoutProvider,
 	promptSession,
 	queueSessionMessage,
+	readGoosePreferences,
+	readGooseProviderDefaults,
 	refreshAvailableModels,
 	refreshGooseStatus,
 	removeGooseExtension,
@@ -48,8 +54,11 @@ import {
 	removeSessionQueue,
 	renameSession,
 	replyProviderLogin,
+	resetGoosePreferences,
 	resolvePermission,
 	resolveSessionQuestion,
+	saveGoosePreferences,
+	saveGooseProviderDefaults,
 	searchSessionHistory,
 	setAllModelVisibility,
 	setGooseExtensionEnabled,
@@ -60,6 +69,7 @@ import {
 	startProviderLogin,
 	steerSession,
 	unarchiveSession,
+	updateGooseAgent,
 } from "../agent";
 import { listDirectories } from "../directory-browser";
 import { readDir, readFile } from "../fs";
@@ -73,6 +83,7 @@ import {
 import {
 	addProjectRoot,
 	assertProjectCwd,
+	assertProjectRoot,
 	closeProject,
 	getProject,
 	listProjects,
@@ -118,6 +129,84 @@ function requestIdentifier(value: unknown, _label: string): string {
 		throw new Error("Malformed session request");
 	}
 	return value;
+}
+
+function optionalProjectDirectory(projectId: unknown, root: unknown): string | undefined {
+	if (projectId === undefined && root === undefined) return undefined;
+	if (projectId === undefined || root === undefined)
+		throw new Error("Malformed Goose agent request");
+	return assertProjectRoot(
+		requestIdentifier(projectId, "project identifier"),
+		requestIdentifier(root, "project directory"),
+	);
+}
+
+function goosePreferences(value: unknown): import("@gooseberry/contracts").GoosePreferences {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error("Malformed Goose preferences request");
+	}
+	const threshold = Reflect.get(value, "autoCompactThreshold");
+	const thinking = Reflect.get(value, "gooseThinkingEffort");
+	if (
+		threshold !== undefined &&
+		(typeof threshold !== "number" ||
+			!Number.isFinite(threshold) ||
+			threshold <= 0 ||
+			threshold > 1)
+	) {
+		throw new Error("Malformed Goose preferences request");
+	}
+	if (
+		thinking !== undefined &&
+		thinking !== "off" &&
+		thinking !== "low" &&
+		thinking !== "medium" &&
+		thinking !== "high" &&
+		thinking !== "max"
+	) {
+		throw new Error("Malformed Goose preferences request");
+	}
+	return {
+		...(threshold === undefined ? {} : { autoCompactThreshold: threshold }),
+		...(thinking === undefined ? {} : { gooseThinkingEffort: thinking }),
+	};
+}
+
+function goosePreferenceKeys(value: unknown): ("autoCompactThreshold" | "gooseThinkingEffort")[] {
+	if (!Array.isArray(value) || value.length === 0 || value.length > 2) {
+		throw new Error("Malformed Goose preferences request");
+	}
+	if (
+		value.some((key) => key !== "autoCompactThreshold" && key !== "gooseThinkingEffort") ||
+		new Set(value).size !== value.length
+	) {
+		throw new Error("Malformed Goose preferences request");
+	}
+	return value as ("autoCompactThreshold" | "gooseThinkingEffort")[];
+}
+
+function defaultRequest(value: unknown): { providerId: string; modelId: string | null } {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error("Malformed Goose defaults request");
+	}
+	const providerId = Reflect.get(value, "providerId");
+	const modelId = Reflect.get(value, "modelId");
+	if (
+		typeof providerId !== "string" ||
+		!providerId.trim() ||
+		providerId.includes("\0") ||
+		(modelId !== null && (typeof modelId !== "string" || !modelId.trim() || modelId.includes("\0")))
+	) {
+		throw new Error("Malformed Goose defaults request");
+	}
+	return { providerId: providerId.trim(), modelId: modelId === null ? null : modelId.trim() };
+}
+
+function agentRequest(value: unknown): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error("Malformed Goose agent request");
+	}
+	return value as Record<string, unknown>;
 }
 
 function authorizeRecordedSession(projectId: unknown, sessionId: unknown): string {
@@ -375,6 +464,54 @@ const handlers: Record<string, Handler> = {
 	},
 	"model.setAllVisibility": (params) =>
 		setAllModelVisibility((params as { hidden: boolean }).hidden === true),
+	"goose.preferencesRead": () => readGoosePreferences(),
+	"goose.preferencesSave": (params) => saveGoosePreferences(goosePreferences(params)),
+	"goose.preferencesReset": (params) => {
+		const value = agentRequest(params);
+		return resetGoosePreferences(goosePreferenceKeys(value.keys));
+	},
+	"goose.defaultsRead": () => readGooseProviderDefaults(),
+	"goose.defaultsSave": (params) => saveGooseProviderDefaults(defaultRequest(params)),
+	"goose.defaultsClear": () => clearGooseProviderDefaults(),
+	"goose.agentList": (params) => {
+		const value = agentRequest(params);
+		return listGooseAgents(optionalProjectDirectory(value.projectId, value.root));
+	},
+	"goose.agentCreate": (params) => {
+		const value = agentRequest(params);
+		if (value.scope !== "global" && value.scope !== "project") {
+			throw new Error("Malformed Goose agent request");
+		}
+		const projectDir = optionalProjectDirectory(value.projectId, value.root);
+		if ((value.scope === "project") !== Boolean(projectDir)) {
+			throw new Error("Malformed Goose agent request");
+		}
+		return createGooseAgent({
+			name: value.name,
+			description: value.description,
+			instructions: value.instructions,
+			scope: value.scope,
+			...(projectDir ? { projectDir } : {}),
+			...(value.modelId === undefined ? {} : { modelId: value.modelId }),
+		});
+	},
+	"goose.agentUpdate": (params) => {
+		const value = agentRequest(params);
+		const projectDir = optionalProjectDirectory(value.projectId, value.root);
+		return updateGooseAgent({
+			id: value.id,
+			name: value.name,
+			description: value.description,
+			instructions: value.instructions,
+			...(projectDir ? { projectDir } : {}),
+			...(value.modelId === undefined ? {} : { modelId: value.modelId }),
+		});
+	},
+	"goose.agentDelete": async (params) => {
+		const value = agentRequest(params);
+		await deleteGooseAgent(value.id, optionalProjectDirectory(value.projectId, value.root));
+		return { ok: true } as const;
+	},
 	"provider.status": () => listProviderStatus(),
 	"provider.readiness": (params) => {
 		const value = params as { providerId?: unknown };

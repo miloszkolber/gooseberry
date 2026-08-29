@@ -56,7 +56,7 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(63);
+	expect(PROTOCOL_VERSION).toBe(64);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");

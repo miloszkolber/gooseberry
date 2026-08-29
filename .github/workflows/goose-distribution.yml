@@ -72,7 +72,7 @@ jobs:
         run: >-
           cargo build --locked --release --target "${{ matrix.target }}" -p goose-cli --bin goose
           --no-default-features
-          --features code-mode,local-inference,aws-providers,nostr,rustls-tls,system-keyring
+          --features code-mode,aws-providers,nostr,rustls-tls,system-keyring
       - name: Smoke checks
         working-directory: upstream
         run: |

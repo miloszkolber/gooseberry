@@ -23,7 +23,9 @@ import {
 	askSessionQuestion,
 	cancelProviderLogin,
 	checkProviderReadiness,
+	createGooseAgent,
 	createSession,
+	deleteGooseAgent,
 	disposeAllSessions,
 	editSessionQueue,
 	forkSession,
@@ -36,7 +38,9 @@ import {
 	hasSession,
 	isSessionStreaming,
 	listAvailableModels,
+	listGooseAgents,
 	listGooseExtensions,
+	listProviderStatus,
 	listSessionExtensions,
 	listSessions,
 	listSessionTools,
@@ -50,8 +54,10 @@ import {
 	renameSession,
 	replyProviderLogin,
 	requestPermission,
+	resetGoosePreferences,
 	resolvePermission,
 	resolveSessionQuestion,
+	saveGooseProviderDefaults,
 	searchSessionHistory,
 	setCanonicalModelProjectionDeadlineForTests,
 	setGooseClient,
@@ -70,6 +76,7 @@ import {
 	startProviderLogin,
 	steerSession,
 	unarchiveSession,
+	updateGooseAgent,
 } from "./agent-session-manager";
 
 class FakeConnection implements GooseConnection {
@@ -122,6 +129,13 @@ class FakeConnection implements GooseConnection {
 	];
 	toolPermission = "ask_before";
 	providerModels: Record<string, unknown>[] = [];
+	openaiConfigured = false;
+	openaiAvailable: boolean | undefined = true;
+	agentSources: Record<string, unknown>[] = [];
+	preferences: Record<string, unknown>[] = [
+		{ key: "autoCompactThreshold", value: 0.8 },
+		{ key: "gooseThinkingEffort", value: "high" },
+	];
 	canonicalModels = new Map<string, unknown>();
 	canonicalGate: Promise<void> | undefined;
 	ignoreCanonicalAbort = false;
@@ -279,8 +293,8 @@ class FakeConnection implements GooseConnection {
 					{
 						providerId: "openai",
 						providerName: "OpenAI",
-						configured: false,
-						available: true,
+						configured: this.openaiConfigured,
+						...(this.openaiAvailable === undefined ? {} : { available: this.openaiAvailable }),
 						visibleInSetup: true,
 						configKeys: [
 							{
@@ -342,6 +356,46 @@ class FakeConnection implements GooseConnection {
 			return this.readinessResponse;
 		}
 		if (method === "_goose/unstable/agent-mentions/list") return { agents: this.agentMentions };
+		if (method === "_goose/unstable/preferences/read") return { values: this.preferences };
+		if (method === "_goose/unstable/preferences/remove") {
+			this.preferences = this.preferences.map((entry) =>
+				(params.keys as unknown[]).includes(entry.key) ? { ...entry, value: null } : entry,
+			);
+			return {};
+		}
+		if (method === "_goose/unstable/sources/list") return { sources: this.agentSources };
+		if (method === "_goose/unstable/sources/create") {
+			const source = {
+				type: "agent",
+				name: params.name,
+				description: params.description,
+				content: params.content,
+				path: `/private/${params.name}.md`,
+				global: (params.target as { scope: string }).scope === "global",
+				writable: true,
+				properties: params.properties ?? {},
+			};
+			this.agentSources.push(source);
+			return { source };
+		}
+		if (method === "_goose/unstable/sources/update") {
+			const source = this.agentSources.find((entry) => entry.path === params.path);
+			if (!source) throw new Error("missing source");
+			Object.assign(source, {
+				name: params.name,
+				description: params.description,
+				content: params.content,
+				...(params.properties === undefined ? {} : { properties: params.properties }),
+			});
+			return { source };
+		}
+		if (method === "_goose/unstable/sources/delete") {
+			this.agentSources = this.agentSources.filter((entry) => entry.path !== params.path);
+			return {};
+		}
+		if (method === "_goose/unstable/defaults/read") return { providerId: "openai", modelId: "gpt" };
+		if (method === "_goose/unstable/defaults/save")
+			return { providerId: params.providerId, modelId: params.modelId };
 		if (method === "_goose/unstable/providers/config/read")
 			return {
 				fields: [
@@ -2010,6 +2064,133 @@ test("attaches an authorized Goose session before returning browser-safe agent m
 	expect(f.connection.calls.at(-1)).toEqual({
 		method: "_goose/unstable/agent-mentions/list",
 		params: { cwd: f.directory, sessionId: created.sessionId },
+	});
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("agent catalog uses opaque IDs, excludes checks, accepts custom models, and preserves unknown properties", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.openaiConfigured = true;
+	f.connection.providerModels = [{ id: "gpt", name: "GPT" }];
+	f.connection.agentSources = [
+		{
+			type: "agent",
+			name: "Check",
+			description: "Must not be edited",
+			content: "check",
+			path: "/private/.agents/checks/check.md",
+			global: false,
+			writable: true,
+			properties: { kind: "check" },
+		},
+		{
+			type: "agent",
+			name: "Reviewer",
+			description: "Review code",
+			content: "Review carefully.",
+			path: "/private/.agents/agents/reviewer.md",
+			global: false,
+			writable: true,
+			properties: { private: "retained", model: "gpt" },
+		},
+	];
+	const listed = await listGooseAgents(f.directory);
+	expect(listed).toHaveLength(1);
+	expect(JSON.stringify(listed)).not.toContain("/private");
+	expect(JSON.stringify(listed)).not.toContain("private");
+	const updated = await updateGooseAgent({
+		id: listed[0]?.id,
+		name: "Reviewer 2",
+		description: "Review code again",
+		instructions: "Use plain text.",
+		projectDir: f.directory,
+		modelId: "gpt",
+	});
+	expect(updated.name).toBe("Reviewer 2");
+	expect(f.connection.agentSources[1]).toMatchObject({
+		properties: { private: "retained", model: "gpt" },
+	});
+	const custom = await createGooseAgent({
+		name: "Custom",
+		description: "",
+		instructions: "",
+		scope: "global",
+		modelId: "not-a-model",
+	});
+	expect(custom).toMatchObject({ modelId: "not-a-model", description: "", instructions: "" });
+	const emptyUpdated = await updateGooseAgent({
+		id: custom.id,
+		name: "Custom",
+		description: "",
+		instructions: "",
+	});
+	expect(emptyUpdated).toMatchObject({ description: "", instructions: "" });
+	expect(
+		f.connection.agentSources.find((source) => source.path === "/private/Custom.md"),
+	).toMatchObject({
+		properties: { model: "not-a-model" },
+	});
+	await deleteGooseAgent(updated.id, f.directory);
+	expect(await listGooseAgents(f.directory)).toMatchObject([{ id: custom.id }]);
+	expect(await saveGooseProviderDefaults({ providerId: "openai", modelId: "missing" })).toEqual({
+		providerId: "openai",
+		modelId: "missing",
+	});
+	await expect(
+		createGooseAgent({ name: "bad/name", description: "", instructions: "", scope: "global" }),
+	).rejects.toThrow("name");
+	await expect(
+		createGooseAgent({ name: "🪿".repeat(21), description: "", instructions: "", scope: "global" }),
+	).rejects.toThrow("name");
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("provider status retains configured availability when Goose has no visible models", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.openaiConfigured = true;
+	f.connection.providerModels = [];
+	expect((await listProviderStatus()).providers).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({
+				id: "openai",
+				configured: true,
+				available: true,
+				modelCount: 0,
+				availableModelCount: 0,
+			}),
+		]),
+	);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("provider defaults consistently treat omitted availability as available", async () => {
+	const f = fixture();
+	await f.client.ready();
+	f.connection.openaiConfigured = true;
+	f.connection.openaiAvailable = undefined;
+	expect((await listProviderStatus()).providers).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({ id: "openai", configured: true, available: true }),
+		]),
+	);
+	expect(await saveGooseProviderDefaults({ providerId: "openai", modelId: "custom" })).toEqual({
+		providerId: "openai",
+		modelId: "custom",
+	});
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("resetting a Goose preference treats its null read value as unset", async () => {
+	const f = fixture();
+	await f.client.ready();
+	expect(await resetGoosePreferences(["autoCompactThreshold"])).toEqual({
+		gooseThinkingEffort: "high",
 	});
 	disposeAllSessions();
 	rmSync(f.directory, { recursive: true, force: true });

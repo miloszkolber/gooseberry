@@ -152,6 +152,7 @@ export interface ContentOpenOptions {
 }
 
 export const SettingsSection = {
+	Goose: "goose",
 	Providers: "providers",
 	Models: "models",
 	Automation: "automation",

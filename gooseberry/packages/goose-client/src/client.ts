@@ -5,6 +5,7 @@ import {
 } from "@agentclientprotocol/sdk/experimental/ws-client";
 import type {
 	GooseAgentMention,
+	GooseAgentSource,
 	GooseCanonicalModelInfo,
 	GooseClientEvent,
 	GooseConfigOption,
@@ -19,9 +20,12 @@ import type {
 	GoosePermissionDecision,
 	GoosePermissionHandler,
 	GoosePermissionRequest,
+	GoosePreferenceKey,
+	GoosePreferences,
 	GoosePromptContent,
 	GooseProvider,
 	GooseProviderConfigField,
+	GooseProviderDefaults,
 	GooseProviderReadiness,
 	GooseRecipe,
 	GooseRecipeListEntry,
@@ -370,6 +374,117 @@ export class GooseClient {
 			if (!Array.isArray(response.agents)) throw new Error("Goose response is missing agents");
 			return response.agents.map(normalizeAgentMention);
 		});
+	}
+	async readPreferences(options?: GooseRequestOptions): Promise<GoosePreferences> {
+		const response = object(
+			await this.custom(
+				"_goose/unstable/preferences/read",
+				{ keys: ["autoCompactThreshold", "gooseThinkingEffort"] },
+				options,
+			),
+		);
+		return normalizePreferences(response.values);
+	}
+	async savePreferences(values: GoosePreferences, options?: GooseRequestOptions): Promise<void> {
+		const normalized = normalizePreferences(
+			Object.entries(values).map(([key, value]) => ({ key, value })),
+		);
+		const preferenceEntries = preferenceValues(normalized);
+		if (preferenceEntries.length === 0) return;
+		await this.custom("_goose/unstable/preferences/save", { values: preferenceEntries }, options);
+	}
+	async removePreferences(
+		keys: readonly GoosePreferenceKey[],
+		options?: GooseRequestOptions,
+	): Promise<void> {
+		if (!keys.length || keys.some((key) => !isPreferenceKey(key))) {
+			throw new Error("Goose preference removal has invalid keys");
+		}
+		await this.custom("_goose/unstable/preferences/remove", { keys: [...new Set(keys)] }, options);
+	}
+	async readProviderDefaults(options?: GooseRequestOptions): Promise<GooseProviderDefaults> {
+		return normalizeProviderDefaults(
+			await this.custom("_goose/unstable/defaults/read", {}, options),
+		);
+	}
+	async saveProviderDefaults(
+		defaults: GooseProviderDefaults,
+		options?: GooseRequestOptions,
+	): Promise<GooseProviderDefaults> {
+		const requested = normalizeProviderDefaults(defaults);
+		if (!requested.providerId) throw new Error("Goose default provider is required");
+		const saved = normalizeProviderDefaults(
+			await this.custom(
+				"_goose/unstable/defaults/save",
+				{ providerId: requested.providerId, modelId: requested.modelId },
+				options,
+			),
+		);
+		if (saved.providerId !== requested.providerId || saved.modelId !== requested.modelId) {
+			throw new Error("Goose default response does not match the request");
+		}
+		return saved;
+	}
+	async clearProviderDefaults(options?: GooseRequestOptions): Promise<GooseProviderDefaults> {
+		const cleared = normalizeProviderDefaults(
+			await this.custom("_goose/unstable/defaults/clear", {}, options),
+		);
+		if (cleared.providerId !== null || cleared.modelId !== null) {
+			throw new Error("Goose default clear response is invalid");
+		}
+		return cleared;
+	}
+	async listAgentSources(
+		projectDir?: string,
+		options?: GooseRequestOptions,
+	): Promise<GooseAgentSource[]> {
+		const response = object(
+			await this.custom(
+				"_goose/unstable/sources/list",
+				{
+					type: "agent",
+					...(projectDir ? { projectDir } : {}),
+					includeProjectSources: false,
+				},
+				options,
+			),
+		);
+		return array(response.sources).map(normalizeAgentSource);
+	}
+	async createAgentSource(
+		input: {
+			name: string;
+			description: string;
+			content: string;
+			target: { scope: "global" } | { scope: "projectDir"; projectDir: string };
+			properties?: Record<string, JsonValue>;
+		},
+		options?: GooseRequestOptions,
+	): Promise<GooseAgentSource> {
+		const response = object(
+			await this.custom("_goose/unstable/sources/create", { type: "agent", ...input }, options),
+		);
+		return normalizeAgentSource(response.source);
+	}
+	async updateAgentSource(
+		input: {
+			path: string;
+			name: string;
+			description: string;
+			content: string;
+			properties?: Record<string, JsonValue>;
+		},
+		options?: GooseRequestOptions,
+	): Promise<GooseAgentSource> {
+		const response = object(
+			await this.custom("_goose/unstable/sources/update", { type: "agent", ...input }, options),
+		);
+		return normalizeAgentSource(response.source);
+	}
+	deleteAgentSource(path: string, options?: GooseRequestOptions): Promise<void> {
+		return this.custom("_goose/unstable/sources/delete", { type: "agent", path }, options).then(
+			() => {},
+		);
 	}
 	providerCatalog(format?: string, options?: GooseRequestOptions): Promise<unknown> {
 		return this.custom("_goose/unstable/providers/catalog/list", format ? { format } : {}, options);
@@ -1127,6 +1242,100 @@ function normalizeAgentMention(value: unknown): GooseAgentMention {
 		sourceType,
 		mention: requiredString(p, "mention"),
 		...(typeof p.sourcePath === "string" ? { sourcePath: p.sourcePath } : {}),
+		raw: raw(value),
+	};
+}
+function isPreferenceKey(value: unknown): value is GoosePreferenceKey {
+	return value === "autoCompactThreshold" || value === "gooseThinkingEffort";
+}
+function normalizePreferences(value: unknown): GoosePreferences {
+	if (!Array.isArray(value)) throw new Error("Goose preferences response is missing values");
+	const preferences: GoosePreferences = {};
+	const seen = new Set<string>();
+	for (const candidate of value) {
+		const entry = object(candidate);
+		const key = entry.key;
+		if (!isPreferenceKey(key) || seen.has(key))
+			throw new Error("Goose preferences response is invalid");
+		seen.add(key);
+		if (entry.value === null) continue;
+		if (key === "autoCompactThreshold") {
+			if (
+				typeof entry.value !== "number" ||
+				!Number.isFinite(entry.value) ||
+				entry.value <= 0 ||
+				entry.value > 1
+			) {
+				throw new Error("Goose auto compact threshold is invalid");
+			}
+			preferences.autoCompactThreshold = entry.value;
+		} else {
+			if (
+				entry.value !== "off" &&
+				entry.value !== "low" &&
+				entry.value !== "medium" &&
+				entry.value !== "high" &&
+				entry.value !== "max"
+			) {
+				throw new Error("Goose thinking effort is invalid");
+			}
+			preferences.gooseThinkingEffort = entry.value;
+		}
+	}
+	return preferences;
+}
+function preferenceValues(value: GoosePreferences): { key: GoosePreferenceKey; value: unknown }[] {
+	return [
+		...(value.autoCompactThreshold === undefined
+			? []
+			: [{ key: "autoCompactThreshold" as const, value: value.autoCompactThreshold }]),
+		...(value.gooseThinkingEffort === undefined
+			? []
+			: [{ key: "gooseThinkingEffort" as const, value: value.gooseThinkingEffort }]),
+	];
+}
+function nullableString(value: Record<string, unknown>, key: string): string | null {
+	const candidate = value[key];
+	if (candidate === null) return null;
+	if (typeof candidate !== "string" || !candidate.trim() || candidate.includes("\0")) {
+		throw new Error(`Goose defaults response has an invalid ${key}`);
+	}
+	return candidate;
+}
+function normalizeProviderDefaults(value: unknown): GooseProviderDefaults {
+	const response = object(value);
+	return {
+		providerId: nullableString(response, "providerId"),
+		modelId: nullableString(response, "modelId"),
+	};
+}
+function normalizeAgentSource(value: unknown): GooseAgentSource {
+	const source = object(value);
+	if (source.type !== "agent") throw new Error("Goose source is not an agent");
+	if (typeof source.global !== "boolean" || typeof source.writable !== "boolean") {
+		throw new Error("Goose agent source has invalid scope");
+	}
+	const propertiesValue = source.properties ?? {};
+	if (
+		typeof propertiesValue !== "object" ||
+		propertiesValue === null ||
+		Array.isArray(propertiesValue)
+	) {
+		throw new Error("Goose agent source has invalid properties");
+	}
+	return {
+		type: "agent",
+		name: requiredString(source, "name"),
+		description:
+			typeof source.description === "string"
+				? source.description
+				: requiredString(source, "description"),
+		content:
+			typeof source.content === "string" ? source.content : requiredString(source, "content"),
+		path: requiredString(source, "path"),
+		global: source.global,
+		writable: source.writable,
+		properties: propertiesValue as Record<string, JsonValue>,
 		raw: raw(value),
 	};
 }

@@ -16,6 +16,7 @@ let notes: string;
 let nestedRepo: string;
 let repositoryWithinRepository: string;
 let mountRoot: string;
+let otherProjectRoot: string;
 
 function git(cwd: string, ...args: string[]): void {
 	const result = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "ignore", stderr: "ignore" });
@@ -33,8 +34,10 @@ beforeEach(() => {
 	notes = join(mountRoot, "notes");
 	nestedRepo = join(notes, "nested-repo");
 	repositoryWithinRepository = join(repo, "packages", "independent");
+	otherProjectRoot = join(mountRoot, "other-project");
 	mkdirSync(repo);
 	mkdirSync(nestedRepo, { recursive: true });
+	mkdirSync(otherProjectRoot);
 	repo = realpathSync(repo);
 	git(repo, "init", "-b", "main");
 	git(repo, "config", "user.email", "test@gooseberry.test");
@@ -60,6 +63,13 @@ beforeEach(() => {
 		join(dataDir, "projects.json"),
 		JSON.stringify([
 			{ id: "p1", name: "project", roots: [repo, notes], slug: "project", lastOpened: 1 },
+			{
+				id: "p2",
+				name: "other project",
+				roots: [otherProjectRoot],
+				slug: "other-project",
+				lastOpened: 0,
+			},
 		]),
 	);
 });
@@ -101,9 +111,11 @@ test("projects persist validated display names and icons without changing stable
 		context,
 	);
 	expect(updated).toMatchObject({ id: "p1", name: "Research lab", icon: "flask", slug: "project" });
-	expect(await handleRequest("project.list", {}, context)).toEqual([
-		expect.objectContaining({ id: "p1", name: "Research lab", icon: "flask", slug: "project" }),
-	]);
+	expect(await handleRequest("project.list", {}, context)).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({ id: "p1", name: "Research lab", icon: "flask", slug: "project" }),
+		]),
+	);
 	await expect(
 		handleRequest("project.update", { id: "p1", icon: "arbitrary" }, context),
 	).rejects.toThrow("Unknown project icon");
@@ -117,6 +129,45 @@ test("browser protocol does not allow users to mutate agent-owned tasks", async 
 			context,
 		),
 	).rejects.toThrow("Unknown method");
+});
+
+test("Goose settings handlers reject malformed preferences, defaults, and unauthorized project agent input", async () => {
+	await expect(
+		handleRequest("goose.preferencesSave", { autoCompactThreshold: 0 }, context),
+	).rejects.toThrow("Malformed Goose preferences request");
+	await expect(
+		handleRequest("goose.preferencesReset", { keys: ["voiceDictationProvider"] }, context),
+	).rejects.toThrow("Malformed Goose preferences request");
+	await expect(
+		handleRequest("goose.defaultsSave", { providerId: "openai", modelId: 1 }, context),
+	).rejects.toThrow("Malformed Goose defaults request");
+	await expect(
+		handleRequest(
+			"goose.agentCreate",
+			{ name: "Agent", description: "", instructions: "text", scope: "project" },
+			context,
+		),
+	).rejects.toThrow("Malformed Goose agent request");
+	await expect(
+		handleRequest("goose.agentList", { projectId: "unknown", root: repo }, context),
+	).rejects.toThrow("Unknown project");
+	await expect(
+		handleRequest("goose.agentList", { projectId: "p1", root: mountRoot }, context),
+	).rejects.toThrow("must exactly match an admitted project root");
+});
+
+test("project agent catalog authorization requires an exact admitted root", async () => {
+	for (const root of [repo, notes]) {
+		await expect(
+			handleRequest("goose.agentList", { projectId: "p1", root }, context),
+		).rejects.toThrow("Couldn't load Goose agents");
+	}
+	await expect(
+		handleRequest("goose.agentList", { projectId: "p1", root: nestedRepo }, context),
+	).rejects.toThrow("must exactly match an admitted project root");
+	await expect(
+		handleRequest("goose.agentList", { projectId: "p1", root: otherProjectRoot }, context),
+	).rejects.toThrow("must exactly match an admitted project root");
 });
 
 test("session extension and tool methods require a recorded project session before reaching Goose", async () => {

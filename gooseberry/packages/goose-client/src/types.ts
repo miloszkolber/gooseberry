@@ -147,6 +147,34 @@ export interface GooseAgentMention {
 	raw: JsonValue;
 }
 
+export type GoosePreferenceKey = "autoCompactThreshold" | "gooseThinkingEffort";
+export type GooseThinkingEffort = "off" | "low" | "medium" | "high" | "max";
+
+/** The only preference values Gooseberry is permitted to project. */
+export interface GoosePreferences {
+	autoCompactThreshold?: number;
+	gooseThinkingEffort?: GooseThinkingEffort;
+}
+
+/** Goose's persisted provider/model pair. It is not a Gooseberry registry. */
+export interface GooseProviderDefaults {
+	providerId: string | null;
+	modelId: string | null;
+}
+
+/** Raw source identity and arbitrary properties remain in the ACP adapter. */
+export interface GooseAgentSource {
+	type: "agent";
+	name: string;
+	description: string;
+	content: string;
+	path: string;
+	global: boolean;
+	writable: boolean;
+	properties: Record<string, JsonValue>;
+	raw: JsonValue;
+}
+
 export interface GooseProvider {
 	id: string;
 	name: string;

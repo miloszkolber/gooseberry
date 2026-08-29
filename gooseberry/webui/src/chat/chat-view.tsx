@@ -1,4 +1,4 @@
-import type { AgentMentionInfo, AskUserQuestionResult, PromptHit } from "@gooseberry/contracts";
+import type { AskUserQuestionResult, PromptHit } from "@gooseberry/contracts";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -64,16 +64,6 @@ function StreamFooter({ context }: { context: ChatListContext }) {
 }
 
 const CHAT_LIST_COMPONENTS = { Footer: StreamFooter };
-
-function isComposerAgentMention(
-	mention: AgentMentionInfo,
-): mention is AgentMentionInfo & { sourceType: "recipe" | "subrecipe" | "agent" } {
-	return (
-		mention.sourceType === "agent" ||
-		mention.sourceType === "recipe" ||
-		mention.sourceType === "subrecipe"
-	);
-}
 
 export default function ChatView({
 	sessionId,
@@ -287,7 +277,6 @@ export default function ChatView({
 		if (mentionQuery.includes("/")) return fileMentionCandidates;
 		const query = mentionQuery.toLocaleLowerCase();
 		const agentCandidates: MentionCandidate[] = agentMentions
-			.filter(isComposerAgentMention)
 			.filter(({ name, mention }) =>
 				[name, mention.startsWith("@") ? mention.slice(1) : mention].some((value) =>
 					value.toLocaleLowerCase().startsWith(query),
