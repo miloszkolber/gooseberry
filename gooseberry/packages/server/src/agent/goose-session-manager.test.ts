@@ -17,11 +17,14 @@ import {
 import {
 	abortSession,
 	archiveSession,
+	askSessionQuestion,
 	cancelProviderLogin,
 	createSession,
 	disposeAllSessions,
+	editSessionQueue,
 	getSessionCommands,
 	getSessionMessages,
+	getSessionStats,
 	gooseRecipes,
 	gooseSchedules,
 	hasSession,
@@ -30,10 +33,13 @@ import {
 	pendingPermissionSnapshot,
 	promptSession,
 	providerLoginSnapshot,
+	queueSessionMessage,
+	removeSessionQueue,
 	renameSession,
 	replyProviderLogin,
 	requestPermission,
 	resolvePermission,
+	resolveSessionQuestion,
 	searchSessionHistory,
 	setGooseClient,
 	setObjectiveMcpUrl,
@@ -344,6 +350,138 @@ test("Goose create, replay load, prompt stream, cancel, steer, and thinking are 
 	]);
 	expect(events).toEqual(expect.arrayContaining(["thinking", "tool-start", "usage"]));
 	expect(f.connection.notifications.map((item) => item.method)).toEqual(["session/cancel"]);
+});
+
+test("controller queues follow-ups across browser hydration and drains them after settlement", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	let releasePrompt: (() => void) | undefined;
+	f.connection.promptGate = new Promise<void>((resolve) => {
+		releasePrompt = resolve;
+	});
+	const queueEvents: { steering: readonly string[]; followUp: readonly string[] }[] = [];
+	setSessionPublisher(({ event }) => {
+		if (event.type === "queue_update") queueEvents.push(event);
+	});
+	await promptSession(created.sessionId, "working");
+	await queueSessionMessage(created.sessionId, "first follow-up");
+	await queueSessionMessage(created.sessionId, "second follow-up");
+	await editSessionQueue(created.sessionId, "followUp", 1, "revised follow-up");
+
+	expect(
+		(await getSessionMessages(created.sessionId, "project", f.directory)).summary.queue,
+	).toEqual({
+		steering: [],
+		followUp: ["first follow-up", "revised follow-up"],
+	});
+	await removeSessionQueue(created.sessionId, "followUp", 0);
+	expect(queueEvents.at(-1)?.followUp).toEqual(["revised follow-up"]);
+
+	releasePrompt?.();
+	for (let attempt = 0; attempt < 20; attempt++) {
+		if (f.connection.calls.filter((call) => call.method === "session/prompt").length >= 2) break;
+		await Bun.sleep(5);
+	}
+	expect(f.connection.calls.filter((call) => call.method === "session/prompt")).toHaveLength(2);
+	expect(
+		(await getSessionMessages(created.sessionId, "project", f.directory)).summary.queue,
+	).toEqual({
+		steering: [],
+		followUp: [],
+	});
+});
+
+test("a failed active prompt retains queued follow-ups", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	let rejectPrompt: ((error: Error) => void) | undefined;
+	f.connection.promptGate = new Promise<void>((_resolve, reject) => {
+		rejectPrompt = reject;
+	});
+	await promptSession(created.sessionId, "working");
+	await queueSessionMessage(created.sessionId, "retry later");
+	rejectPrompt?.(new Error("provider unavailable"));
+	await Bun.sleep(1);
+	expect((await listSessions("project"))[0]?.queue?.followUp).toEqual(["retry later"]);
+	expect(f.connection.calls.filter((call) => call.method === "session/prompt")).toHaveLength(1);
+});
+
+test("usage totals accumulate while unreported fields remain distinguishable", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	await promptSession(created.sessionId, "one");
+	await Bun.sleep(1);
+	await promptSession(created.sessionId, "two");
+	await Bun.sleep(1);
+	expect(getSessionStats(created.sessionId)).toMatchObject({
+		tokens: { input: 4, output: 6, cacheRead: 0, cacheWrite: 0, total: 10 },
+		cost: 0,
+		reported: { input: true, output: true, total: true },
+	});
+	expect(getSessionStats(created.sessionId).reported?.cost).toBeUndefined();
+	expect(getSessionStats(created.sessionId).reported?.cacheRead).toBeUndefined();
+});
+
+test("supporting questions pause an MCP tool until the browser replies", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	const args = {
+		questions: [
+			{
+				question: "Which path should I take?",
+				header: "Approach",
+				options: [{ label: "Focused", description: "Keep the change small" }],
+			},
+		],
+	};
+	f.connection.handlers.onSessionUpdate({
+		sessionId: created.sessionId,
+		update: {
+			sessionUpdate: "tool_call",
+			toolCallId: "question-1",
+			title: "Ask",
+			kind: "mcp",
+			_meta: { goose: { toolCall: { toolName: "gooseberry-objectives__ask_user_question" } } },
+			rawInput: args,
+		},
+	});
+	const pending = askSessionQuestion(created.sessionId, args);
+	const answer = {
+		answers: [
+			{
+				questionIndex: 0,
+				question: "Which path should I take?",
+				kind: "option" as const,
+				answer: "Focused",
+			},
+		],
+		cancelled: false,
+	};
+	resolveSessionQuestion(created.sessionId, "question-1", answer);
+	expect(await pending).toEqual(answer);
+	const secondPending = askSessionQuestion(created.sessionId, args);
+	await Bun.sleep(1);
+	f.connection.handlers.onSessionUpdate({
+		sessionId: created.sessionId,
+		update: {
+			sessionUpdate: "tool_call",
+			toolCallId: "question-2",
+			title: "Ask again",
+			kind: "mcp",
+			_meta: { goose: { toolCall: { toolName: "gooseberry-objectives__ask_user_question" } } },
+			rawInput: args,
+		},
+	});
+	await Bun.sleep(30);
+	resolveSessionQuestion(created.sessionId, "question-2", answer);
+	expect(await secondPending).toEqual(answer);
+	const messages = (await getSessionMessages(created.sessionId, "project", f.directory)).messages;
+	expect(messages.at(-1)).toMatchObject({
+		role: "assistant",
+		content: expect.arrayContaining([
+			expect.objectContaining({ type: "toolCall", id: "question-2", name: "ask_user_question" }),
+		]),
+	});
 });
 
 test("Goose session rename and reversible archive stay project-associated", async () => {

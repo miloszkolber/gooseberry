@@ -101,6 +101,9 @@ export interface SessionStats {
 	totalMessages: number;
 	tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
 	cost: number;
+	reported?: Partial<
+		Record<"input" | "output" | "cacheRead" | "cacheWrite" | "total" | "cost", boolean>
+	>;
 	contextUsage?: ContextUsage;
 }
 export interface SessionSummary {
@@ -139,7 +142,7 @@ export interface SessionLifecycleChangedPayload {
 	title?: string;
 }
 
-export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | WireCustomMessage;
+export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
 export type AgentEvent =
 	| {
 			type:
@@ -163,6 +166,7 @@ export type AgentEvent =
 			toolName?: string;
 			status?: string;
 			usage?: Partial<SessionStats["tokens"]> & { cost?: number };
+			reported?: SessionStats["reported"];
 			contextUsage?: ContextUsage;
 			configOptions?: readonly { id: string; currentValue?: string | boolean }[];
 			title?: string;
@@ -217,7 +221,7 @@ export interface SlashCommandInfo {
 	};
 }
 
-/** Retained only as inert UI state while Goose has no queue-manipulation API. */
+/** Controller-owned queue state. Goose has no queue-manipulation API. */
 export type QueueLane = "steering" | "followUp";
 export interface SessionQueueState {
 	steering: readonly string[];
@@ -254,10 +258,6 @@ export interface AskUserQuestionResult {
 	answers: AskUserQuestionAnswer[];
 	cancelled: boolean;
 }
-export interface AskUserAnswersDetails {
-	toolCallId: string;
-	result: AskUserQuestionResult;
-}
 export interface AskUserQuestionOption {
 	label: string;
 	description: string;
@@ -273,6 +273,10 @@ export interface AskUserQuestionItem {
 export interface AskUserQuestionArgs {
 	questions: AskUserQuestionItem[];
 }
+export interface PendingUserQuestion extends AskUserQuestionArgs {
+	id: string;
+	sessionId: string;
+}
 export interface AskUserQuestionAnswer {
 	questionIndex: number;
 	question: string;
@@ -281,16 +285,6 @@ export interface AskUserQuestionAnswer {
 	selected?: string[];
 	notes?: string;
 	preview?: string;
-}
-export interface WireCustomMessage<T = unknown> {
-	role: "custom";
-	customType: string;
-	details: T;
-}
-export function isAskUserAnswersMessage(
-	_message: unknown,
-): _message is WireCustomMessage<AskUserAnswersDetails> {
-	return false;
 }
 export function isTranscriptMessageRole(role: string): role is TranscriptMessage["role"] {
 	return role === "user" || role === "assistant" || role === "toolResult";

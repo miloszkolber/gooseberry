@@ -1,8 +1,10 @@
 import { isAbsolute, relative } from "node:path";
 import type {
 	AppConfigPatch,
+	AskUserQuestionResult,
 	GitDiffScope,
 	ImageContent,
+	QueueLane,
 	ThinkingLevel,
 	WireModel,
 } from "@gooseberry/contracts";
@@ -14,6 +16,7 @@ import {
 	clampSessionThinkingLevel,
 	createSession,
 	deleteSession,
+	editSessionQueue,
 	ensureSessionAttached,
 	getCommandsForCwd,
 	getDefaultModel,
@@ -29,11 +32,14 @@ import {
 	listSessions,
 	logoutProvider,
 	promptSession,
+	queueSessionMessage,
 	refreshAvailableModels,
 	refreshGooseStatus,
+	removeSessionQueue,
 	renameSession,
 	replyProviderLogin,
 	resolvePermission,
+	resolveSessionQuestion,
 	searchSessionHistory,
 	setAllModelVisibility,
 	setModelVisibility,
@@ -51,7 +57,6 @@ import {
 	loadProjectSessionRecords,
 	sessionGoalState,
 	writeStoredSessionGoal,
-	writeStoredSessionTasks,
 } from "../persistence";
 import {
 	addProjectRoot,
@@ -61,6 +66,7 @@ import {
 	listProjects,
 	openProject,
 	removeProjectRoot,
+	updateProject,
 } from "../projects";
 import { getSignetStatus, updateConfig } from "../settings";
 import { ensureWatch } from "../watch";
@@ -140,6 +146,11 @@ const handlers: Record<string, Handler> = {
 		if (ownsSession) throw new Error("Move or delete sessions using this root before removing it.");
 		return removeProjectRoot(value.id, value.path);
 	},
+	"project.update": (params) => {
+		const value = params as { id?: unknown; name?: unknown; icon?: unknown };
+		if (typeof value.id !== "string") throw new Error("Malformed project update");
+		return updateProject(value.id, { name: value.name, icon: value.icon });
+	},
 	"project.list": () => listProjects(),
 	"project.close": (params) => {
 		closeProject((params as { id: string }).id);
@@ -208,6 +219,22 @@ const handlers: Record<string, Handler> = {
 		await steerSession(value.sessionId, value.text, value.images);
 		return { ok: true } as const;
 	},
+	"session.queueAdd": async (params) => {
+		const value = sessionPromptParams(params);
+		if (value.images?.length) throw new Error("Queued messages do not support images");
+		await queueSessionMessage(value.sessionId, value.text);
+		return { ok: true } as const;
+	},
+	"session.queueEdit": async (params) => {
+		const value = params as { sessionId: string; lane: QueueLane; index: number; text: string };
+		await editSessionQueue(value.sessionId, value.lane, value.index, value.text);
+		return { ok: true } as const;
+	},
+	"session.queueRemove": async (params) => {
+		const value = params as { sessionId: string; lane: QueueLane; index: number };
+		await removeSessionQueue(value.sessionId, value.lane, value.index);
+		return { ok: true } as const;
+	},
 	"session.abort": async (params) => {
 		await abortSession((params as { sessionId: string }).sessionId);
 		return { ok: true } as const;
@@ -215,6 +242,15 @@ const handlers: Record<string, Handler> = {
 	"session.permissionReply": (params) => {
 		const value = params as { sessionId: string; permissionId: string; optionId?: string };
 		resolvePermission(value.sessionId, value.permissionId, value.optionId);
+		return { ok: true } as const;
+	},
+	"session.questionReply": (params) => {
+		const value = params as {
+			sessionId: string;
+			toolCallId: string;
+			result: AskUserQuestionResult;
+		};
+		resolveSessionQuestion(value.sessionId, value.toolCallId, value.result);
 		return { ok: true } as const;
 	},
 	"session.delete": async (params) => {
@@ -291,12 +327,6 @@ const handlers: Record<string, Handler> = {
 		const value = params as { projectId?: unknown; sessionId?: unknown };
 		await authorizeSession(value.projectId, value.sessionId);
 		clearStoredSessionGoal(value.projectId as string, value.sessionId as string);
-		return sessionGoalState(value.projectId as string, value.sessionId as string);
-	},
-	"session.tasksSet": async (params) => {
-		const value = params as { projectId?: unknown; sessionId?: unknown; tasks?: unknown };
-		await authorizeSession(value.projectId, value.sessionId);
-		writeStoredSessionTasks(value.projectId as string, value.sessionId as string, value.tasks);
 		return sessionGoalState(value.projectId as string, value.sessionId as string);
 	},
 	"model.list": () => listAvailableModels(),

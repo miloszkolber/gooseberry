@@ -1,6 +1,5 @@
 export type * from "./agent-protocol";
 export {
-	isAskUserAnswersMessage,
 	isTranscriptMessageRole,
 	normalizeSessionTitle,
 	SESSION_TITLE_MAX_LENGTH,
@@ -17,7 +16,11 @@ export {
 	MAX_HISTORY_QUERY_LENGTH,
 	modelReferenceKey,
 	normalizeModelReferences,
+	normalizeProjectIcon,
+	normalizeProjectName,
 	normalizeSessionGoal,
+	PROJECT_ICONS,
+	PROJECT_NAME_MAX_LENGTH,
 	REQUEST_IMAGE_BASE64_BUDGET,
 	SESSION_GOAL_MAX_LENGTH,
 	validateRequestImages,

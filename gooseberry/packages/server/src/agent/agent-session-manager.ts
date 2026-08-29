@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
 	type AgentEvent,
 	type AgentSettlement,
+	type AskUserQuestionArgs,
+	type AskUserQuestionResult,
 	type AssistantMessage,
 	type HistoryScope,
 	type HistorySearchResult,
@@ -13,6 +15,7 @@ import {
 	modelReferenceKey,
 	normalizeSessionTitle,
 	type PermissionRequest,
+	type QueueLane,
 	type SessionEventPayload,
 	type SessionLifecycleChangedPayload,
 	type SessionStats,
@@ -55,6 +58,9 @@ interface Entry {
 	isStreaming: boolean;
 	lastSettlement?: AgentSettlement | null | undefined;
 	stats: SessionStats;
+	queue: { steering: string[]; followUp: string[] };
+	promptGeneration: number;
+	consumedQuestionToolCalls: Set<string>;
 	runId?: string | undefined;
 	objectiveToken: string;
 	/** The Goose ACP connection generation that loaded or created this session. */
@@ -73,6 +79,7 @@ interface Entry {
 }
 
 const sessions = new Map<string, Entry>();
+const followUpDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionOperationCounts = new Map<string, number>();
 const archivingSessions = new Set<string>();
 let publisher: (payload: SessionEventPayload) => void = () => {};
@@ -93,6 +100,14 @@ interface PendingPermission {
 	aborted: () => void;
 }
 const pendingPermissions = new Map<string, PendingPermission>();
+interface PendingQuestion {
+	sessionId: string;
+	args: AskUserQuestionArgs;
+	resolve: (result: AskUserQuestionResult) => void;
+	timer: ReturnType<typeof setTimeout>;
+}
+const pendingQuestions = new Map<string, PendingQuestion>();
+const QUESTION_TIMEOUT_MS = 30 * 60_000;
 const MAX_PENDING_PERMISSION_SNAPSHOT = 100;
 let permissionPublisher: (request: {
 	id: string;
@@ -283,6 +298,8 @@ function objectiveMcp(token: string): readonly GooseMcpServer[] {
 /** Test and embedding seam. The production client is created from GOOSEBERRY_GOOSE_* once. */
 export function setGooseClient(client: GooseClient | undefined): void {
 	configuredClient?.shutdown();
+	for (const timer of followUpDrainTimers.values()) clearTimeout(timer);
+	followUpDrainTimers.clear();
 	configuredClient = client;
 	subscribedClient = undefined;
 	for (const entry of sessions.values()) {
@@ -348,6 +365,7 @@ function emptyStats(sessionId: string): SessionStats {
 		totalMessages: 0,
 		tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		cost: 0,
+		reported: {},
 	};
 }
 function modelFrom(info: GooseSessionInfo): WireModel | null {
@@ -428,6 +446,9 @@ function entryFrom(info: GooseSessionInfo, projectId: string, cwd: string): Entr
 		messages: [],
 		isStreaming: false,
 		stats: emptyStats(sessionId),
+		queue: { steering: [], followUp: [] },
+		promptGeneration: 0,
+		consumedQuestionToolCalls: new Set(),
 		objectiveToken: randomUUID(),
 	};
 }
@@ -478,6 +499,11 @@ function appendAssistantBlock(entry: Entry, block: AssistantContentBlock): void 
 function onGooseEvent(event: GooseClientEvent): void {
 	if (event.type === "disconnected") {
 		for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
+		for (const [toolCallId, pending] of pendingQuestions) {
+			clearTimeout(pending.timer);
+			pendingQuestions.delete(toolCallId);
+			pending.resolve({ answers: [], cancelled: true });
+		}
 		for (const [sessionId, entry] of sessions) {
 			entry.attachedGeneration = undefined;
 			if (entry.replay) continue;
@@ -595,7 +621,10 @@ function applyGooseUpdate(entry: Entry, update: GooseUpdate, publish: boolean): 
 			break;
 		}
 		case "tool-call": {
-			const toolName = update.toolName ?? update.title ?? "tool";
+			const rawToolName = update.toolName ?? update.title ?? "tool";
+			const toolName = rawToolName.endsWith("__ask_user_question")
+				? "ask_user_question"
+				: rawToolName;
 			appendAssistantBlock(entry, {
 				type: "toolCall",
 				id: update.toolCallId,
@@ -634,24 +663,52 @@ function applyGooseUpdate(entry: Entry, update: GooseUpdate, publish: boolean): 
 		}
 		case "usage": {
 			const usage = update.usage;
+			const totalDelta =
+				usage.totalTokens ??
+				(usage.inputTokens ?? 0) +
+					(usage.outputTokens ?? 0) +
+					(usage.cacheReadTokens ?? 0) +
+					(usage.cacheWriteTokens ?? 0);
 			entry.stats.tokens.input += usage.inputTokens ?? 0;
 			entry.stats.tokens.output += usage.outputTokens ?? 0;
 			entry.stats.tokens.cacheRead += usage.cacheReadTokens ?? 0;
 			entry.stats.tokens.cacheWrite += usage.cacheWriteTokens ?? 0;
-			entry.stats.tokens.total =
-				usage.totalTokens ??
-				entry.stats.tokens.input +
-					entry.stats.tokens.output +
-					entry.stats.tokens.cacheRead +
-					entry.stats.tokens.cacheWrite;
+			entry.stats.tokens.total += totalDelta;
 			entry.stats.cost += usage.cost ?? 0;
+			entry.stats.reported = {
+				...entry.stats.reported,
+				...(usage.inputTokens === undefined ? {} : { input: true }),
+				...(usage.outputTokens === undefined ? {} : { output: true }),
+				...(usage.cacheReadTokens === undefined ? {} : { cacheRead: true }),
+				...(usage.cacheWriteTokens === undefined ? {} : { cacheWrite: true }),
+				...(usage.totalTokens === undefined && totalDelta === 0 ? {} : { total: true }),
+				...(usage.cost === undefined ? {} : { cost: true }),
+			};
 			publishEvent({
 				type: "usage",
 				usage: { ...entry.stats.tokens, cost: entry.stats.cost },
+				reported: entry.stats.reported,
 			});
 			break;
 		}
 		case "context-usage": {
+			entry.stats.tokens.input = update.usage.accumulatedInputTokens;
+			entry.stats.tokens.output = update.usage.accumulatedOutputTokens;
+			entry.stats.tokens.total =
+				entry.stats.tokens.input +
+				entry.stats.tokens.output +
+				entry.stats.tokens.cacheRead +
+				entry.stats.tokens.cacheWrite;
+			if (update.usage.accumulatedCost !== undefined) {
+				entry.stats.cost = update.usage.accumulatedCost;
+			}
+			entry.stats.reported = {
+				...entry.stats.reported,
+				input: true,
+				output: true,
+				total: true,
+				...(update.usage.accumulatedCost === undefined ? {} : { cost: true }),
+			};
 			const percent = update.usage.contextLimit
 				? (update.usage.used / update.usage.contextLimit) * 100
 				: null;
@@ -741,7 +798,7 @@ export async function ensureSessionAttached(
 	projectId: string,
 	cwd: string,
 ): Promise<boolean> {
-	return withSessionOperation(sessionId, async () => {
+	const attached = await withSessionOperation(sessionId, async () => {
 		const admitted = assertMountedDirectory(cwd, "Session workspace");
 		const existing = sessions.get(sessionId);
 		if (existing) {
@@ -766,6 +823,9 @@ export async function ensureSessionAttached(
 			messages: [],
 			isStreaming: false,
 			stats: emptyStats(sessionId),
+			queue: { steering: [], followUp: [] },
+			promptGeneration: 0,
+			consumedQuestionToolCalls: new Set(),
 			objectiveToken: randomUUID(),
 		};
 		sessions.set(sessionId, placeholder);
@@ -777,6 +837,11 @@ export async function ensureSessionAttached(
 			throw error;
 		}
 	});
+	const entry = sessions.get(sessionId);
+	if (attached && entry && !entry.isStreaming && entry.queue.followUp.length > 0) {
+		scheduleFollowUpDrain(sessionId);
+	}
+	return attached;
 }
 
 function summary(sessionId: string, entry: Entry): SessionSummary {
@@ -792,6 +857,7 @@ function summary(sessionId: string, entry: Entry): SessionSummary {
 		updatedAt: Date.now(),
 		live: true,
 		archived: false,
+		queue: { steering: [...entry.queue.steering], followUp: [...entry.queue.followUp] },
 		...(entry.lastSettlement !== undefined ? { lastSettlement: entry.lastSettlement } : {}),
 	};
 }
@@ -1172,7 +1238,11 @@ async function withSessionOperation<T>(sessionId: string, operation: () => Promi
  * each entry and generation so reconnecting requests cannot race duplicate
  * loads or issue a session-specific request against an unattached transport.
  */
-async function attachSession(sessionId: string, entry: Entry): Promise<void> {
+async function attachSession(
+	sessionId: string,
+	entry: Entry,
+	options: { drainQueue?: boolean } = {},
+): Promise<void> {
 	const goose = client();
 	await goose.ready();
 	const generation = goose.connectionGeneration;
@@ -1202,6 +1272,9 @@ async function attachSession(sessionId: string, entry: Entry): Promise<void> {
 	} finally {
 		if (entry.replay === replay) entry.replay = undefined;
 		if (entry.attachment?.promise === promise) entry.attachment = undefined;
+	}
+	if (options.drainQueue !== false && !entry.isStreaming && entry.queue.followUp.length > 0) {
+		scheduleFollowUpDrain(sessionId);
 	}
 }
 
@@ -1244,6 +1317,140 @@ function attachedRequest(entry: Entry): { connectionGeneration: number } {
 	if (!entry.attachedGeneration) throw new Error("Goose session is not attached");
 	return { connectionGeneration: entry.attachedGeneration };
 }
+
+const MAX_QUEUED_MESSAGES = 20;
+
+function queuedText(value: string): string {
+	const text = value.trim();
+	if (!text) throw new Error("Queued message cannot be empty");
+	return text;
+}
+
+function emitQueue(sessionId: string, entry: Entry): void {
+	emit(sessionId, {
+		type: "queue_update",
+		steering: [...entry.queue.steering],
+		followUp: [...entry.queue.followUp],
+	});
+}
+
+function startPrompt(sessionId: string, entry: Entry, text: string, images?: ImageContent[]): void {
+	const promptGeneration = ++entry.promptGeneration;
+	entry.messages.push({
+		role: "user",
+		content: images?.length ? [{ type: "text", text }, ...images] : text,
+	});
+	entry.pendingUserEcho = {
+		text,
+		offset: 0,
+		images: images ?? [],
+		matchedImages: (images ?? []).map(() => false),
+	};
+	entry.stats.totalMessages = entry.messages.length;
+	entry.isStreaming = true;
+	emit(sessionId, { type: "run-start" });
+	void client()
+		.prompt(sessionId, text, gooseImages(images), attachedRequest(entry))
+		.then((result) => {
+			if (sessions.get(sessionId) !== entry || entry.promptGeneration !== promptGeneration) return;
+			entry.isStreaming = false;
+			entry.lastSettlement = { stopReason: result.stopReason ?? "complete" };
+			emit(sessionId, {
+				type: "complete",
+				...(result.stopReason ? { status: result.stopReason } : {}),
+			});
+			scheduleFollowUpDrain(sessionId);
+		})
+		.catch((error: unknown) => {
+			if (sessions.get(sessionId) !== entry || entry.promptGeneration !== promptGeneration) return;
+			entry.isStreaming = false;
+			const message = error instanceof Error ? error.message : String(error);
+			entry.lastSettlement = { stopReason: "error", errorMessage: message };
+			emit(sessionId, { type: "error", error: message });
+		});
+}
+
+function scheduleFollowUpDrain(sessionId: string): void {
+	if (followUpDrainTimers.has(sessionId)) return;
+	const timer = setTimeout(() => {
+		followUpDrainTimers.delete(sessionId);
+		void drainFollowUpQueue(sessionId).catch(() => {
+			// Attachment failures retain the queued item. The next ACP attachment retries it.
+		});
+	}, 0);
+	timer.unref?.();
+	followUpDrainTimers.set(sessionId, timer);
+}
+
+async function drainFollowUpQueue(sessionId: string): Promise<void> {
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		if (entry.isStreaming) return;
+		if (entry.queue.followUp.length === 0) return;
+		await attachSession(sessionId, entry, { drainQueue: false });
+		if (entry.isStreaming) return;
+		const text = entry.queue.followUp.shift();
+		if (!text) return;
+		emitQueue(sessionId, entry);
+		startPrompt(sessionId, entry, text);
+	});
+}
+
+export async function queueSessionMessage(sessionId: string, value: string): Promise<void> {
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		const text = queuedText(value);
+		await attachSession(sessionId, entry);
+		if (!entry.isStreaming) {
+			startPrompt(sessionId, entry, text);
+			return;
+		}
+		if (entry.queue.followUp.length >= MAX_QUEUED_MESSAGES) {
+			throw new Error(`A chat can queue at most ${MAX_QUEUED_MESSAGES} messages`);
+		}
+		entry.queue.followUp.push(text);
+		emitQueue(sessionId, entry);
+	});
+}
+
+function mutableQueueLane(entry: Entry, lane: QueueLane): string[] {
+	if (lane !== "steering" && lane !== "followUp") throw new Error("Unknown queue lane");
+	return entry.queue[lane];
+}
+
+export async function editSessionQueue(
+	sessionId: string,
+	lane: QueueLane,
+	index: number,
+	value: string,
+): Promise<void> {
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		const queue = mutableQueueLane(entry, lane);
+		if (!Number.isInteger(index) || index < 0 || index >= queue.length) {
+			throw new Error("Queued message not found");
+		}
+		queue[index] = queuedText(value);
+		emitQueue(sessionId, entry);
+	});
+}
+
+export async function removeSessionQueue(
+	sessionId: string,
+	lane: QueueLane,
+	index: number,
+): Promise<void> {
+	await withSessionOperation(sessionId, async () => {
+		const entry = requireEntry(sessionId);
+		const queue = mutableQueueLane(entry, lane);
+		if (!Number.isInteger(index) || index < 0 || index >= queue.length) {
+			throw new Error("Queued message not found");
+		}
+		queue.splice(index, 1);
+		emitQueue(sessionId, entry);
+	});
+}
+
 export async function promptSession(
 	sessionId: string,
 	text: string,
@@ -1252,35 +1459,7 @@ export async function promptSession(
 	await withSessionOperation(sessionId, async () => {
 		const entry = requireEntry(sessionId);
 		await attachSession(sessionId, entry);
-		entry.messages.push({
-			role: "user",
-			content: images?.length ? [{ type: "text", text }, ...images] : text,
-		});
-		entry.pendingUserEcho = {
-			text,
-			offset: 0,
-			images: images ?? [],
-			matchedImages: (images ?? []).map(() => false),
-		};
-		entry.stats.totalMessages = entry.messages.length;
-		entry.isStreaming = true;
-		emit(sessionId, { type: "run-start" });
-		void client()
-			.prompt(sessionId, text, gooseImages(images), attachedRequest(entry))
-			.then((result) => {
-				entry.isStreaming = false;
-				entry.lastSettlement = { stopReason: result.stopReason ?? "complete" };
-				emit(sessionId, {
-					type: "complete",
-					...(result.stopReason ? { status: result.stopReason } : {}),
-				});
-			})
-			.catch((error: unknown) => {
-				entry.isStreaming = false;
-				const message = error instanceof Error ? error.message : String(error);
-				entry.lastSettlement = { stopReason: "error", errorMessage: message };
-				emit(sessionId, { type: "error", error: message });
-			});
+		startPrompt(sessionId, entry, text, images);
 	});
 }
 export async function steerSession(
@@ -1363,6 +1542,161 @@ export function sessionForObjectiveToken(
 		if (entry.objectiveToken === token) return { projectId: entry.projectId, sessionId };
 	return undefined;
 }
+
+function questionArgs(value: unknown): AskUserQuestionArgs {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("Question arguments must be an object");
+	}
+	const questions = Reflect.get(value, "questions");
+	if (!Array.isArray(questions) || questions.length === 0 || questions.length > 8) {
+		throw new Error("Ask between 1 and 8 questions");
+	}
+	for (const question of questions) {
+		if (!question || typeof question !== "object" || Array.isArray(question)) {
+			throw new Error("Question entries must be objects");
+		}
+		const prompt = Reflect.get(question, "question");
+		const header = Reflect.get(question, "header");
+		const options = Reflect.get(question, "options");
+		if (
+			typeof prompt !== "string" ||
+			!prompt.trim() ||
+			prompt.length > 2_000 ||
+			typeof header !== "string" ||
+			!header.trim() ||
+			header.length > 200 ||
+			!Array.isArray(options) ||
+			options.length === 0 ||
+			options.length > 12
+		) {
+			throw new Error("Question text, header, or options are invalid");
+		}
+		for (const option of options) {
+			if (
+				!option ||
+				typeof option !== "object" ||
+				Array.isArray(option) ||
+				typeof Reflect.get(option, "label") !== "string" ||
+				!(Reflect.get(option, "label") as string).trim() ||
+				typeof Reflect.get(option, "description") !== "string"
+			) {
+				throw new Error("Question options are invalid");
+			}
+		}
+	}
+	return value as AskUserQuestionArgs;
+}
+
+function stableJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	if (value && typeof value === "object") {
+		return `{${Object.entries(value as Record<string, unknown>)
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "null";
+}
+
+function latestQuestionToolCall(entry: Entry, args: AskUserQuestionArgs): string | undefined {
+	const wanted = stableJson(args);
+	for (let messageIndex = entry.messages.length - 1; messageIndex >= 0; messageIndex--) {
+		const message = entry.messages[messageIndex];
+		if (message?.role !== "assistant") continue;
+		for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex--) {
+			const block = message.content[blockIndex];
+			if (
+				block?.type === "toolCall" &&
+				block.name === "ask_user_question" &&
+				!entry.consumedQuestionToolCalls.has(block.id) &&
+				stableJson(block.arguments) === wanted
+			) {
+				return block.id;
+			}
+		}
+	}
+	return undefined;
+}
+
+export async function askSessionQuestion(
+	sessionId: string,
+	value: unknown,
+): Promise<AskUserQuestionResult> {
+	const entry = requireEntry(sessionId);
+	const args = questionArgs(value);
+	let toolCallId: string | undefined;
+	for (let attempt = 0; attempt < 40; attempt++) {
+		if (sessions.get(sessionId) !== entry) throw new Error("Question session is no longer active");
+		toolCallId = latestQuestionToolCall(entry, args);
+		if (toolCallId) break;
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	if (!toolCallId) throw new Error("No matching ask_user_question tool call is active");
+	entry.consumedQuestionToolCalls.add(toolCallId);
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => {
+			if (!pendingQuestions.delete(toolCallId)) return;
+			resolve({ answers: [], cancelled: true });
+		}, QUESTION_TIMEOUT_MS);
+		timer.unref?.();
+		pendingQuestions.set(toolCallId, { sessionId, args, resolve, timer });
+	});
+}
+
+function validateQuestionResult(result: AskUserQuestionResult, args: AskUserQuestionArgs): void {
+	if (!result || !Array.isArray(result.answers) || typeof result.cancelled !== "boolean") {
+		throw new Error("Malformed question response");
+	}
+	if (result.answers.length > args.questions.length) throw new Error("Too many question answers");
+	const seen = new Set<number>();
+	for (const answer of result.answers) {
+		const question = args.questions[answer.questionIndex];
+		const optionLabels = new Set(question?.options.map((option) => option.label) ?? []);
+		const selectedOption = question?.options.find((option) => option.label === answer.answer);
+		if (
+			!answer ||
+			typeof answer !== "object" ||
+			!Number.isInteger(answer.questionIndex) ||
+			answer.questionIndex < 0 ||
+			answer.questionIndex >= args.questions.length ||
+			seen.has(answer.questionIndex) ||
+			answer.question !== question?.question ||
+			(answer.kind !== "option" && answer.kind !== "custom" && answer.kind !== "multi") ||
+			(answer.answer !== null &&
+				(typeof answer.answer !== "string" || answer.answer.length > 8_000)) ||
+			(answer.selected !== undefined &&
+				(!Array.isArray(answer.selected) ||
+					answer.selected.length > 12 ||
+					answer.selected.some((item) => typeof item !== "string" || item.length > 500))) ||
+			(answer.notes !== undefined &&
+				(typeof answer.notes !== "string" || answer.notes.length > 8_000)) ||
+			(answer.preview !== undefined &&
+				(typeof answer.preview !== "string" || answer.preview.length > 8_000)) ||
+			(answer.kind === "option" &&
+				(!selectedOption || answer.preview !== selectedOption.preview)) ||
+			(answer.kind !== "option" && answer.preview !== undefined) ||
+			(answer.kind === "multi" &&
+				(!answer.selected || answer.selected.some((label) => !optionLabels.has(label))))
+		) {
+			throw new Error("Malformed question response");
+		}
+		seen.add(answer.questionIndex);
+	}
+}
+
+export function resolveSessionQuestion(
+	sessionId: string,
+	toolCallId: string,
+	result: AskUserQuestionResult,
+): void {
+	const pending = pendingQuestions.get(toolCallId);
+	if (!pending || pending.sessionId !== sessionId)
+		throw new Error("Question is no longer awaiting input");
+	validateQuestionResult(result, pending.args);
+	clearTimeout(pending.timer);
+	pendingQuestions.delete(toolCallId);
+	pending.resolve(result);
+}
 function slashCommand(
 	command: import("@gooseberry/goose-client").GooseSlashCommand,
 ): SlashCommandInfo {
@@ -1394,7 +1728,16 @@ export function getCommandsForCwd(cwd: string): Promise<SlashCommandInfo[]> {
 }
 
 function clearSessionProjection(sessionId: string): void {
+	const drainTimer = followUpDrainTimers.get(sessionId);
+	if (drainTimer) clearTimeout(drainTimer);
+	followUpDrainTimers.delete(sessionId);
 	cancelPermissions(sessionId);
+	for (const [toolCallId, pending] of pendingQuestions) {
+		if (pending.sessionId !== sessionId) continue;
+		clearTimeout(pending.timer);
+		pendingQuestions.delete(toolCallId);
+		pending.resolve({ answers: [], cancelled: true });
+	}
 	historyIndexOwnedSessions.delete(sessionId);
 	sessions.delete(sessionId);
 	historySearchIndex.delete(sessionId);
@@ -1483,6 +1826,13 @@ export async function deleteSession(
 }
 export function disposeAllSessions(): void {
 	for (const pending of pendingPermissions.values()) pending.resolve("cancelled");
+	for (const pending of pendingQuestions.values()) {
+		clearTimeout(pending.timer);
+		pending.resolve({ answers: [], cancelled: true });
+	}
+	pendingQuestions.clear();
+	for (const timer of followUpDrainTimers.values()) clearTimeout(timer);
+	followUpDrainTimers.clear();
 	for (const login of pendingProviderLogins.values()) {
 		if (login.expiresTimer) clearTimeout(login.expiresTimer);
 		login.abortController.abort(new Error("Controller is shutting down"));

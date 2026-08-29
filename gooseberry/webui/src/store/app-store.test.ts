@@ -320,3 +320,40 @@ test("session goal state keeps loading, ready, and error transitions isolated to
 		error: "not found",
 	});
 });
+
+test("session hydration restores controller queues and question replies", () => {
+	useAppStore.getState().hydrateSession(
+		{
+			sessionId: "s1",
+			projectId: "p1",
+			cwd: "/workspace",
+			title: "Queued chat",
+			model: null,
+			thinkingLevel: "off",
+			isStreaming: true,
+			messageCount: 0,
+			updatedAt: 42,
+			live: true,
+			archived: false,
+			queue: { steering: [], followUp: ["continue after refresh"] },
+		},
+		{ turns: [], toolResults: {}, askAnswers: {} },
+	);
+	const result = { answers: [], cancelled: true };
+	useAppStore.getState().setAskAnswer("s1", "question-1", result);
+	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual(["continue after refresh"]);
+	expect(useAppStore.getState().sessions.s1?.askAnswers["question-1"]).toEqual(result);
+	useAppStore.getState().reconcileProjectAreaSessions(
+		"p1",
+		["s1"],
+		[
+			{
+				sessionId: "s1",
+				title: "Queued chat",
+				archived: false,
+				queue: { steering: [], followUp: [] },
+			},
+		],
+	);
+	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual([]);
+});

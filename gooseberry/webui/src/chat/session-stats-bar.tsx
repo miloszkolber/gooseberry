@@ -1,4 +1,12 @@
 import type { ContextUsage, SessionStats } from "@gooseberry/contracts";
+import { Gauge } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+type UsageField = "input" | "output" | "cacheRead" | "cacheWrite" | "total" | "cost";
+
+function isReported(stats: SessionStats, field: UsageField, value: number): boolean {
+	return stats.reported ? stats.reported[field] === true : value !== 0;
+}
 
 export function formatTokens(count: number): string {
 	if (count < 1_000) return count.toString();
@@ -10,11 +18,15 @@ export function formatTokens(count: number): string {
 
 export function usageParts(stats: SessionStats): string[] {
 	const parts: string[] = [];
-	if (stats.tokens.input) parts.push(`↑${formatTokens(stats.tokens.input)}`);
-	if (stats.tokens.output) parts.push(`↓${formatTokens(stats.tokens.output)}`);
-	if (stats.tokens.cacheRead) parts.push(`R${formatTokens(stats.tokens.cacheRead)}`);
-	if (stats.tokens.cacheWrite) parts.push(`W${formatTokens(stats.tokens.cacheWrite)}`);
-	if (stats.cost) parts.push(`$${stats.cost.toFixed(3)}`);
+	if (isReported(stats, "input", stats.tokens.input))
+		parts.push(`↑${formatTokens(stats.tokens.input)}`);
+	if (isReported(stats, "output", stats.tokens.output))
+		parts.push(`↓${formatTokens(stats.tokens.output)}`);
+	if (isReported(stats, "cacheRead", stats.tokens.cacheRead))
+		parts.push(`R${formatTokens(stats.tokens.cacheRead)}`);
+	if (isReported(stats, "cacheWrite", stats.tokens.cacheWrite))
+		parts.push(`W${formatTokens(stats.tokens.cacheWrite)}`);
+	if (isReported(stats, "cost", stats.cost)) parts.push(`$${stats.cost.toFixed(3)}`);
 	return parts;
 }
 
@@ -37,27 +49,90 @@ export function SessionStatsBar({ stats }: { stats: SessionStats | null }) {
 	const context = stats.contextUsage ? contextPart(stats.contextUsage) : null;
 	if (parts.length === 0 && !context) return null;
 
+	const contextPercent = stats.contextUsage?.percent;
+	const progress = contextPercent === null || contextPercent === undefined ? 0 : contextPercent;
 	return (
-		<div
-			data-testid="session-stats"
-			className="flex shrink-0 flex-nowrap items-center justify-end gap-x-xs text-text-muted tr-text-metadata"
-			title="Cumulative usage: ↑ input · ↓ output · R cache read · W cache write"
-		>
-			{parts.map((part, index) => (
-				<span key={part} className="flex items-center gap-xs whitespace-nowrap">
-					{index > 0 ? <span aria-hidden="true">·</span> : null}
-					{part}
-				</span>
-			))}
-			{context ? (
-				<span className="flex items-center gap-xs whitespace-nowrap" title="Context window used">
-					{parts.length > 0 ? <span aria-hidden="true">·</span> : null}
-					<span aria-hidden="true" className="text-primary">
-						{context.bar}
-					</span>
-					{context.text}
-				</span>
-			) : null}
+		<Popover>
+			<PopoverTrigger asChild>
+				<button
+					type="button"
+					data-testid="usage-tracker"
+					className="flex shrink-0 flex-nowrap items-center justify-end gap-x-xs rounded-[var(--radius-sm)] px-xs py-0.5 text-text-muted tr-text-metadata hover:bg-control-bg-hovered hover:text-text-default"
+					aria-label="Open session usage"
+				>
+					<Gauge className="size-3.5 text-primary" />
+					{isReported(stats, "total", stats.tokens.total) ? (
+						<span>{formatTokens(stats.tokens.total)} tokens</span>
+					) : null}
+					{context ? <span>{context.text}</span> : null}
+				</button>
+			</PopoverTrigger>
+			<PopoverContent align="end" className="w-[min(90vw,22rem)] p-md">
+				<div data-testid="session-stats" className="flex flex-col gap-md">
+					<div>
+						<div className="tr-text-ui text-text-default">Session usage</div>
+						<div className="text-text-muted tr-text-metadata">
+							Reported by Goose for this controller runtime
+						</div>
+					</div>
+					{stats.contextUsage ? (
+						<div className="flex flex-col gap-xs">
+							<div className="flex items-center justify-between tr-text-metadata">
+								<span className="text-text-default">Context window</span>
+								<span className="text-text-muted">{context?.text}</span>
+							</div>
+							<div
+								role="progressbar"
+								aria-label="Context window used"
+								aria-valuemin={0}
+								aria-valuemax={100}
+								aria-valuenow={Math.round(Math.min(100, Math.max(0, progress)))}
+								className="h-1.5 overflow-hidden rounded-full bg-control-bg-selected"
+							>
+								<div
+									className="h-full rounded-full bg-primary"
+									style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+								/>
+							</div>
+						</div>
+					) : null}
+					<dl className="grid grid-cols-2 gap-x-lg gap-y-xs tr-text-metadata">
+						{isReported(stats, "input", stats.tokens.input) ? (
+							<UsageRow label="Input" value={`${stats.tokens.input.toLocaleString()} tokens`} />
+						) : null}
+						{isReported(stats, "output", stats.tokens.output) ? (
+							<UsageRow label="Output" value={`${stats.tokens.output.toLocaleString()} tokens`} />
+						) : null}
+						{isReported(stats, "cacheRead", stats.tokens.cacheRead) ? (
+							<UsageRow
+								label="Cache read"
+								value={`${stats.tokens.cacheRead.toLocaleString()} tokens`}
+							/>
+						) : null}
+						{isReported(stats, "cacheWrite", stats.tokens.cacheWrite) ? (
+							<UsageRow
+								label="Cache write"
+								value={`${stats.tokens.cacheWrite.toLocaleString()} tokens`}
+							/>
+						) : null}
+						{isReported(stats, "total", stats.tokens.total) ? (
+							<UsageRow label="Total" value={`${stats.tokens.total.toLocaleString()} tokens`} />
+						) : null}
+						{isReported(stats, "cost", stats.cost) ? (
+							<UsageRow label="Cost" value={`$${stats.cost.toFixed(4)}`} />
+						) : null}
+					</dl>
+				</div>
+			</PopoverContent>
+		</Popover>
+	);
+}
+
+function UsageRow({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="contents">
+			<dt className="text-text-muted">{label}</dt>
+			<dd className="text-right text-text-default tabular-nums">{value}</dd>
 		</div>
 	);
 }

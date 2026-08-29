@@ -77,6 +77,10 @@ function createHandler(): {
 					updatedAt: updatedAt++,
 				});
 			},
+			askQuestion: async () => ({
+				answers: [{ questionIndex: 0, question: "Proceed?", kind: "option", answer: "Yes" }],
+				cancelled: false,
+			}),
 		}),
 		stateFor,
 	};
@@ -260,6 +264,49 @@ describe("objective MCP endpoint", () => {
 							additionalProperties: false,
 						},
 					},
+					{
+						name: "ask_user_question",
+						description:
+							"Pause and ask the user one or more supporting questions before continuing.",
+						inputSchema: {
+							type: "object",
+							properties: {
+								questions: {
+									type: "array",
+									minItems: 1,
+									maxItems: 8,
+									items: {
+										type: "object",
+										properties: {
+											question: { type: "string", minLength: 1, maxLength: 2_000 },
+											header: { type: "string", minLength: 1, maxLength: 200 },
+											options: {
+												type: "array",
+												minItems: 1,
+												maxItems: 12,
+												items: {
+													type: "object",
+													properties: {
+														label: { type: "string", minLength: 1, maxLength: 500 },
+														description: { type: "string", maxLength: 2_000 },
+														preview: { type: "string", maxLength: 8_000 },
+														recommendedReason: { type: "string", maxLength: 2_000 },
+													},
+													required: ["label", "description"],
+													additionalProperties: false,
+												},
+											},
+											multiSelect: { type: "boolean" },
+										},
+										required: ["question", "header", "options"],
+										additionalProperties: false,
+									},
+								},
+							},
+							required: ["questions"],
+							additionalProperties: false,
+						},
+					},
 				],
 			},
 		});
@@ -347,5 +394,37 @@ describe("objective MCP endpoint", () => {
 			id: "tool-id",
 			error: { code: -32602, message: "Unknown objective tool or invalid arguments" },
 		});
+	});
+});
+
+test("returns a supporting-question answer to the bound Goose session", async () => {
+	const { handler } = createHandler();
+	const response = await handler(
+		request(
+			rpc("tools/call", {
+				name: "ask_user_question",
+				arguments: {
+					questions: [
+						{
+							question: "Proceed?",
+							header: "Decision",
+							options: [{ label: "Yes", description: "Continue" }],
+						},
+					],
+				},
+			}),
+		),
+	);
+	const result = {
+		answers: [{ questionIndex: 0, question: "Proceed?", kind: "option", answer: "Yes" }],
+		cancelled: false,
+	};
+	expect(await responseJson(response)).toEqual({
+		jsonrpc: "2.0",
+		id: 1,
+		result: {
+			content: [{ type: "text", text: JSON.stringify(result) }],
+			structuredContent: result,
+		},
 	});
 });

@@ -1,4 +1,4 @@
-import type { SessionGoal } from "@gooseberry/contracts";
+import type { AskUserQuestionResult, SessionGoal } from "@gooseberry/contracts";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_TASKS = 200;
@@ -19,6 +19,8 @@ interface ObjectiveMcpDependencies {
 		sessionId: string,
 		update: { goal?: unknown; tasks?: unknown },
 	) => unknown;
+	askQuestion: (sessionId: string, args: unknown) => Promise<AskUserQuestionResult>;
+	onObjectiveUpdated?: (state: SessionGoal) => void;
 }
 
 const objectiveUpdateSchema = {
@@ -50,6 +52,45 @@ const objectiveUpdateSchema = {
 		},
 	},
 	minProperties: 1,
+	additionalProperties: false,
+};
+
+const askUserQuestionSchema = {
+	type: "object",
+	properties: {
+		questions: {
+			type: "array",
+			minItems: 1,
+			maxItems: 8,
+			items: {
+				type: "object",
+				properties: {
+					question: { type: "string", minLength: 1, maxLength: 2_000 },
+					header: { type: "string", minLength: 1, maxLength: 200 },
+					options: {
+						type: "array",
+						minItems: 1,
+						maxItems: 12,
+						items: {
+							type: "object",
+							properties: {
+								label: { type: "string", minLength: 1, maxLength: 500 },
+								description: { type: "string", maxLength: 2_000 },
+								preview: { type: "string", maxLength: 8_000 },
+								recommendedReason: { type: "string", maxLength: 2_000 },
+							},
+							required: ["label", "description"],
+							additionalProperties: false,
+						},
+					},
+					multiSelect: { type: "boolean" },
+				},
+				required: ["question", "header", "options"],
+				additionalProperties: false,
+			},
+		},
+	},
+	required: ["questions"],
 	additionalProperties: false,
 };
 
@@ -130,6 +171,12 @@ export function createObjectiveMcpHandler(
 						description: "Atomically update this session's objective and/or tasks.",
 						inputSchema: objectiveUpdateSchema,
 					},
+					{
+						name: "ask_user_question",
+						description:
+							"Pause and ask the user one or more supporting questions before continuing.",
+						inputSchema: askUserQuestionSchema,
+					},
 				],
 			});
 		if (request.method !== "tools/call" || !request.params || typeof request.params !== "object")
@@ -137,6 +184,13 @@ export function createObjectiveMcpHandler(
 
 		const params = request.params as { name?: unknown; arguments?: unknown };
 		try {
+			if (params.name === "ask_user_question") {
+				const result = await dependencies.askQuestion(owner.sessionId, params.arguments);
+				return jsonResponse(request.id, {
+					content: [{ type: "text", text: JSON.stringify(result) }],
+					structuredContent: result,
+				});
+			}
 			let state: SessionGoal;
 			if (params.name === "objective_get") {
 				state = dependencies.readObjective(owner.projectId, owner.sessionId);
@@ -151,6 +205,7 @@ export function createObjectiveMcpHandler(
 					return errorResponse(request.id, "Invalid objective update arguments");
 				dependencies.updateObjective(owner.projectId, owner.sessionId, args);
 				state = dependencies.readObjective(owner.projectId, owner.sessionId);
+				dependencies.onObjectiveUpdated?.(state);
 			} else {
 				return errorResponse(request.id, "Unknown objective tool or invalid arguments");
 			}

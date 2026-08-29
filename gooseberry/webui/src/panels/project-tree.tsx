@@ -1,13 +1,94 @@
-import type { Project } from "@gooseberry/contracts";
-import { Folder, FolderOpen, Plus, X } from "lucide-react";
-import { useRef, useState } from "react";
+import type { Project, SessionSummary } from "@gooseberry/contracts";
+import { MessageSquare, Plus, Settings2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { projectArea, selectActiveProjectArea, toast, useAppStore } from "../store";
+import { chatTabId, projectArea, selectActiveProjectArea, toast, useAppStore } from "../store";
 import { errorText, getTransport } from "../transport";
 import { AddProjectMenu } from "./add-project-menu";
 import { enterDefaultProjectArea } from "./default-project-area";
 import { DirectoryPickerDialog } from "./directory-picker-dialog";
+import { openChatInTab } from "./open-chat";
+import { ProjectCustomizationDialog } from "./project-customization-dialog";
+import { ProjectIcon } from "./project-icon";
 import { useOpenProject } from "./use-open-project";
+
+const EMPTY_SESSIONS: SessionSummary[] = [];
+
+function ProjectSessions({ project }: { project: Project }) {
+	const status = useAppStore((state) => state.status);
+	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
+	const catalogVersion = useAppStore(
+		(state) => state.sessionCatalogVersionByProjectArea[project.id] ?? 0,
+	);
+	const [sessions, setSessions] = useState<SessionSummary[]>(EMPTY_SESSIONS);
+	const [failed, setFailed] = useState(false);
+	const navigationSequence = useRef(0);
+
+	useEffect(() => {
+		void connectionGeneration;
+		void catalogVersion;
+		if (status !== "connected") return;
+		let cancelled = false;
+		void getTransport()
+			.request("session.list", { projectId: project.id, archived: false })
+			.then((items) => {
+				if (cancelled) return;
+				setSessions(items);
+				setFailed(false);
+			})
+			.catch(() => {
+				if (!cancelled) setFailed(true);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [project.id, status, connectionGeneration, catalogVersion]);
+
+	useEffect(
+		() => () => {
+			navigationSequence.current += 1;
+		},
+		[],
+	);
+
+	const openSession = async (sessionId: string) => {
+		const sequence = ++navigationSequence.current;
+		useAppStore.getState().selectProject(project.id);
+		const area = await enterDefaultProjectArea(project.id);
+		if (!area || sequence !== navigationSequence.current) return;
+		await openChatInTab(area.id, sessionId, undefined, true);
+		if (sequence !== navigationSequence.current) {
+			useAppStore.getState().closeTab(chatTabId(area.id, sessionId), false, area.id);
+			return;
+		}
+		await openChatInTab(area.id, sessionId);
+	};
+
+	return (
+		<li className="flex flex-col gap-2xs">
+			<div className="px-sm pt-2xs text-text-muted tr-text-eyebrow">Sessions</div>
+			{sessions.map((session) => (
+				<button
+					key={session.sessionId}
+					type="button"
+					data-testid="project-session-row"
+					onClick={() => void openSession(session.sessionId)}
+					title={session.title}
+					className="flex min-w-0 items-center gap-xs rounded-[var(--radius-sm)] px-sm py-2xs text-left text-text-muted tr-text-metadata hover:bg-control-bg-hovered hover:text-text-default"
+				>
+					<MessageSquare className="size-3 shrink-0" />
+					<span className="truncate">{session.title}</span>
+				</button>
+			))}
+			{sessions.length === 0 && !failed ? (
+				<span className="px-sm text-text-muted tr-text-metadata">No sessions yet</span>
+			) : null}
+			{failed ? (
+				<span className="px-sm text-feedback-error tr-text-metadata">Couldn't load sessions</span>
+			) : null}
+		</li>
+	);
+}
 
 export function ProjectTree() {
 	const projects = useAppStore((state) => state.projects);
@@ -16,6 +97,7 @@ export function ProjectTree() {
 	const activeRoot = useAppStore((state) => selectActiveProjectArea(state)?.root ?? null);
 	const addButton = useRef<HTMLButtonElement>(null);
 	const [rootPickerProject, setRootPickerProject] = useState<Project | null>(null);
+	const [customizeProject, setCustomizeProject] = useState<Project | null>(null);
 
 	const selectProject = async (project: Project) => {
 		useAppStore.getState().selectProject(project.id);
@@ -94,11 +176,10 @@ export function ProjectTree() {
 									title={project.roots.join("\n")}
 									className="flex min-w-0 flex-1 items-center gap-sm rounded-[var(--radius-sm)] px-sm py-xs text-left outline-none hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary data-[selected]:bg-control-bg-selected"
 								>
-									{selected ? (
-										<FolderOpen className="size-4 shrink-0 text-primary" />
-									) : (
-										<Folder className="size-4 shrink-0 text-text-muted" />
-									)}
+									<ProjectIcon
+										icon={project.icon ?? "folder"}
+										className={`size-4 shrink-0 ${selected ? "text-primary" : "text-text-muted"}`}
+									/>
 									<span className="min-w-0 flex-1">
 										<span className="block truncate tr-text-ui text-text-default">
 											{project.name}
@@ -112,6 +193,15 @@ export function ProjectTree() {
 								</button>
 								<button
 									type="button"
+									aria-label={`Customize ${project.name}`}
+									title="Customize project"
+									onClick={() => setCustomizeProject(project)}
+									className="invisible flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-text-muted hover:bg-control-bg-hovered hover:text-text-default group-hover:visible focus:visible"
+								>
+									<Settings2 className="size-3.5" />
+								</button>
+								<button
+									type="button"
 									aria-label={`Remove ${project.name} from gooseberry`}
 									title="Remove from gooseberry"
 									onClick={() => closeProject(project)}
@@ -122,6 +212,8 @@ export function ProjectTree() {
 							</div>
 							{selected ? (
 								<ul className="flex w-full flex-col gap-2xs py-2xs pl-lg">
+									<ProjectSessions project={project} />
+									<li className="px-sm pt-xs text-text-muted tr-text-eyebrow">Roots</li>
 									{project.roots.map((root) => (
 										<li
 											key={root}
@@ -180,6 +272,15 @@ export function ProjectTree() {
 					if (project) void addRoot(project, path);
 				}}
 			/>
+			{customizeProject ? (
+				<ProjectCustomizationDialog
+					project={customizeProject}
+					open
+					onOpenChange={(open) => {
+						if (!open) setCustomizeProject(null);
+					}}
+				/>
+			) : null}
 		</nav>
 	);
 }

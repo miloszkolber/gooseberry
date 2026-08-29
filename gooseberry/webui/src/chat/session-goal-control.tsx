@@ -1,5 +1,5 @@
 import { normalizeSessionGoal, SESSION_GOAL_MAX_LENGTH } from "@gooseberry/contracts";
-import { Check, Circle, Pencil, Plus, Target, Trash2 } from "lucide-react";
+import { Check, Circle, Pencil, Target, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -95,28 +95,6 @@ export function SessionGoalControl({
 			useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
 		}
 	};
-	const saveTasks = async (tasks: typeof goalState.tasks): Promise<void> => {
-		useAppStore.getState().setSessionGoalSaving(sessionId, projectAreaId);
-		try {
-			const value = await getTransport().request("session.tasksSet", {
-				projectId: projectAreaId,
-				sessionId,
-				tasks,
-			});
-			useAppStore.getState().setSessionGoal(sessionId, value);
-		} catch (error) {
-			useAppStore.getState().setSessionGoalError(sessionId, projectAreaId, errorText(error));
-		}
-	};
-	const addTask = (text: string) => {
-		const trimmed = text.trim();
-		if (!trimmed) return;
-		void saveTasks([
-			...goalState.tasks,
-			{ id: crypto.randomUUID(), text: trimmed, status: "pending" },
-		]);
-	};
-
 	const beginEdit = () => {
 		setDraft(goalState.goal ?? "");
 		setOpen(true);
@@ -211,31 +189,13 @@ export function SessionGoalControl({
 					</div>
 				</form>
 				<div className="mt-md flex flex-col gap-xs border-border-default border-t pt-md">
-					<div className="tr-text-ui text-text-default">Tasks</div>
+					<div className="flex items-center justify-between gap-sm">
+						<div className="tr-text-ui text-text-default">Agent tasks</div>
+						<span className="text-text-muted tr-text-metadata">Managed by the agent</span>
+					</div>
 					{goalState.tasks.map((task) => (
 						<div key={task.id} className="flex items-center gap-xs">
-							<button
-								type="button"
-								aria-label={`Advance ${task.text}`}
-								onClick={() =>
-									void saveTasks(
-										goalState.tasks.map((candidate) =>
-											candidate.id === task.id
-												? {
-														...candidate,
-														status:
-															candidate.status === "pending"
-																? "active"
-																: candidate.status === "active"
-																	? "done"
-																	: "pending",
-													}
-												: candidate,
-										),
-									)
-								}
-								className="text-text-muted"
-							>
+							<span className="text-text-muted" title={task.status}>
 								{task.status === "done" ? (
 									<Check className="size-3.5" />
 								) : (
@@ -243,44 +203,17 @@ export function SessionGoalControl({
 										className={`size-3.5 ${task.status === "active" ? "text-primary" : ""}`}
 									/>
 								)}
-							</button>
+							</span>
 							<span
 								className={`min-w-0 flex-1 tr-text-metadata ${task.status === "done" ? "text-text-muted line-through" : "text-text-default"}`}
 							>
 								{task.text}
 							</span>
-							<button
-								type="button"
-								aria-label={`Delete ${task.text}`}
-								onClick={() =>
-									void saveTasks(goalState.tasks.filter((candidate) => candidate.id !== task.id))
-								}
-								className="text-text-muted"
-							>
-								<Trash2 className="size-3.5" />
-							</button>
 						</div>
 					))}
-					<form
-						onSubmit={(event) => {
-							event.preventDefault();
-							const input = new FormData(event.currentTarget).get("task");
-							if (typeof input === "string") addTask(input);
-							event.currentTarget.reset();
-						}}
-						className="flex gap-xs"
-					>
-						<input
-							name="task"
-							aria-label="New task"
-							placeholder="Add task"
-							className="min-w-0 flex-1 rounded-[var(--radius-sm)] border border-border-default bg-control-bg px-sm py-xs tr-text-ui"
-						/>
-						<Button type="submit" size="sm" variant="ghost">
-							<Plus className="size-3.5" />
-							Add
-						</Button>
-					</form>
+					{goalState.tasks.length === 0 ? (
+						<div className="text-text-muted tr-text-metadata">No tasks reported.</div>
+					) : null}
 				</div>
 			</PopoverContent>
 		</Popover>

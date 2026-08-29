@@ -1,4 +1,4 @@
-import type { PromptHit } from "@gooseberry/contracts";
+import type { AskUserQuestionResult, PromptHit } from "@gooseberry/contracts";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -14,6 +14,7 @@ import {
 	type SubmitBehavior,
 } from "./composer";
 import { HistoryOverlay } from "./history-overlay";
+import { QueueStrip } from "./queue-strip";
 import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
 import { SessionGoalControl } from "./session-goal-control";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./stream-indicator";
@@ -229,21 +230,46 @@ export default function ChatView({
 	) => {
 		if (behavior === "send" && (text || attachments.length > 0))
 			useAppStore.getState().appendUserMessage(sessionId, text, attachments);
+		if (behavior === "queue" && attachments.length > 0) {
+			toast.error("Send or steer image attachments directly.", "Queued messages are text-only");
+			return false;
+		}
 		const images = attachments.map((a) => a.content);
 		const params = { sessionId, text, ...(images.length > 0 ? { images } : {}) };
-		const method = behavior === "steer" ? "session.steer" : "session.prompt";
+		const method =
+			behavior === "steer"
+				? "session.steer"
+				: behavior === "queue"
+					? "session.queueAdd"
+					: "session.prompt";
 		getTransport()
 			.request(method, params)
 			.catch((err) => {
 				useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
-				if (behavior === "steer") restoreTextToDraft(text);
+				if (behavior !== "send") restoreTextToDraft(text);
 			});
+		return true;
+	};
+
+	const editQueuedMessage = (lane: "steering" | "followUp", index: number) => {
+		const current = runtime.queue[lane][index];
+		if (!current) return;
+		const text = window.prompt("Edit queued message", current);
+		if (text === null || text.trim() === current) return;
+		void getTransport()
+			.request("session.queueEdit", { sessionId, lane, index, text })
+			.catch((error) => toast.error(errorText(error), "Couldn't edit queued message"));
+	};
+
+	const removeQueuedMessage = (lane: "steering" | "followUp", index: number) => {
+		void getTransport()
+			.request("session.queueRemove", { sessionId, lane, index })
+			.catch((error) => toast.error(errorText(error), "Couldn't remove queued message"));
 	};
 
 	const onSubmit = (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => {
 		if (behavior !== "interrupt") {
-			performSend(text, attachments, behavior);
-			return;
+			return performSend(text, attachments, behavior);
 		}
 		getTransport()
 			.request("session.abort", { sessionId })
@@ -252,6 +278,7 @@ export default function ChatView({
 				useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
 				restoreTextToDraft(text);
 			});
+		return true;
 	};
 
 	const onAbort = () => {
@@ -353,10 +380,17 @@ export default function ChatView({
 
 	const chatActions = useMemo(
 		() => ({
-			answerQuestion: () => Promise.resolve(),
+			answerQuestion: (toolCallId: string, result: AskUserQuestionResult) =>
+				getTransport()
+					.request("session.questionReply", { sessionId, toolCallId, result })
+					.then(() => useAppStore.getState().setAskAnswer(sessionId, toolCallId, result))
+					.catch((error) => {
+						toast.error(errorText(error), "Couldn't send the answer");
+						throw error;
+					}),
 			focusComposer: () => composerRef.current?.refocus(),
 		}),
-		[],
+		[sessionId],
 	);
 
 	return (
@@ -452,6 +486,11 @@ export default function ChatView({
 							onInsertAndSend={onInsertAndSendHit}
 							onOpenMessage={openMessage}
 							onDeleteChat={(wsId, id) => void onDeleteHistoryChat(wsId, id)}
+						/>
+						<QueueStrip
+							queue={runtime.queue}
+							onEdit={editQueuedMessage}
+							onRemove={removeQueuedMessage}
 						/>
 						<Composer
 							ref={composerRef}

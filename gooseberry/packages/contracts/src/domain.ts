@@ -1,11 +1,34 @@
 export type TabStatus = "idle" | "running" | "waiting" | "error";
 
+export const PROJECT_ICONS = ["folder", "code", "book", "flask", "rocket", "sparkles"] as const;
+export type ProjectIcon = (typeof PROJECT_ICONS)[number];
+export const PROJECT_NAME_MAX_LENGTH = 100;
+
+export function normalizeProjectName(value: unknown): string {
+	if (typeof value !== "string") throw new Error("Project name must be text");
+	const name = value.trim();
+	if (!name) throw new Error("Project name cannot be empty");
+	if (name.includes("\0")) throw new Error("Project name contains an invalid character");
+	if (name.length > PROJECT_NAME_MAX_LENGTH) {
+		throw new Error(`Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`);
+	}
+	return name;
+}
+
+export function normalizeProjectIcon(value: unknown): ProjectIcon {
+	if (typeof value !== "string" || !(PROJECT_ICONS as readonly string[]).includes(value)) {
+		throw new Error("Unknown project icon");
+	}
+	return value as ProjectIcon;
+}
+
 export interface Project {
 	id: string;
 	name: string;
 	roots: string[];
 	slug: string;
 	lastOpened: number;
+	icon?: ProjectIcon;
 	closed?: true;
 }
 

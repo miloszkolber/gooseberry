@@ -8,12 +8,13 @@ Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SEC
 
 ## Gooseberry additions
 
-- Projects map visible absolute directories to Goose sessions and working directories.
-- Goals and ordered tasks are Gooseberry state. Objective updates use MCP.
+- Projects map visible absolute directories to Goose sessions and working directories. Project names and icons are Gooseberry presentation metadata.
+- Goals and ordered tasks are Gooseberry state. Users set goals and agents own tasks through objective MCP.
+- Agents can pause for supporting user questions through the same authenticated, session-scoped MCP endpoint.
 - Custom agents are installed as Goose agents and summoned in Goose sessions.
 - The browser capability is a lazy Goose skill backed by `gooseberry-browser`.
 - Gooseberry projects Git status and diffs, read-only files, session presentation, and Web UI state.
-- Session rename and reversible archive, provider setup, slash commands, history search, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state.
+- Session rename and reversible archive, provider setup, slash commands, history search, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state. Follow-up queues are bounded controller-memory state because Goose v1.48.0 does not expose queue manipulation through ACP.
 
 ## Installation
 
