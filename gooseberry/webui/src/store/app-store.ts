@@ -183,6 +183,8 @@ export interface ChatLocationRequest {
 }
 
 export interface SessionRuntime {
+	/** The immediate Goose session parent for a forked chat, when recorded. */
+	parentSessionId?: string;
 	turns: ChatTurn[];
 	turnIdByMessageIndex?: (string | null)[];
 	toolResults: Record<string, ToolResultState>;
@@ -1846,6 +1848,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 			const wsId = summary.projectId;
 			const runtime: SessionRuntime = {
 				...newRuntime(summary.model, summary.thinkingLevel),
+				...(summary.parentSessionId ? { parentSessionId: summary.parentSessionId } : {}),
 				turns: hydrated.turns,
 				toolResults: hydrated.toolResults,
 				askAnswers: hydrated.askAnswers,

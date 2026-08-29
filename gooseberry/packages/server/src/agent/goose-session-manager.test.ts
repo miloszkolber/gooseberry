@@ -10,6 +10,7 @@ import {
 } from "@gooseberry/goose-client";
 import { setMountedProjectRootsForTesting } from "../path-admission";
 import {
+	forgetProjectSession,
 	loadProjectSessionRecords,
 	recordProjectSession,
 	setDataDirForTests,
@@ -22,6 +23,7 @@ import {
 	createSession,
 	disposeAllSessions,
 	editSessionQueue,
+	forkSession,
 	getSessionCommands,
 	getSessionMessages,
 	getSessionStats,
@@ -74,10 +76,15 @@ class FakeConnection implements GooseConnection {
 	sessionTitle = "Chat";
 	archiveError: Error | undefined;
 	archiveGate: Promise<void> | undefined;
+	forkGate: Promise<void> | undefined;
+	forkSessionId = "goose-fork";
 	sessionInfoError: unknown;
 	constructor(readonly handlers: Parameters<GooseConnectionFactory["connect"]>[0]) {}
 	async request(method: string, params: Record<string, unknown>): Promise<unknown> {
-		this.calls.push({ method, params });
+		this.calls.push({
+			method,
+			params: JSON.parse(JSON.stringify(params)) as Record<string, unknown>,
+		});
 		if (method === "initialize") return {};
 		if (method === "session/new")
 			return {
@@ -113,6 +120,16 @@ class FakeConnection implements GooseConnection {
 				update: { sessionUpdate: "agent_message_chunk", content: { text: "saved answer" } },
 			});
 			return { sessionId: params.sessionId, configOptions: [] };
+		}
+		if (method === "session/fork") {
+			await this.forkGate;
+			return {
+				sessionId: this.forkSessionId,
+				configOptions: [
+					{ id: "provider", currentValue: "openai", options: [] },
+					{ id: "model", currentValue: "gpt", options: [] },
+				],
+			};
 		}
 		if (method === "session/prompt") {
 			await this.promptGate;
@@ -535,6 +552,167 @@ test("Goose session rename and reversible archive stay project-associated", asyn
 		{ projectId: "project", sessionId: created.sessionId, operation: "archived" },
 		{ projectId: "project", sessionId: created.sessionId, operation: "unarchived" },
 	]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("Goose forks recorded settled sessions, records lineage, and installs objectives on child load", async () => {
+	const f = fixture();
+	setObjectiveMcpUrl("http://127.0.0.1:7312/mcp/objective");
+	const source = await createSession({ projectId: "project", cwd: f.directory });
+	const fork = await forkSession(source.sessionId, "project", f.directory);
+	expect(fork).toMatchObject({
+		sessionId: "goose-fork",
+		projectId: "project",
+		cwd: f.directory,
+		parentSessionId: source.sessionId,
+		model: { provider: "openai", id: "gpt" },
+	});
+	expect(loadProjectSessionRecords()).toContainEqual({
+		projectId: "project",
+		sessionId: "goose-fork",
+		cwd: f.directory,
+		parentSessionId: source.sessionId,
+	});
+	const forkCall = f.connection.calls.at(-1);
+	const sourceCreate = f.connection.calls.find((call) => call.method === "session/new");
+	const forkMcpServers = JSON.parse(JSON.stringify(forkCall?.params.mcpServers));
+	const sourceMcpServers = JSON.parse(JSON.stringify(sourceCreate?.params.mcpServers));
+	const authorizationToken = (servers: unknown) => {
+		if (!Array.isArray(servers)) return undefined;
+		const first = servers[0];
+		if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
+		const headers = Reflect.get(first, "headers");
+		if (!Array.isArray(headers)) return undefined;
+		const authorization = headers.find(
+			(header) =>
+				header && typeof header === "object" && Reflect.get(header, "name") === "Authorization",
+		);
+		const value = authorization && Reflect.get(authorization, "value");
+		return typeof value === "string" ? value : undefined;
+	};
+	const sourceToken = authorizationToken(sourceMcpServers);
+	const childToken = authorizationToken(forkMcpServers);
+	expect(forkCall).toMatchObject({
+		method: "session/fork",
+		params: {
+			sessionId: source.sessionId,
+			cwd: f.directory,
+			mcpServers: [
+				expect.objectContaining({
+					name: "gooseberry-objectives",
+					headers: [expect.objectContaining({ name: "Authorization", value: expect.any(String) })],
+				}),
+			],
+		},
+	});
+	expect(childToken).toMatch(/^Bearer /);
+	expect(childToken).not.toBe(sourceToken);
+	f.connection.forkSessionId = "goose-fork-2";
+	const chained = await forkSession(fork.sessionId, "project", f.directory);
+	expect(chained).toMatchObject({
+		sessionId: "goose-fork-2",
+		parentSessionId: fork.sessionId,
+	});
+	expect(loadProjectSessionRecords()).toContainEqual({
+		projectId: "project",
+		sessionId: chained.sessionId,
+		cwd: f.directory,
+		parentSessionId: fork.sessionId,
+	});
+	await getSessionMessages(fork.sessionId, "project", f.directory);
+	const childLoad = f.connection.calls.at(-1);
+	const childLoadMcpServers = JSON.parse(JSON.stringify(childLoad?.params.mcpServers));
+	expect(childLoad).toMatchObject({
+		method: "session/load",
+		params: {
+			sessionId: fork.sessionId,
+			cwd: f.directory,
+			mcpServers: [expect.objectContaining({ name: "gooseberry-objectives" })],
+		},
+	});
+	expect(childLoadMcpServers).toEqual(forkMcpServers);
+	disposeAllSessions();
+	setObjectiveMcpUrl(undefined);
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("fork rejects Goose child identifiers that collide with recorded or live sessions", async () => {
+	const f = fixture();
+	const source = await createSession({ projectId: "project", cwd: f.directory });
+	recordProjectSession({
+		projectId: "project",
+		sessionId: "recorded-child",
+		cwd: f.directory,
+		parentSessionId: source.sessionId,
+	});
+	f.connection.forkSessionId = "recorded-child";
+	await expect(forkSession(source.sessionId, "project", f.directory)).rejects.toThrow(
+		"existing session identifier",
+	);
+	expect(hasSession("recorded-child")).toBe(false);
+
+	f.connection.forkSessionId = "live-child";
+	const live = await forkSession(source.sessionId, "project", f.directory);
+	forgetProjectSession("project", live.sessionId);
+	await expect(forkSession(source.sessionId, "project", f.directory)).rejects.toThrow(
+		"existing session identifier",
+	);
+	expect(hasSession(live.sessionId)).toBe(true);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("fork remains blocked by a known run after the ACP connection disconnects", async () => {
+	const f = fixture();
+	const source = await createSession({ projectId: "project", cwd: f.directory });
+	f.connection.promptGate = new Promise<void>(() => {});
+	await promptSession(source.sessionId, "keep working");
+	f.connection.handlers.onSessionUpdate({
+		sessionId: source.sessionId,
+		update: {
+			sessionUpdate: "session_info_update",
+			_meta: { goose: { activeRunId: "run-before-disconnect" } },
+		},
+	});
+	f.connection.disconnect();
+	await Promise.resolve();
+	expect(isSessionStreaming(source.sessionId)).toBe(false);
+	await expect(forkSession(source.sessionId, "project", f.directory)).rejects.toThrow(
+		"Stop the running chat",
+	);
+	expect(f.connection.calls.filter((call) => call.method === "session/fork")).toEqual([]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("fork refuses a streaming source and concurrent fork snapshots", async () => {
+	const f = fixture();
+	const source = await createSession({ projectId: "project", cwd: f.directory });
+	let releasePrompt = () => {};
+	f.connection.promptGate = new Promise<void>((resolve) => {
+		releasePrompt = resolve;
+	});
+	await promptSession(source.sessionId, "keep working");
+	await expect(forkSession(source.sessionId, "project", f.directory)).rejects.toThrow(
+		"Stop the running chat",
+	);
+	releasePrompt();
+	await Bun.sleep(1);
+	let releaseFork = () => {};
+	f.connection.forkGate = new Promise<void>((resolve) => {
+		releaseFork = resolve;
+	});
+	const first = forkSession(source.sessionId, "project", f.directory);
+	while (!f.connection.calls.some((call) => call.method === "session/fork")) await Bun.sleep(0);
+	await expect(forkSession(source.sessionId, "project", f.directory)).rejects.toThrow(
+		"finish loading or updating before forking",
+	);
+	await expect(archiveSession(source.sessionId, "project", f.directory)).rejects.toThrow(
+		"finish loading or updating",
+	);
+	releaseFork();
+	await first;
 	disposeAllSessions();
 	rmSync(f.directory, { recursive: true, force: true });
 });

@@ -7,11 +7,12 @@ Read these files before changing the product:
 1. `docs/baseline.md` is the canonical current product definition.
 2. `docs/architecture.md` defines the intended boundaries.
 3. `docs/integration.md` defines the Goose service boundary.
-4. `docs/goose.md` documents Goose integration and Gooseberry additions.
-5. `docs/models.md` defines provider and model projection.
-6. `docs/security.md` defines authority and credential boundaries.
-7. `docs/deployment.md` defines host Goose and Compose deployment.
-8. `docs/roadmap.md` contains candidate future improvements.
+4. `docs/acp.md` records the current ACP projection.
+5. `docs/goose.md` documents Goose integration and Gooseberry additions.
+6. `docs/models.md` defines provider and model projection.
+7. `docs/security.md` defines authority and credential boundaries.
+8. `docs/deployment.md` defines host Goose and Compose deployment.
+9. `docs/roadmap.md` contains candidate future improvements.
 
 Product and engineering documentation belongs under `docs/`. Runtime prompt text may remain beside the small integration that owns it.
 

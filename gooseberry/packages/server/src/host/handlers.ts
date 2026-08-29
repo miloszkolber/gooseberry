@@ -18,6 +18,7 @@ import {
 	deleteSession,
 	editSessionQueue,
 	ensureSessionAttached,
+	forkSession,
 	getCommandsForCwd,
 	getDefaultModel,
 	getSessionCommands,
@@ -208,6 +209,11 @@ const handlers: Record<string, Handler> = {
 			...(value.model ? { model: value.model } : {}),
 			...(value.thinkingLevel ? { thinkingLevel: value.thinkingLevel } : {}),
 		});
+	},
+	"session.fork": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		const cwd = authorizeRecordedSession(value.projectId, value.sessionId);
+		return forkSession(value.sessionId as string, value.projectId as string, cwd);
 	},
 	"session.prompt": async (params) => {
 		const value = sessionPromptParams(params);

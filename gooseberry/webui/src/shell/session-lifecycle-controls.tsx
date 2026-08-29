@@ -1,5 +1,5 @@
 import { normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "@gooseberry/contracts";
-import { Archive, MoreHorizontal, Pencil } from "lucide-react";
+import { Archive, GitFork, MoreHorizontal, Pencil } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/panels/confirm-dialog";
+import { openChatInTab } from "@/panels/open-chat";
 import { toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 
@@ -24,6 +25,21 @@ export interface SessionLifecycleTarget {
 	projectId: string;
 	sessionId: string;
 	title: string;
+}
+
+export function forkActionState(
+	streaming: boolean,
+	busy: boolean,
+): {
+	disabled: boolean;
+	label: string;
+	title?: string;
+} {
+	return {
+		disabled: streaming || busy,
+		label: busy ? "Forking…" : "Fork",
+		...(streaming ? { title: "Stop the running chat before forking it" } : {}),
+	};
 }
 
 export function RenameSessionDialog({
@@ -163,9 +179,35 @@ export function SessionLifecycleMenu({
 }) {
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [archiveOpen, setArchiveOpen] = useState(false);
+	const [menuOpen, setMenuOpen] = useState(false);
+	const [forkBusy, setForkBusy] = useState(false);
+	const [forkError, setForkError] = useState<string | null>(null);
+	const forkAction = forkActionState(streaming, forkBusy);
+	const fork = () => {
+		setForkBusy(true);
+		setForkError(null);
+		void getTransport()
+			.request("session.fork", { projectId: target.projectId, sessionId: target.sessionId })
+			.then(async (summary) => {
+				useAppStore.getState().applySessionLifecycle({
+					projectId: target.projectId,
+					sessionId: summary.sessionId,
+					operation: "forked",
+				});
+				setMenuOpen(false);
+				await openChatInTab(target.projectId, summary.sessionId);
+			})
+			.catch((cause) => setForkError(errorText(cause)))
+			.finally(() => setForkBusy(false));
+	};
 	return (
 		<>
-			<DropdownMenu>
+			<DropdownMenu
+				open={menuOpen}
+				onOpenChange={(open) => {
+					if (!forkBusy) setMenuOpen(open);
+				}}
+			>
 				<DropdownMenuTrigger
 					aria-label={`Chat actions for ${target.title}`}
 					className="px-xs text-text-muted outline-none hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
@@ -173,6 +215,17 @@ export function SessionLifecycleMenu({
 					<MoreHorizontal className="size-3.5" />
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="end">
+					<DropdownMenuItem
+						data-testid="session-fork"
+						disabled={forkAction.disabled}
+						title={forkAction.title}
+						onSelect={(event) => {
+							event.preventDefault();
+							fork();
+						}}
+					>
+						<GitFork className="size-3.5" /> {forkAction.label}
+					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => setRenameOpen(true)}>
 						<Pencil className="size-3.5" /> Rename
 					</DropdownMenuItem>
@@ -183,6 +236,11 @@ export function SessionLifecycleMenu({
 					>
 						<Archive className="size-3.5" /> Archive
 					</DropdownMenuItem>
+					{forkError ? (
+						<p role="alert" className="max-w-64 px-sm py-xs text-feedback-error tr-text-metadata">
+							{forkError}
+						</p>
+					) : null}
 				</DropdownMenuContent>
 			</DropdownMenu>
 			<RenameSessionDialog target={target} open={renameOpen} onOpenChange={setRenameOpen} />

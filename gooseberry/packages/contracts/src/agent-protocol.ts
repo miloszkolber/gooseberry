@@ -110,6 +110,8 @@ export interface SessionSummary {
 	sessionId: string;
 	projectId: string;
 	cwd: string;
+	/** The recorded Goose session from which this chat was forked, when applicable. */
+	parentSessionId?: string;
 	title: string;
 	model: WireModel | null;
 	thinkingLevel: ThinkingLevel;
@@ -138,7 +140,7 @@ export function normalizeSessionTitle(value: unknown): string {
 export interface SessionLifecycleChangedPayload {
 	projectId: string;
 	sessionId: string;
-	operation: "renamed" | "archived" | "unarchived";
+	operation: "renamed" | "archived" | "unarchived" | "forked";
 	title?: string;
 }
 

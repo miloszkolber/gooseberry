@@ -2,6 +2,8 @@
 
 Gooseberry uses the unchanged upstream Goose v1.48.0 distribution at source commit `25021517f12cab87c94bed0874fe7d28168dc264`. The release workflow verifies that commit and publishes the version and commit in `GOOSE-PROVENANCE`. The release artifact installs as `/usr/local/bin/goose` and runs as the technical host user.
 
+The distribution builds the upstream CLI with code mode, local inference, AWS providers, Nostr, Rustls TLS, and system keyring support. It omits the optional self-updater, telemetry consent, and OpenTelemetry exporter because deployment updates are operator-managed and the baseline does not use telemetry. The archive contains only the `goose` executable.
+
 ## Service
 
 Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SECRET_KEY`. Gooseberry connects over ACP using the matching `GOOSEBERRY_GOOSE_SECRET_KEY`. Goose owns sessions, history, provider and model configuration, tools, compaction, permissions, recipes, and scheduler persistence.
@@ -14,7 +16,7 @@ Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SEC
 - Custom agents are installed as Goose agents and summoned in Goose sessions.
 - The browser capability is a lazy Goose skill backed by `gooseberry-browser`.
 - Gooseberry projects Git status and diffs, read-only files, session presentation, and Web UI state.
-- Session rename and reversible archive, provider setup, slash commands, history search, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state. Follow-up queues are bounded controller-memory state because Goose v1.48.0 does not expose queue manipulation through ACP.
+- Native session fork with immediate-parent lineage, session rename and reversible archive, provider setup, slash commands, history search, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state. Follow-up queues are bounded controller-memory state because Goose v1.48.0 does not expose queue manipulation through ACP.
 
 ## Installation
 

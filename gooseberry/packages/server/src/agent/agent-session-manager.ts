@@ -50,6 +50,7 @@ import { getConfig, updateConfig } from "../settings";
 interface Entry {
 	projectId: string;
 	cwd: string;
+	parentSessionId?: string | undefined;
 	title: string;
 	model: WireModel | null;
 	thinkingLevel: ThinkingLevel;
@@ -82,6 +83,7 @@ const sessions = new Map<string, Entry>();
 const followUpDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionOperationCounts = new Map<string, number>();
 const archivingSessions = new Set<string>();
+const forkingSessions = new Set<string>();
 let publisher: (payload: SessionEventPayload) => void = () => {};
 let deletedPublisher: (payload: { projectId: string; sessionId: string }) => void = () => {};
 let lifecyclePublisher: (payload: SessionLifecycleChangedPayload) => void = () => {};
@@ -434,11 +436,18 @@ function cancelPermissions(sessionId: string): void {
 	for (const pending of pendingPermissions.values())
 		if (pending.sessionId === sessionId) pending.resolve("cancelled");
 }
-function entryFrom(info: GooseSessionInfo, projectId: string, cwd: string): Entry {
+function entryFrom(
+	info: GooseSessionInfo,
+	projectId: string,
+	cwd: string,
+	parentSessionId?: string,
+	objectiveToken = randomUUID(),
+): Entry {
 	const sessionId = info.session.sessionId;
 	return {
 		projectId,
 		cwd,
+		...(parentSessionId ? { parentSessionId } : {}),
 		title: info.session.title ?? "Chat",
 		model: modelFrom(info),
 		thinkingLevel: thinkingFrom(info.configOptions),
@@ -449,7 +458,7 @@ function entryFrom(info: GooseSessionInfo, projectId: string, cwd: string): Entr
 		queue: { steering: [], followUp: [] },
 		promptGeneration: 0,
 		consumedQuestionToolCalls: new Set(),
-		objectiveToken: randomUUID(),
+		objectiveToken,
 	};
 }
 
@@ -780,6 +789,67 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
 	};
 }
 
+/** Fork a settled recorded session with an independent objective credential. */
+export async function forkSession(
+	sessionId: string,
+	projectId: string,
+	cwd: string,
+): Promise<SessionSummary> {
+	const admitted = assertMountedDirectory(cwd, "Session workspace");
+	const sourceRecord = loadProjectSessionRecords().find(
+		(record) =>
+			record.projectId === projectId && record.sessionId === sessionId && record.cwd === admitted,
+	);
+	if (!sourceRecord) throw new Error(`Unknown session: ${sessionId}`);
+	const source = sessions.get(sessionId);
+	if (source && (source.projectId !== projectId || source.cwd !== admitted)) {
+		throw new Error(`Unknown session: ${sessionId}`);
+	}
+	if (source?.isStreaming || source?.runId !== undefined) {
+		throw new Error("Stop the running chat before forking it");
+	}
+	if (
+		forkingSessions.has(sessionId) ||
+		archivingSessions.has(sessionId) ||
+		(sessionOperationCounts.get(sessionId) ?? 0) > 0 ||
+		source?.attachment ||
+		source?.replay
+	) {
+		throw new Error("Wait for the chat to finish loading or updating before forking it");
+	}
+	forkingSessions.add(sessionId);
+	try {
+		const childObjectiveToken = randomUUID();
+		const info = await client().forkSession(sessionId, admitted, {
+			mcpServers: objectiveMcp(childObjectiveToken),
+		});
+		const forkedSessionId = info.session.sessionId;
+		if (forkedSessionId === sessionId)
+			throw new Error("Goose returned the source session for a fork");
+		if (
+			sessions.has(forkedSessionId) ||
+			loadProjectSessionRecords().some((record) => record.sessionId === forkedSessionId)
+		) {
+			throw new Error("Goose returned an existing session identifier for a fork");
+		}
+		const fork = entryFrom(info, projectId, admitted, sessionId, childObjectiveToken);
+		// Keep the child token independent from its parent. Subsequent loads reuse
+		// this same child-scoped objective MCP credential.
+		recordProjectSession({
+			projectId,
+			sessionId: forkedSessionId,
+			cwd: admitted,
+			parentSessionId: sessionId,
+		});
+		sessions.set(forkedSessionId, fork);
+		const result = summary(forkedSessionId, fork);
+		lifecyclePublisher({ projectId, sessionId: forkedSessionId, operation: "forked" });
+		return result;
+	} finally {
+		forkingSessions.delete(sessionId);
+	}
+}
+
 export function hasSession(sessionId: string): boolean {
 	return sessions.has(sessionId);
 }
@@ -816,6 +886,7 @@ export async function ensureSessionAttached(
 		const placeholder: Entry = {
 			projectId,
 			cwd: admitted,
+			...(record.parentSessionId ? { parentSessionId: record.parentSessionId } : {}),
 			title: "Chat",
 			model: null,
 			thinkingLevel: "off",
@@ -849,6 +920,7 @@ function summary(sessionId: string, entry: Entry): SessionSummary {
 		sessionId,
 		projectId: entry.projectId,
 		cwd: entry.cwd,
+		...(entry.parentSessionId ? { parentSessionId: entry.parentSessionId } : {}),
 		title: entry.title,
 		model: entry.model,
 		thinkingLevel: entry.thinkingLevel,
@@ -927,6 +999,7 @@ export async function listSessions(
 					sessionId: record.sessionId,
 					projectId,
 					cwd: record.cwd,
+					...(record.parentSessionId ? { parentSessionId: record.parentSessionId } : {}),
 					title: source.title ?? "Chat",
 					model: null,
 					thinkingLevel: "off",
@@ -947,6 +1020,7 @@ export async function listSessions(
 				sessionId: record.sessionId,
 				projectId,
 				cwd: record.cwd,
+				...(record.parentSessionId ? { parentSessionId: record.parentSessionId } : {}),
 				title: source.title ?? "Chat",
 				model: null,
 				thinkingLevel: "off",
@@ -1212,6 +1286,9 @@ function requireEntry(sessionId: string): Entry {
 function beginSessionOperation(sessionId: string): () => void {
 	if (archivingSessions.has(sessionId)) {
 		throw new Error("Wait for the chat archive operation to finish");
+	}
+	if (forkingSessions.has(sessionId)) {
+		throw new Error("Wait for the chat fork operation to finish");
 	}
 	sessionOperationCounts.set(sessionId, (sessionOperationCounts.get(sessionId) ?? 0) + 1);
 	let released = false;
@@ -1778,6 +1855,7 @@ export async function archiveSession(
 	if (entry?.isStreaming) throw new Error("Stop the running chat before archiving it");
 	if (
 		archivingSessions.has(sessionId) ||
+		forkingSessions.has(sessionId) ||
 		(sessionOperationCounts.get(sessionId) ?? 0) > 0 ||
 		entry?.attachment ||
 		entry?.replay
@@ -1849,6 +1927,7 @@ export function disposeAllSessions(): void {
 	historyIndexing.clear();
 	sessionOperationCounts.clear();
 	archivingSessions.clear();
+	forkingSessions.clear();
 	sessions.clear();
 }
 export async function settleSessionsForShutdown(): Promise<void> {
