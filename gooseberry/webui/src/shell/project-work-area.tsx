@@ -21,6 +21,7 @@ import {
 	useProjectAreaChatCatalogReconciliation,
 } from "./chat-reconciliation";
 import { ProjectChatHistory } from "./project-chat-history";
+import { SessionLifecycleMenu } from "./session-lifecycle-controls";
 
 const ChatView = lazy(() => import("../chat/chat-view"));
 const EMPTY_TABS: ContentTab[] = [];
@@ -179,6 +180,16 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 								>
 									{tab.name}
 								</button>
+								{tab.kind === "chat" ? (
+									<SessionLifecycleMenu
+										target={{
+											projectId: projectAreaId,
+											sessionId: tab.sessionId,
+											title: tab.name,
+										}}
+										streaming={sessions[tab.sessionId]?.isStreaming === true}
+									/>
+								) : null}
 								<button
 									type="button"
 									data-testid="content-tab-close"

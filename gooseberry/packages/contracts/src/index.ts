@@ -1,5 +1,10 @@
 export type * from "./agent-protocol";
-export { isAskUserAnswersMessage, isTranscriptMessageRole } from "./agent-protocol";
+export {
+	isAskUserAnswersMessage,
+	isTranscriptMessageRole,
+	normalizeSessionTitle,
+	SESSION_TITLE_MAX_LENGTH,
+} from "./agent-protocol";
 export type * from "./domain";
 export {
 	ACCEPTED_IMAGE_TYPES,

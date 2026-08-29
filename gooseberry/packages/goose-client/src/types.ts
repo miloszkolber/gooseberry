@@ -66,6 +66,8 @@ export interface GooseSession {
 	updatedAt?: string;
 	createdAt?: string;
 	projectId?: string;
+	messageCount?: number;
+	archivedAt?: string;
 	archived?: boolean;
 	raw: JsonValue;
 }

@@ -8,6 +8,7 @@ import type {
 	ServerWelcome,
 	SessionDeletedPayload,
 	SessionEventPayload,
+	SessionLifecycleChangedPayload,
 } from "@gooseberry/contracts";
 import { WS_CHANNELS } from "@gooseberry/contracts";
 import { useAppStore } from "../store";
@@ -70,6 +71,9 @@ export function initTransport(): WsTransport {
 	transport.subscribe(WS_CHANNELS.sessionDeleted, (data) => {
 		const { projectId, sessionId } = data as SessionDeletedPayload;
 		useAppStore.getState().deleteChat(projectId, sessionId, false);
+	});
+	transport.subscribe(WS_CHANNELS.sessionLifecycleChanged, (data) => {
+		useAppStore.getState().applySessionLifecycle(data as SessionLifecycleChangedPayload);
 	});
 
 	transport.subscribe(WS_CHANNELS.projectFsChanged, (data) => {

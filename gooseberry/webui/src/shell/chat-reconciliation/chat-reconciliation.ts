@@ -82,6 +82,9 @@ export function useDeletedChatPlacementReconciliation(_projectAreaId: string): v
 export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): void {
 	const status = useAppStore((state) => state.status);
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
+	const catalogVersion = useAppStore(
+		(state) => state.sessionCatalogVersionByProjectArea[projectAreaId] ?? 0,
+	);
 	const routeTargetGeneration = useAppStore((state) => state.routeChatTargetGeneration);
 	const routeTarget = useAppStore((state) => {
 		const target = state.routeChatTarget;
@@ -91,6 +94,7 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 
 	useEffect(() => {
 		void routeTargetGeneration;
+		void catalogVersion;
 		if (status !== "connected" || connectionGeneration === 0) return;
 		const run = ++flight.current;
 		const baseline = selectProjectAreaSessionIds(useAppStore.getState(), projectAreaId);
@@ -102,14 +106,11 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 			!useAppStore.getState().removedProjectAreaIds[projectAreaId];
 
 		void getTransport()
-			.request("session.list", { projectId: projectAreaId })
-			.then(async (summaries) => {
+			.request("session.list", { projectId: projectAreaId, archived: "all" })
+			.then(async (catalog) => {
 				if (!live()) return;
-				useAppStore.getState().reconcileProjectAreaSessions(
-					projectAreaId,
-					baseline,
-					summaries.map((summary) => summary.sessionId),
-				);
+				const summaries = catalog.filter((summary) => !summary.archived);
+				useAppStore.getState().reconcileProjectAreaSessions(projectAreaId, baseline, catalog);
 				const targetSummary = routeTarget
 					? summaries.find((summary) => summary.sessionId === routeTarget.sessionId)
 					: undefined;
@@ -196,7 +197,14 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 		return () => {
 			current = false;
 		};
-	}, [connectionGeneration, routeTarget, routeTargetGeneration, status, projectAreaId]);
+	}, [
+		catalogVersion,
+		connectionGeneration,
+		routeTarget,
+		routeTargetGeneration,
+		status,
+		projectAreaId,
+	]);
 }
 
 export function useChatLocationReconciliation(projectAreaId: string): void {

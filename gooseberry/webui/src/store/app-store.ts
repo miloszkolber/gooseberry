@@ -13,6 +13,7 @@ import type {
 	ProjectFsChangedPayload,
 	RefreshedModels,
 	SessionGoal,
+	SessionLifecycleChangedPayload,
 	SessionQueueState,
 	SessionStats,
 	SessionSummary,
@@ -732,6 +733,7 @@ interface AppState {
 	previewTabByProjectArea: Record<string, string>;
 	navTickByProjectArea: Record<string, number>;
 	closedChatsByProjectArea: Record<string, ClosedChat[]>;
+	sessionCatalogVersionByProjectArea: Record<string, number>;
 	deletedSessionsByProjectArea: Record<string, Record<string, true>>;
 	activeActivityByProjectArea: Record<string, ProjectAreaActivity>;
 	sessions: Record<string, SessionRuntime>;
@@ -823,10 +825,11 @@ interface AppState {
 		countNavigation?: boolean,
 	) => void;
 	deleteChat: (projectAreaId: string, sessionId: string, countNavigation?: boolean) => void;
+	applySessionLifecycle: (payload: SessionLifecycleChangedPayload) => void;
 	reconcileProjectAreaSessions: (
 		projectAreaId: string,
 		baselineSessionIds: readonly string[],
-		authoritativeSessionIds: readonly string[],
+		authoritativeSessions: readonly Pick<SessionSummary, "sessionId" | "title" | "archived">[],
 	) => void;
 	reopenChat: (projectAreaId: string, sessionId: string, options?: ContentOpenOptions) => void;
 	noteClosedChats: (projectAreaId: string, entries: ClosedChat[]) => void;
@@ -973,6 +976,7 @@ function withoutChat(
 	projectAreaId: string,
 	sessionId: string,
 	countNavigation: boolean,
+	markDeleted = true,
 ): AppState {
 	if (s.removedProjectAreaIds[projectAreaId]) return s;
 	const alreadyDeleted = isSessionDeleted(s, projectAreaId, sessionId);
@@ -1009,7 +1013,7 @@ function withoutChat(
 		removedTabIds.has(s.activeTabByProjectArea[projectAreaId] ?? "");
 	return {
 		...s,
-		...(!alreadyDeleted
+		...(markDeleted && !alreadyDeleted
 			? {
 					deletedSessionsByProjectArea: Object.assign(
 						Object.create(null),
@@ -1137,6 +1141,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	previewTabByProjectArea: {},
 	navTickByProjectArea: {},
 	closedChatsByProjectArea: {},
+	sessionCatalogVersionByProjectArea: {},
 	deletedSessionsByProjectArea: Object.create(null) as Record<string, Record<string, true>>,
 	activeActivityByProjectArea: {},
 	sessions: {},
@@ -1287,6 +1292,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 				}) as Record<string, true>,
 				fsChangesByProjectArea: omitKey(state.fsChangesByProjectArea, projectAreaId),
 				skillChangeTickByProjectArea: omitKey(state.skillChangeTickByProjectArea, projectAreaId),
+				sessionCatalogVersionByProjectArea: omitKey(
+					state.sessionCatalogVersionByProjectArea,
+					projectAreaId,
+				),
 				diffScopeByProjectArea: omitKey(state.diffScopeByProjectArea, projectAreaId),
 				changesRequest:
 					state.changesRequest?.projectAreaId === projectAreaId ? null : state.changesRequest,
@@ -1560,6 +1569,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 				previewTabByProjectArea: omitKey(s.previewTabByProjectArea, projectAreaId),
 				navTickByProjectArea: omitKey(s.navTickByProjectArea, projectAreaId),
 				closedChatsByProjectArea: omitKey(s.closedChatsByProjectArea, projectAreaId),
+				sessionCatalogVersionByProjectArea: omitKey(
+					s.sessionCatalogVersionByProjectArea,
+					projectAreaId,
+				),
 				activeActivityByProjectArea: omitKey(s.activeActivityByProjectArea, projectAreaId),
 				sessions,
 				skillsSyncedTickBySession,
@@ -1661,14 +1674,85 @@ export const useAppStore = create<AppState>((set, get) => ({
 		}),
 	deleteChat: (projectAreaId, sessionId, countNavigation = true) =>
 		set((s) => withoutChat(s, projectAreaId, sessionId, countNavigation)),
-	reconcileProjectAreaSessions: (projectAreaId, baselineSessionIds, authoritativeSessionIds) =>
+	applySessionLifecycle: (payload) =>
+		set((s) => {
+			if (s.removedProjectAreaIds[payload.projectId]) return {};
+			const version = (s.sessionCatalogVersionByProjectArea[payload.projectId] ?? 0) + 1;
+			const versionPatch = {
+				sessionCatalogVersionByProjectArea: {
+					...s.sessionCatalogVersionByProjectArea,
+					[payload.projectId]: version,
+				},
+			};
+			if (payload.operation === "renamed" && payload.title) {
+				const tabs = s.tabsByProjectArea[payload.projectId] ?? [];
+				const closed = s.closedChatsByProjectArea[payload.projectId] ?? [];
+				return {
+					...versionPatch,
+					tabsByProjectArea: {
+						...s.tabsByProjectArea,
+						[payload.projectId]: tabs.map((tab) =>
+							tab.kind === "chat" && tab.sessionId === payload.sessionId
+								? { ...tab, name: payload.title as string }
+								: tab,
+						),
+					},
+					closedChatsByProjectArea: {
+						...s.closedChatsByProjectArea,
+						[payload.projectId]: closed.map((chat) =>
+							chat.sessionId === payload.sessionId
+								? { ...chat, title: payload.title as string }
+								: chat,
+						),
+					},
+				};
+			}
+			if (payload.operation === "archived") {
+				const next = withoutChat(s, payload.projectId, payload.sessionId, false, false);
+				return {
+					...next,
+					...versionPatch,
+					pendingPermissions: omitKey(next.pendingPermissions, payload.sessionId),
+				};
+			}
+			return versionPatch;
+		}),
+	reconcileProjectAreaSessions: (projectAreaId, baselineSessionIds, authoritativeSessions) =>
 		set((s) => {
 			if (s.removedProjectAreaIds[projectAreaId]) return {};
-			const authoritative = new Set(authoritativeSessionIds);
-			let next = s;
+			const active = new Map(
+				authoritativeSessions
+					.filter((session) => !session.archived)
+					.map((session) => [session.sessionId, session.title]),
+			);
+			const archived = new Set(
+				authoritativeSessions
+					.filter((session) => session.archived)
+					.map((session) => session.sessionId),
+			);
+			const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
+			const closed = s.closedChatsByProjectArea[projectAreaId] ?? [];
+			let next: AppState = {
+				...s,
+				tabsByProjectArea: {
+					...s.tabsByProjectArea,
+					[projectAreaId]: tabs.map((tab) => {
+						if (tab.kind !== "chat") return tab;
+						const title = active.get(tab.sessionId);
+						return title !== undefined && title !== tab.name ? { ...tab, name: title } : tab;
+					}),
+				},
+				closedChatsByProjectArea: {
+					...s.closedChatsByProjectArea,
+					[projectAreaId]: closed.map((chat) => {
+						const title = active.get(chat.sessionId);
+						return title !== undefined && title !== chat.title ? { ...chat, title } : chat;
+					}),
+				},
+			};
 			for (const sessionId of baselineSessionIds) {
-				if (!authoritative.has(sessionId)) {
-					next = withoutChat(next, projectAreaId, sessionId, false);
+				if (!active.has(sessionId)) {
+					next = withoutChat(next, projectAreaId, sessionId, false, !archived.has(sessionId));
 				}
 			}
 			return next;

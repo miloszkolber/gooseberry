@@ -2,15 +2,21 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SessionLifecycleChangedPayload } from "@gooseberry/contracts";
 import {
 	GooseClient,
 	type GooseConnection,
 	type GooseConnectionFactory,
 } from "@gooseberry/goose-client";
 import { setMountedProjectRootsForTesting } from "../path-admission";
-import { setDataDirForTests } from "../persistence";
+import {
+	loadProjectSessionRecords,
+	recordProjectSession,
+	setDataDirForTests,
+} from "../persistence";
 import {
 	abortSession,
+	archiveSession,
 	cancelProviderLogin,
 	createSession,
 	disposeAllSessions,
@@ -18,9 +24,13 @@ import {
 	getSessionMessages,
 	gooseRecipes,
 	gooseSchedules,
+	hasSession,
+	isSessionStreaming,
+	listSessions,
 	pendingPermissionSnapshot,
 	promptSession,
 	providerLoginSnapshot,
+	renameSession,
 	replyProviderLogin,
 	requestPermission,
 	resolvePermission,
@@ -31,11 +41,13 @@ import {
 	setPermissionTimeoutForTests,
 	setProviderLoginPublisher,
 	setProviderLoginTimeoutForTests,
+	setSessionLifecyclePublisher,
 	setSessionModel,
 	setSessionPublisher,
 	setSessionThinkingLevel,
 	startProviderLogin,
 	steerSession,
+	unarchiveSession,
 } from "./agent-session-manager";
 
 class FakeConnection implements GooseConnection {
@@ -51,6 +63,12 @@ class FakeConnection implements GooseConnection {
 	loadGate: Promise<void> | undefined;
 	loadUpdates: ((sessionId: string) => void) | undefined;
 	loadFailures = 0;
+	sessionArchived = false;
+	sessionHasMessages = true;
+	sessionTitle = "Chat";
+	archiveError: Error | undefined;
+	archiveGate: Promise<void> | undefined;
+	sessionInfoError: unknown;
 	constructor(readonly handlers: Parameters<GooseConnectionFactory["connect"]>[0]) {}
 	async request(method: string, params: Record<string, unknown>): Promise<unknown> {
 		this.calls.push({ method, params });
@@ -125,6 +143,34 @@ class FakeConnection implements GooseConnection {
 		if (method === "session/set_config_option")
 			return { configOptions: [{ id: params.configId, currentValue: params.value, options: [] }] };
 		if (method === "_goose/unstable/session/steer") return { runId: "run-2", messageId: "m-2" };
+		if (method === "_goose/unstable/session/rename") {
+			this.sessionTitle = params.title as string;
+			return {};
+		}
+		if (method === "_goose/unstable/session/archive") {
+			if (this.archiveError) throw this.archiveError;
+			await this.archiveGate;
+			this.sessionArchived = true;
+			return {};
+		}
+		if (method === "_goose/unstable/session/unarchive") {
+			this.sessionArchived = false;
+			return {};
+		}
+		if (method === "_goose/unstable/session/info") {
+			if (this.sessionInfoError) throw this.sessionInfoError;
+			return {
+				session: {
+					sessionId: params.sessionId,
+					title: this.sessionTitle,
+					updatedAt: "2026-01-02T03:04:05Z",
+					_meta: {
+						messageCount: this.sessionHasMessages ? 1 : 0,
+						...(this.sessionArchived ? { archivedAt: "2026-01-02T03:05:00Z" } : {}),
+					},
+				},
+			};
+		}
 		if (method === "_goose/unstable/recipes/list")
 			return {
 				recipes: [
@@ -219,7 +265,19 @@ class FakeConnection implements GooseConnection {
 			};
 		if (method === "session/list")
 			return {
-				sessions: [{ sessionId: "goose-1", title: "Chat", updatedAt: "2026-01-02T03:04:05Z" }],
+				sessions: this.sessionHasMessages
+					? [
+							{
+								sessionId: "goose-1",
+								title: this.sessionTitle,
+								updatedAt: "2026-01-02T03:04:05Z",
+								_meta: {
+									messageCount: 1,
+									...(this.sessionArchived ? { archivedAt: "2026-01-02T03:05:00Z" } : {}),
+								},
+							},
+						]
+					: [],
 			};
 		return {};
 	}
@@ -261,6 +319,7 @@ function fixture() {
 afterEach(() => {
 	setMountedProjectRootsForTesting(undefined);
 	setProviderLoginTimeoutForTests(undefined);
+	setSessionLifecyclePublisher(() => {});
 });
 
 test("Goose create, replay load, prompt stream, cancel, steer, and thinking are projected", async () => {
@@ -285,6 +344,176 @@ test("Goose create, replay load, prompt stream, cancel, steer, and thinking are 
 	]);
 	expect(events).toEqual(expect.arrayContaining(["thinking", "tool-start", "usage"]));
 	expect(f.connection.notifications.map((item) => item.method)).toEqual(["session/cancel"]);
+});
+
+test("Goose session rename and reversible archive stay project-associated", async () => {
+	const f = fixture();
+	const lifecycle: SessionLifecycleChangedPayload[] = [];
+	setSessionLifecyclePublisher((payload) => lifecycle.push(payload));
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	await renameSession(created.sessionId, "project", f.directory, "  Focused work  ");
+	expect((await listSessions("project"))[0]).toMatchObject({
+		title: "Focused work",
+		archived: false,
+	});
+	await archiveSession(created.sessionId, "project", f.directory);
+	f.connection.sessionHasMessages = false;
+	expect(hasSession(created.sessionId)).toBe(false);
+	expect(loadProjectSessionRecords()).toEqual([
+		{ projectId: "project", sessionId: created.sessionId, cwd: f.directory },
+	]);
+	expect(await listSessions("project")).toEqual([]);
+	expect(await listSessions("project", true)).toMatchObject([
+		{
+			sessionId: created.sessionId,
+			title: "Focused work",
+			archived: true,
+			live: false,
+			messageCount: 0,
+		},
+	]);
+	expect(await listSessions("project", "all")).toMatchObject([
+		{ sessionId: created.sessionId, archived: true },
+	]);
+	const loadsBeforeRestore = f.connection.calls.filter(
+		(call) => call.method === "session/load",
+	).length;
+	await unarchiveSession(created.sessionId, "project", f.directory);
+	f.connection.sessionHasMessages = true;
+	const loadsAfterRestore = f.connection.calls.filter(
+		(call) => call.method === "session/load",
+	).length;
+	expect(loadsAfterRestore).toBe(loadsBeforeRestore);
+	expect(await listSessions("project")).toMatchObject([
+		{ sessionId: created.sessionId, title: "Focused work", archived: false },
+	]);
+	expect(lifecycle).toEqual([
+		{
+			projectId: "project",
+			sessionId: created.sessionId,
+			operation: "renamed",
+			title: "Focused work",
+		},
+		{ projectId: "project", sessionId: created.sessionId, operation: "archived" },
+		{ projectId: "project", sessionId: created.sessionId, operation: "unarchived" },
+	]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("session info fallback omits only confirmed missing records", async () => {
+	const f = fixture();
+	await createSession({ projectId: "project", cwd: f.directory });
+	disposeAllSessions();
+	f.connection.sessionHasMessages = false;
+	f.connection.sessionInfoError = new Error("session info timed out");
+	await expect(listSessions("project")).rejects.toThrow("session info timed out");
+	f.connection.sessionInfoError = Object.assign(new Error("missing"), { code: -32002 });
+	await expect(listSessions("project")).resolves.toEqual([]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("confirmed missing session info excludes and clears a stale live projection", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	f.connection.sessionHasMessages = false;
+	f.connection.sessionInfoError = Object.assign(new Error("missing"), { code: -32002 });
+	await expect(listSessions("project", "all")).resolves.toEqual([]);
+	expect(hasSession(created.sessionId)).toBe(false);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("session info fallback has an explicit total request budget", async () => {
+	const f = fixture();
+	await createSession({ projectId: "project", cwd: f.directory });
+	for (let index = 0; index <= 200; index++) {
+		recordProjectSession({ projectId: "project", sessionId: `missing-${index}`, cwd: f.directory });
+	}
+	await expect(listSessions("project")).rejects.toThrow("more than 200 per-session lookups");
+	expect(
+		f.connection.calls.filter((call) => call.method === "_goose/unstable/session/info"),
+	).toEqual([]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("session lifecycle validation and ACP failures preserve the live projection", async () => {
+	const f = fixture();
+	const lifecycle: string[] = [];
+	setSessionLifecyclePublisher((payload) => lifecycle.push(payload.operation));
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	const lifecycleCalls = () =>
+		f.connection.calls.filter((call) => call.method.startsWith("_goose/unstable/session/"));
+	await expect(renameSession(created.sessionId, "project", f.directory, "   ")).rejects.toThrow(
+		"cannot be empty",
+	);
+	expect(lifecycleCalls()).toEqual([]);
+	f.connection.archiveError = new Error("archive unavailable");
+	await expect(archiveSession(created.sessionId, "project", f.directory)).rejects.toThrow(
+		"archive unavailable",
+	);
+	expect(hasSession(created.sessionId)).toBe(true);
+	expect(lifecycle).toEqual([]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("a streaming Goose session must settle before it can be archived", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	let releasePrompt = () => {};
+	f.connection.promptGate = new Promise<void>((resolve) => {
+		releasePrompt = resolve;
+	});
+	const prompting = promptSession(created.sessionId, "keep working");
+	while (!isSessionStreaming(created.sessionId)) await Bun.sleep(0);
+	await expect(archiveSession(created.sessionId, "project", f.directory)).rejects.toThrow(
+		"Stop the running chat",
+	);
+	releasePrompt();
+	await prompting;
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("archive cannot race a session attachment", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	disposeAllSessions();
+	let releaseLoad = () => {};
+	f.connection.loadGate = new Promise<void>((resolve) => {
+		releaseLoad = resolve;
+	});
+	const loading = getSessionMessages(created.sessionId, "project", f.directory);
+	while (!f.connection.calls.some((call) => call.method === "session/load")) await Bun.sleep(0);
+	await expect(archiveSession(created.sessionId, "project", f.directory)).rejects.toThrow(
+		"finish loading or updating",
+	);
+	releaseLoad();
+	await loading;
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
+});
+
+test("an in-flight archive rejects new session work before Goose can load or prompt", async () => {
+	const f = fixture();
+	const created = await createSession({ projectId: "project", cwd: f.directory });
+	let releaseArchive = () => {};
+	f.connection.archiveGate = new Promise<void>((resolve) => {
+		releaseArchive = resolve;
+	});
+	const archiving = archiveSession(created.sessionId, "project", f.directory);
+	while (!f.connection.calls.some((call) => call.method === "_goose/unstable/session/archive")) {
+		await Bun.sleep(0);
+	}
+	await expect(promptSession(created.sessionId, "too late")).rejects.toThrow("archive operation");
+	releaseArchive();
+	await archiving;
+	expect(f.connection.calls.filter((call) => call.method === "session/prompt")).toEqual([]);
+	disposeAllSessions();
+	rmSync(f.directory, { recursive: true, force: true });
 });
 
 test("creating with Goose's active model does not reset unchanged session config", async () => {

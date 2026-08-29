@@ -24,6 +24,7 @@ import {
 	setPermissionResolvedPublisher,
 	setProviderLoginPublisher,
 	setSessionDeletedPublisher,
+	setSessionLifecyclePublisher,
 	setSessionPublisher,
 } from "../agent";
 import { ControllerAuth, expiredSessionCookie, sessionCookie } from "../auth";
@@ -440,6 +441,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				armSocketExpiry(ws);
 				ws.subscribe(WS_CHANNELS.agentEvent);
 				ws.subscribe(WS_CHANNELS.sessionDeleted);
+				ws.subscribe(WS_CHANNELS.sessionLifecycleChanged);
 				ws.subscribe(WS_CHANNELS.providerLogin);
 				ws.subscribe(WS_CHANNELS.projectUpdated);
 				ws.subscribe(WS_CHANNELS.projectFsChanged);
@@ -567,6 +569,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	setSessionDeletedPublisher((payload: SessionDeletedPayload) => {
 		publishToSockets(WS_CHANNELS.sessionDeleted, payload);
 	});
+	setSessionLifecyclePublisher((payload) => {
+		publishToSockets(WS_CHANNELS.sessionLifecycleChanged, payload);
+	});
 
 	setSessionPublisher((payload) => publishToSockets(WS_CHANNELS.agentEvent, payload));
 	setPermissionPublisher((payload) => publishToSockets(WS_CHANNELS.permissionRequest, payload));
@@ -597,6 +602,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			setPermissionPublisher(() => {});
 			setPermissionResolvedPublisher(() => {});
 			setProviderLoginPublisher(() => {});
+			setSessionLifecyclePublisher(() => {});
 			server.stop(true);
 		},
 	};

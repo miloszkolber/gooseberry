@@ -92,6 +92,21 @@ test("initializes and creates a session through ACP", async () => {
 	});
 });
 
+test("uses the pinned Goose session lifecycle custom methods", async () => {
+	const fixture = fake();
+	await fixture.client.renameSession("session-1", "Focused title");
+	await fixture.client.archiveSession("session-1");
+	await fixture.client.unarchiveSession("session-1");
+	expect(fixture.connection.calls.slice(-3)).toEqual([
+		{
+			method: "_goose/unstable/session/rename",
+			params: { sessionId: "session-1", title: "Focused title" },
+		},
+		{ method: "_goose/unstable/session/archive", params: { sessionId: "session-1" } },
+		{ method: "_goose/unstable/session/unarchive", params: { sessionId: "session-1" } },
+	]);
+});
+
 test("normalizes streamed text, thinking, tools, and Goose usage", async () => {
 	const fixture = fake();
 	const updates: string[] = [];
@@ -218,6 +233,38 @@ test("passes opaque session cursors through and returns Goose's next cursor", as
 	expect(fixture.connection.calls.at(-1)).toEqual({
 		method: "session/list",
 		params: { cwd: "/workspace", cursor: "opaque-current-page", limit: 25 },
+	});
+});
+
+test("projects Goose v1.48 session metadata from the ACP _meta object", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("session/list", {
+		sessions: [
+			{
+				sessionId: "archived",
+				title: "Stored chat",
+				updatedAt: "2026-08-29T12:00:00Z",
+				_meta: {
+					archivedAt: "2026-08-29T12:01:00Z",
+					createdAt: "2026-08-28T12:00:00Z",
+					messageCount: 4,
+					projectId: "project",
+				},
+			},
+		],
+	});
+	await expect(fixture.client.listSessions()).resolves.toMatchObject({
+		sessions: [
+			{
+				sessionId: "archived",
+				archived: true,
+				archivedAt: "2026-08-29T12:01:00Z",
+				createdAt: "2026-08-28T12:00:00Z",
+				messageCount: 4,
+				projectId: "project",
+			},
+		],
 	});
 });
 

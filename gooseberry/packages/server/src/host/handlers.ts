@@ -9,6 +9,7 @@ import type {
 import { validateRequestImages } from "@gooseberry/contracts";
 import {
 	abortSession,
+	archiveSession,
 	cancelProviderLogin,
 	clampSessionThinkingLevel,
 	createSession,
@@ -30,6 +31,7 @@ import {
 	promptSession,
 	refreshAvailableModels,
 	refreshGooseStatus,
+	renameSession,
 	replyProviderLogin,
 	resolvePermission,
 	searchSessionHistory,
@@ -39,6 +41,7 @@ import {
 	setSessionThinkingLevel,
 	startProviderLogin,
 	steerSession,
+	unarchiveSession,
 } from "../agent";
 import { listDirectories } from "../directory-browser";
 import { readDir, readFile } from "../fs";
@@ -90,6 +93,15 @@ function recordedCwd(projectId: string, sessionId: string): string | undefined {
 	return loadProjectSessionRecords().find(
 		(record) => record.projectId === projectId && record.sessionId === sessionId,
 	)?.cwd;
+}
+
+function authorizeRecordedSession(projectId: unknown, sessionId: unknown): string {
+	if (typeof projectId !== "string" || typeof sessionId !== "string") {
+		throw new Error("Malformed session request");
+	}
+	const cwd = recordedCwd(projectId, sessionId);
+	if (!cwd) throw new Error(`Unknown session: ${sessionId}`);
+	return assertProjectCwd(projectId, cwd);
 }
 
 async function authorizeSession(projectId: unknown, sessionId: unknown): Promise<string> {
@@ -211,6 +223,29 @@ const handlers: Record<string, Handler> = {
 		await deleteSession(value.sessionId, value.projectId, cwd);
 		return { ok: true } as const;
 	},
+	"session.rename": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown; title?: unknown };
+		const cwd = authorizeRecordedSession(value.projectId, value.sessionId);
+		await renameSession(
+			value.sessionId as string,
+			value.projectId as string,
+			cwd,
+			value.title as string,
+		);
+		return { ok: true } as const;
+	},
+	"session.archive": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		const cwd = authorizeRecordedSession(value.projectId, value.sessionId);
+		await archiveSession(value.sessionId as string, value.projectId as string, cwd);
+		return { ok: true } as const;
+	},
+	"session.unarchive": async (params) => {
+		const value = params as { projectId?: unknown; sessionId?: unknown };
+		const cwd = authorizeRecordedSession(value.projectId, value.sessionId);
+		await unarchiveSession(value.sessionId as string, value.projectId as string, cwd);
+		return { ok: true } as const;
+	},
 	"session.setModel": async (params) => {
 		const value = params as { sessionId: string; model: WireModel };
 		await setSessionModel(value.sessionId, value.model);
@@ -224,7 +259,18 @@ const handlers: Record<string, Handler> = {
 	"session.getStats": (params) => getSessionStats((params as { sessionId: string }).sessionId),
 	"session.getCommands": (params) =>
 		getSessionCommands((params as { sessionId: string }).sessionId),
-	"session.list": (params) => listSessions((params as { projectId: string }).projectId),
+	"session.list": (params) => {
+		const value = params as { projectId?: unknown; archived?: unknown };
+		if (
+			typeof value.projectId !== "string" ||
+			(value.archived !== undefined &&
+				typeof value.archived !== "boolean" &&
+				value.archived !== "all")
+		) {
+			throw new Error("Malformed session list request");
+		}
+		return listSessions(value.projectId, value.archived as boolean | "all" | undefined);
+	},
 	"session.getMessages": async (params) => {
 		const value = params as { sessionId: string; projectId: string };
 		const cwd = await authorizeSession(value.projectId, value.sessionId);

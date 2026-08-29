@@ -9,6 +9,7 @@ test-results*/
 .mockups/
 .superpowers/
 .gsd/
+.opencode/
 
 # Build-only manifests written transiently by the controller.
 gooseberry/apps/controller/src/*.generated.ts

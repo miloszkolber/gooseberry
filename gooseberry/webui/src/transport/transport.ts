@@ -16,7 +16,10 @@ export interface TransportOptions {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-const NON_REPLAYABLE_CHANNELS: ReadonlySet<string> = new Set([WS_CHANNELS.sessionDeleted]);
+const NON_REPLAYABLE_CHANNELS: ReadonlySet<string> = new Set([
+	WS_CHANNELS.sessionDeleted,
+	WS_CHANNELS.sessionLifecycleChanged,
+]);
 
 let clientId: string | undefined;
 
