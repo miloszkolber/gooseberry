@@ -67,9 +67,12 @@ jobs:
           rustup toolchain install "$rust" --profile minimal --target "${{ matrix.target }}"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "RUSTUP_TOOLCHAIN=$rust" >> "$GITHUB_ENV"
-      - name: Build standard CLI
+      - name: Build focused CLI
         working-directory: upstream
-        run: cargo build --locked --release --target "${{ matrix.target }}" -p goose-cli --bin goose
+        run: >-
+          cargo build --locked --release --target "${{ matrix.target }}" -p goose-cli --bin goose
+          --no-default-features
+          --features code-mode,local-inference,aws-providers,nostr,rustls-tls,system-keyring
       - name: Smoke checks
         working-directory: upstream
         run: |
@@ -104,7 +107,7 @@ jobs:
           mkdir package
           cp "target/${{ matrix.target }}/release/goose" package/goose
           chmod 0755 package/goose
-           tar -czf "$GITHUB_WORKSPACE/gooseberry-goose-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C package goose
+          tar -czf "$GITHUB_WORKSPACE/gooseberry-goose-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C package goose
       - uses: actions/upload-artifact@v4
         with:
           name: goose-${{ matrix.arch }}

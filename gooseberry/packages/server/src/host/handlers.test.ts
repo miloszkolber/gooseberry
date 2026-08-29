@@ -199,4 +199,14 @@ test("session lifecycle requests enforce project ownership and bounded titles be
 	await expect(
 		handleRequest("session.list", { projectId: "p1", archived: "yes" }, context),
 	).rejects.toThrow("Malformed session list request");
+	await expect(
+		handleRequest(
+			"session.fork",
+			{ projectId: "another-project", sessionId: "session-1" },
+			context,
+		),
+	).rejects.toThrow("Unknown session: session-1");
+	await expect(
+		handleRequest("session.fork", { projectId: "p1", sessionId: 1 }, context),
+	).rejects.toThrow("Malformed session request");
 });

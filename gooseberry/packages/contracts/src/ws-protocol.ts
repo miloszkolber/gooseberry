@@ -30,7 +30,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 60;
+export const PROTOCOL_VERSION = 61;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -76,6 +76,7 @@ export const WS_METHODS = {
 	directoryList: "directory.list",
 	skillList: "skill.list",
 	sessionCreate: "session.create",
+	sessionFork: "session.fork",
 	sessionPrompt: "session.prompt",
 	sessionSteer: "session.steer",
 	sessionQueueAdd: "session.queueAdd",
@@ -193,6 +194,10 @@ export interface WsMethodMap {
 	"session.create": {
 		params: { projectId: string; cwd?: string; model?: WireModel; thinkingLevel?: ThinkingLevel };
 		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
+	};
+	"session.fork": {
+		params: { projectId: string; sessionId: string };
+		result: SessionSummary;
 	};
 	"session.prompt": {
 		params: { sessionId: string; text: string; images?: ImageContent[] };

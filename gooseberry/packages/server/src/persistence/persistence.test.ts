@@ -10,6 +10,7 @@ import {
 	saveProjects,
 	setDataDirForTests,
 } from "./persistence";
+import { loadProjectSessionRecords, recordProjectSession } from "./project-sessions";
 
 let root: string;
 beforeEach(() => {
@@ -92,4 +93,34 @@ test("obsolete preferences are ignored while model visibility and Signet state l
 
 	saveConfig(config);
 	expect(readFileSync(join(root, "config.json"), "utf8")).not.toContain("modelPreferences");
+});
+
+test("project session fork lineage is optional, persisted, and validates malformed metadata", () => {
+	recordProjectSession({ projectId: "project", sessionId: "source", cwd: "/repos/project" });
+	recordProjectSession({
+		projectId: "project",
+		sessionId: "fork",
+		cwd: "/repos/project",
+		parentSessionId: "source",
+	});
+	expect(loadProjectSessionRecords()).toEqual([
+		{ projectId: "project", sessionId: "source", cwd: "/repos/project" },
+		{
+			projectId: "project",
+			sessionId: "fork",
+			cwd: "/repos/project",
+			parentSessionId: "source",
+		},
+	]);
+	writeFileSync(
+		join(root, "project-sessions.json"),
+		JSON.stringify({
+			version: 2,
+			engine: "goose",
+			records: [
+				{ projectId: "project", sessionId: "fork", cwd: "/repos/project", parentSessionId: "" },
+			],
+		}),
+	);
+	expect(loadProjectSessionRecords()).toEqual([]);
 });

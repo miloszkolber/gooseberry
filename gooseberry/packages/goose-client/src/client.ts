@@ -204,9 +204,13 @@ export class GooseClient {
 	async forkSession(
 		sessionId: string,
 		cwd: string,
-		options?: GooseRequestOptions,
+		options?: GooseRequestOptions & { mcpServers?: readonly GooseMcpServer[] },
 	): Promise<GooseSessionInfo> {
-		const response = await this.#request("session/fork", { sessionId, cwd }, options);
+		const response = await this.#request(
+			"session/fork",
+			{ sessionId, cwd, mcpServers: options?.mcpServers ?? [] },
+			options,
+		);
 		return normalizeSessionInfo(response, requiredString(response, "sessionId"));
 	}
 

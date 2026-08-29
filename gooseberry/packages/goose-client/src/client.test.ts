@@ -213,7 +213,38 @@ test("uses ACP's unstable fork method name", async () => {
 	expect(session.session.sessionId).toBe("forked-session");
 	expect(fixture.connection.calls.at(-1)).toEqual({
 		method: "session/fork",
-		params: { sessionId: "source", cwd: "/workspace" },
+		params: { sessionId: "source", cwd: "/workspace", mcpServers: [] },
+	});
+});
+
+test("passes fork MCP servers through the pinned ACP request", async () => {
+	const fixture = fake();
+	const mcpServers = [
+		{ type: "http" as const, name: "objectives", url: "http://127.0.0.1:7312/mcp", headers: [] },
+	] as const;
+	await fixture.client.forkSession("source", "/workspace", { mcpServers });
+	expect(fixture.connection.calls.at(-1)?.params).toEqual({
+		sessionId: "source",
+		cwd: "/workspace",
+		mcpServers,
+	});
+});
+
+test("normalizes the forked session information returned by Goose", async () => {
+	const fixture = fake();
+	await fixture.client.ready();
+	fixture.connection.setResponse("session/fork", {
+		sessionId: "forked-session",
+		session: { sessionId: "forked-session", title: "Fork of source" },
+		configOptions: [
+			{ id: "provider", currentValue: "openai", options: [] },
+			{ id: "model", currentValue: "gpt-next", options: [] },
+		],
+	});
+	await expect(fixture.client.forkSession("source", "/workspace")).resolves.toMatchObject({
+		session: { sessionId: "forked-session", title: "Fork of source" },
+		providerId: "openai",
+		modelId: "gpt-next",
 	});
 });
 

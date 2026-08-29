@@ -17,6 +17,7 @@ import { HistoryOverlay } from "./history-overlay";
 import { QueueStrip } from "./queue-strip";
 import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
 import { SessionGoalControl } from "./session-goal-control";
+import { SessionLineageControl } from "./session-lineage-control";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./stream-indicator";
 import "./tools/register";
 import { ChatTurnView } from "./turns";
@@ -64,6 +65,11 @@ export default function ChatView({
 	projectAreaId: string;
 }) {
 	const runtime = useAppStore((s) => s.sessions[sessionId]) ?? EMPTY_RUNTIME;
+	const parentDeleted = useAppStore(
+		(state) =>
+			runtime.parentSessionId !== undefined &&
+			state.deletedSessionsByProjectArea[projectAreaId]?.[runtime.parentSessionId] === true,
+	);
 	const projectId = useAppStore(
 		(state) =>
 			Object.values(state.projectAreas)
@@ -401,7 +407,16 @@ export default function ChatView({
 						<ChatHeader
 							stats={stats}
 							statusEntries={headerStatusEntries}
-							left={<SessionGoalControl projectAreaId={projectAreaId} sessionId={sessionId} />}
+							left={
+								<div className="flex min-w-0 items-center gap-xs">
+									<SessionLineageControl
+										projectAreaId={projectAreaId}
+										parentSessionId={runtime.parentSessionId}
+										parentDeleted={parentDeleted}
+									/>
+									<SessionGoalControl projectAreaId={projectAreaId} sessionId={sessionId} />
+								</div>
+							}
 						/>
 					</div>
 					{permission ? (

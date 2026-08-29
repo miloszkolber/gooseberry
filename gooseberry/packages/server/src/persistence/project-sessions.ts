@@ -7,6 +7,8 @@ export interface ProjectSessionRecord {
 	projectId: string;
 	sessionId: string;
 	cwd: string;
+	/** Gooseberry presentation metadata. Goose remains the session authority. */
+	parentSessionId?: string;
 }
 
 interface VersionedProjectSessions {
@@ -19,19 +21,26 @@ function file(): string {
 	return join(dataDir(), "project-sessions.json");
 }
 
-function validRecords(value: unknown): value is ProjectSessionRecord[] {
+function validRecord(record: unknown): record is ProjectSessionRecord {
+	if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+	const projectId = Reflect.get(record, "projectId");
+	const sessionId = Reflect.get(record, "sessionId");
+	const cwd = Reflect.get(record, "cwd");
+	const parentSessionId = Reflect.get(record, "parentSessionId");
 	return (
-		Array.isArray(value) &&
-		value.every(
-			(record) =>
-				record &&
-				typeof record === "object" &&
-				!Array.isArray(record) &&
-				typeof Reflect.get(record, "projectId") === "string" &&
-				typeof Reflect.get(record, "sessionId") === "string" &&
-				typeof Reflect.get(record, "cwd") === "string",
-		)
+		typeof projectId === "string" &&
+		typeof sessionId === "string" &&
+		typeof cwd === "string" &&
+		(parentSessionId === undefined ||
+			(typeof parentSessionId === "string" &&
+				parentSessionId.length > 0 &&
+				!parentSessionId.includes("\0") &&
+				parentSessionId !== sessionId))
 	);
+}
+
+function validRecords(value: unknown): value is ProjectSessionRecord[] {
+	return Array.isArray(value) && value.every(validRecord);
 }
 
 function versioned(value: unknown): value is VersionedProjectSessions {
@@ -73,6 +82,7 @@ function save(records: ProjectSessionRecord[]): void {
 }
 
 export function recordProjectSession(record: ProjectSessionRecord): void {
+	if (!validRecord(record)) throw new Error("Invalid project session record");
 	const records = loadProjectSessionRecords();
 	const index = records.findIndex((candidate) => candidate.sessionId === record.sessionId);
 	if (index === -1) records.push(record);

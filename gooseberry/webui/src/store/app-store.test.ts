@@ -335,6 +335,7 @@ test("session hydration restores controller queues and question replies", () => 
 			updatedAt: 42,
 			live: true,
 			archived: false,
+			parentSessionId: "parent-session",
 			queue: { steering: [], followUp: ["continue after refresh"] },
 		},
 		{ turns: [], toolResults: {}, askAnswers: {} },
@@ -342,6 +343,7 @@ test("session hydration restores controller queues and question replies", () => 
 	const result = { answers: [], cancelled: true };
 	useAppStore.getState().setAskAnswer("s1", "question-1", result);
 	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual(["continue after refresh"]);
+	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
 	expect(useAppStore.getState().sessions.s1?.askAnswers["question-1"]).toEqual(result);
 	useAppStore.getState().reconcileProjectAreaSessions(
 		"p1",
@@ -356,4 +358,5 @@ test("session hydration restores controller queues and question replies", () => 
 		],
 	);
 	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual([]);
+	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
 });
