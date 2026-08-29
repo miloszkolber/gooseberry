@@ -6,9 +6,11 @@ import {
 import type {
 	GooseClientEvent,
 	GooseConfigOption,
+	GooseConfiguredExtension,
 	GooseConnection,
 	GooseConnectionFactory,
 	GooseContextUsage,
+	GooseExtension,
 	GooseImage,
 	GooseMcpServer,
 	GooseModel,
@@ -26,6 +28,7 @@ import type {
 	GooseSessionInfo,
 	GooseSlashCommand,
 	GooseTool,
+	GooseToolPermission,
 	GooseUpdate,
 	GooseUsage,
 	JsonValue,
@@ -518,10 +521,94 @@ export class GooseClient {
 			options,
 		).then((r) => array(r.tools).map(normalizeTool));
 	}
-	setToolPermissions(
-		toolPermissions: readonly { toolName: string; permission: string }[],
+	async listConfiguredExtensions(
+		options?: GooseRequestOptions,
+	): Promise<{ extensions: GooseConfiguredExtension[]; warnings: string[] }> {
+		const response = object(
+			await this.custom("_goose/unstable/config/extensions/list", {}, options),
+		);
+		return {
+			extensions: array(response.extensions).map(normalizeConfiguredExtension),
+			warnings: array(response.warnings).filter(
+				(warning): warning is string => typeof warning === "string",
+			),
+		};
+	}
+	listAvailableExtensions(options?: GooseRequestOptions): Promise<GooseExtension[]> {
+		return this.custom<{ extensions?: unknown }>(
+			"_goose/unstable/extensions/available",
+			{},
+			options,
+		).then((response) => array(response.extensions).map(normalizeExtension));
+	}
+	addExtension(
+		extension: GooseExtension,
+		enabled: boolean,
 		options?: GooseRequestOptions,
 	): Promise<void> {
+		return this.custom(
+			"_goose/unstable/config/extensions/add",
+			{ extension: extension.raw, enabled },
+			options,
+		).then(() => {});
+	}
+	removeExtension(configKey: string, options?: GooseRequestOptions): Promise<void> {
+		return this.custom("_goose/unstable/config/extensions/remove", { configKey }, options).then(
+			() => {},
+		);
+	}
+	setExtensionEnabled(
+		configKey: string,
+		enabled: boolean,
+		options?: GooseRequestOptions,
+	): Promise<void> {
+		return this.custom(
+			"_goose/unstable/config/extensions/set-enabled",
+			{ configKey, enabled },
+			options,
+		).then(() => {});
+	}
+	listSessionExtensions(
+		sessionId: string,
+		options?: GooseRequestOptions,
+	): Promise<GooseExtension[]> {
+		return this.custom<{ extensions?: unknown }>(
+			"_goose/unstable/session/extensions/list",
+			{ sessionId },
+			options,
+		).then((response) => array(response.extensions).map(normalizeExtension));
+	}
+	addSessionExtension(
+		sessionId: string,
+		extension: GooseExtension,
+		options?: GooseRequestOptions,
+	): Promise<void> {
+		return this.custom(
+			"_goose/unstable/session/extensions/add",
+			{ sessionId, extension: extension.raw },
+			options,
+		).then(() => {});
+	}
+	removeSessionExtension(
+		sessionId: string,
+		name: string,
+		options?: GooseRequestOptions,
+	): Promise<void> {
+		return this.custom(
+			"_goose/unstable/session/extensions/remove",
+			{ sessionId, name },
+			options,
+		).then(() => {});
+	}
+	setToolPermissions(
+		toolPermissions: readonly { toolName: string; permission: GooseToolPermission }[],
+		options?: GooseRequestOptions,
+	): Promise<void> {
+		for (const tool of toolPermissions) {
+			if (normalizeToolPermission(tool.permission) !== tool.permission) {
+				throw new Error("Unknown Goose tool permission");
+			}
+		}
 		return this.custom("_goose/unstable/tools/permissions/set", { toolPermissions }, options).then(
 			() => {},
 		);
@@ -1040,7 +1127,10 @@ function normalizeSlashCommand(value: unknown): GooseSlashCommand {
 }
 function normalizeTool(value: unknown): GooseTool {
 	const p = object(value);
-	const permission = string(p.permission);
+	const permission = normalizeToolPermission(p.permission);
+	if (p.permission != null && permission === undefined) {
+		throw new Error("Unknown Goose tool permission");
+	}
 	return {
 		name: requiredString(p, "name"),
 		description: string(p.description) ?? "",
@@ -1049,6 +1139,56 @@ function normalizeTool(value: unknown): GooseTool {
 		inputSchema: raw(p.inputSchema),
 		...(p.outputSchema !== undefined ? { outputSchema: raw(p.outputSchema) } : {}),
 	};
+}
+export function normalizeToolPermission(value: unknown): GooseToolPermission | undefined {
+	return value === "always_allow" || value === "ask_before" || value === "never_allow"
+		? value
+		: undefined;
+}
+function normalizeExtension(value: unknown): GooseExtension {
+	const p = object(value);
+	const type = requiredExtensionType(p.type);
+	const server = object(p.server);
+	const displayName = string(p.displayName) ?? string(p.display_name);
+	const description = string(p.description);
+	const availableTools = array(p.availableTools ?? p.available_tools).filter(
+		(tool): tool is string => typeof tool === "string",
+	);
+	return {
+		name:
+			type === "mcp"
+				? requiredExtensionIdentifier(server, "name")
+				: requiredExtensionIdentifier(p, "name"),
+		type,
+		...(displayName === undefined ? {} : { displayName }),
+		...(description === undefined ? {} : { description }),
+		...(typeof p.bundled === "boolean" ? { bundled: p.bundled } : {}),
+		...(availableTools.length ? { availableTools } : {}),
+		raw: raw(value),
+	};
+}
+function normalizeConfiguredExtension(value: unknown): GooseConfiguredExtension {
+	const p = object(value);
+	if (typeof p.enabled !== "boolean")
+		throw new Error("Goose configured extension is missing enabled");
+	const configKey = string(p.configKey);
+	if (configKey !== undefined && (!configKey || configKey.includes("\0"))) {
+		throw new Error("Goose configured extension has an invalid configKey");
+	}
+	return {
+		...normalizeExtension(p.extension),
+		enabled: p.enabled,
+		...(configKey === undefined ? {} : { configKey }),
+	};
+}
+function requiredExtensionType(value: unknown): GooseExtension["type"] {
+	if (value === "builtin" || value === "platform" || value === "mcp") return value;
+	throw new Error("Goose extension is missing a supported type");
+}
+function requiredExtensionIdentifier(value: unknown, key: string): string {
+	const identifier = requiredString(value, key);
+	if (identifier.includes("\0")) throw new Error(`Goose extension has an invalid ${key}`);
+	return identifier;
 }
 function normalizeUsage(value: unknown): GooseUsage {
 	const p = object(value);

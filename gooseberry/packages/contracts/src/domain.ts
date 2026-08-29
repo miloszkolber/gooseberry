@@ -1,5 +1,38 @@
 export type TabStatus = "idle" | "running" | "waiting" | "error";
 
+/** Browser-safe projection of Goose's globally persisted tool permission. */
+export type GooseToolPermission = "always_allow" | "ask_before" | "never_allow";
+
+/** Deliberately excludes Goose extension configuration, raw objects, and MCP credentials. */
+export interface GooseExtensionSummary {
+	name: string;
+	type: "builtin" | "platform" | "mcp";
+	displayName?: string;
+	description?: string;
+	bundled?: boolean;
+	availableTools?: string[];
+}
+
+/** Config state appears only in the configured catalog collection. */
+export interface GooseConfiguredExtensionSummary extends GooseExtensionSummary {
+	enabled: boolean;
+	configKey?: string;
+}
+
+export interface GooseExtensionCatalog {
+	configured: GooseConfiguredExtensionSummary[];
+	available: GooseExtensionSummary[];
+	warningCount: number;
+}
+
+/** Deliberately excludes input/output schemas and any extension implementation metadata. */
+export interface GooseToolSummary {
+	name: string;
+	description: string;
+	parameters: string[];
+	permission?: GooseToolPermission;
+}
+
 export const PROJECT_ICONS = ["folder", "code", "book", "flask", "rocket", "sparkles"] as const;
 export type ProjectIcon = (typeof PROJECT_ICONS)[number];
 export const PROJECT_NAME_MAX_LENGTH = 100;

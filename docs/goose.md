@@ -6,7 +6,7 @@ The distribution builds the upstream CLI with code mode, local inference, AWS pr
 
 ## Service
 
-Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SECRET_KEY`. Gooseberry connects over ACP using the matching `GOOSEBERRY_GOOSE_SECRET_KEY`. Goose owns sessions, history, provider and model configuration, tools, compaction, permissions, recipes, and scheduler persistence.
+Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SECRET_KEY`. Gooseberry connects over ACP using the matching `GOOSEBERRY_GOOSE_SECRET_KEY`. Goose owns sessions, history, provider and model configuration, extensions, tools, compaction, permissions, recipes, and scheduler persistence.
 
 ## Gooseberry additions
 
@@ -16,7 +16,7 @@ Run `goose serve --enable-scheduler` on `127.0.0.1:3284` with `GOOSE_SERVER__SEC
 - Custom agents are installed as Goose agents and summoned in Goose sessions.
 - The browser capability is a lazy Goose skill backed by `gooseberry-browser`.
 - Gooseberry projects Git status and diffs, read-only files, session presentation, and Web UI state.
-- Native session fork with immediate-parent lineage, session rename and reversible archive, provider setup, slash commands, history search, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state. Follow-up queues are bounded controller-memory state because Goose v1.48.0 does not expose queue manipulation through ACP.
+- Native session fork with immediate-parent lineage, session rename and reversible archive, provider setup, slash commands, history search, sanitized extension and tool administration, recipes, and scheduler controls are ACP projections. Goose remains authoritative for their configuration and state. Follow-up queues are bounded controller-memory state because Goose v1.48.0 does not expose queue manipulation through ACP.
 
 ## Installation
 

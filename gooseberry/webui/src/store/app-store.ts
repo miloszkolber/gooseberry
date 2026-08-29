@@ -155,6 +155,7 @@ export const SettingsSection = {
 	Providers: "providers",
 	Models: "models",
 	Automation: "automation",
+	Tools: "tools",
 	Signet: "signet",
 } as const;
 export type SettingsSection = (typeof SettingsSection)[keyof typeof SettingsSection];

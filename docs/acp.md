@@ -1,6 +1,6 @@
 # ACP coverage
 
-Gooseberry connects to the unchanged Goose v1.48.0 ACP service and projects a focused subset of its capabilities. Goose owns the underlying session, provider, model, tool, permission, compaction, recipe, and scheduler state. Gooseberry adds browser-facing authorization, project association, presentation, and controls.
+Gooseberry connects to the unchanged Goose v1.48.0 ACP service and projects a focused subset of its capabilities. Goose owns the underlying session, provider, model, extension, tool, permission, compaction, recipe, and scheduler state. Gooseberry adds browser-facing authorization, project association, presentation, and controls.
 
 ## Projected session protocol
 
@@ -20,16 +20,19 @@ Gooseberry uses Goose custom ACP methods for:
 - recipe list, parse, save, and delete
 - schedule list, create, update, pause, resume, delete, immediate run, session history, inspection, and termination
 - slash-command discovery
+- global configured and available extension inventory, add, remove, and enable or disable
+- active-session extension inventory, add, and remove
+- active-session tool inventory and global tool-permission changes
 
-Provider secrets pass from the browser to Goose only during an explicit setup request. Gooseberry never stores or returns secret values. Recipe and scheduler records also remain Goose-owned.
+Provider secrets pass from the browser to Goose only during an explicit setup request. Gooseberry never stores or returns secret values. Recipe, scheduler, extension, tool, and permission records also remain Goose-owned. Extension and tool projections omit raw extension objects, commands, arguments, URLs, headers, environment data, client-secret keys, input and output schemas, and warning text.
 
 ## Related Goose capabilities
 
 The following Goose capabilities are retained in the runtime but do not currently have generic Gooseberry administration surfaces:
 
 - **Compaction:** Goose owns automatic compaction. Gooseberry displays reported context and compaction-related usage but does not expose manual conversation truncation.
-- **Extensions and plugins:** the distribution installs Gooseberry's custom agents and browser skill in standard Goose configuration. The UI does not manage arbitrary configured or per-session extensions.
-- **Tools and agents:** the chat renders tool execution, permission requests, and summoned subagent progress. It does not provide a general tool inventory, tool-permission editor, or agent catalog editor.
+- **Extensions and plugins:** the distribution installs Gooseberry's custom agents and browser skill in standard Goose configuration. The focused settings surface manages catalogued global and active-session extensions by Goose identity, but it does not expose or edit raw extension configuration or credentials.
+- **Tools and agents:** the chat renders tool execution, permission requests, and summoned subagent progress. Settings show the active chat's tool inventory and edit Goose's global per-tool permissions. Gooseberry does not provide an agent catalog editor.
 - **Export and import:** session, source, and application import/export methods are not projected.
 - **Advanced provider administration:** custom-provider CRUD, raw configuration, provider-secret inventory, readiness diagnostics, and catalog templates are not projected.
 - **Sources, prompts, preferences, defaults, dictation, and local-inference lifecycle:** Goose may expose custom requests for these domains, but Gooseberry has no generic control surface for them.

@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test";
 import { normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "./agent-protocol";
 import { REQUEST_IMAGE_BASE64_BUDGET } from "./domain";
-import { MAX_SERIALIZED_WS_REQUEST_BYTES, WS_METHODS, type WsParams } from "./ws-protocol";
+import {
+	MAX_SERIALIZED_WS_REQUEST_BYTES,
+	PROTOCOL_VERSION,
+	WS_METHODS,
+	type WsParams,
+	type WsResult,
+} from "./ws-protocol";
 
 test("the WebSocket envelope fits the accepted aggregate image budget", () => {
 	const request = JSON.stringify({
@@ -33,4 +39,27 @@ test("session fork is a typed project-scoped WebSocket method", () => {
 	const params: WsParams<"session.fork"> = { projectId: "project", sessionId: "source" };
 	expect(WS_METHODS.sessionFork).toBe("session.fork");
 	expect(params).toEqual({ projectId: "project", sessionId: "source" });
+});
+
+test("extension and tool administration methods expose only browser-safe typed inputs and results", () => {
+	const add: WsParams<"goose.extensionAdd"> = { name: "developer", enabled: true };
+	const permission: WsParams<"session.toolPermissionSet"> = {
+		projectId: "project",
+		sessionId: "chat",
+		toolName: "developer__shell",
+		permission: "ask_before",
+	};
+	const catalog: WsResult<"goose.extensionList"> = {
+		configured: [
+			{ name: "developer", type: "builtin", enabled: true, configKey: "builtin.developer" },
+		],
+		available: [],
+		warningCount: 1,
+	};
+	expect(PROTOCOL_VERSION).toBe(62);
+	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
+	expect(add).toEqual({ name: "developer", enabled: true });
+	expect(permission.permission).toBe("ask_before");
+	expect(JSON.stringify(catalog)).not.toContain("raw");
+	expect(JSON.stringify(catalog)).not.toContain("warning text");
 });

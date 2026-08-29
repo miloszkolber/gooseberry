@@ -6,7 +6,7 @@ This file contains candidate improvements beyond the current Goose-based baselin
 
 - Concentrate Goose ACP conversions behind a small adapter and add a compatibility contract test for the methods Gooseberry uses.
 - Expand Gooseberry projections only where Goose exposes stable, useful metadata.
-- Evaluate focused administration surfaces for Goose extensions, tool inventory, manual compaction, session export/import, and advanced provider metadata without creating parallel registries.
+- Evaluate focused administration surfaces for manual compaction, session export/import, and advanced provider metadata without creating parallel registries.
 
 ## Deployment
 
