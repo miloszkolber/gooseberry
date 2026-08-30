@@ -1,7 +1,8 @@
 import { GitFork } from "lucide-react";
-import type { ToolRenderProps } from "../../tool-registry";
+import { DefaultToolRenderer, type ToolRenderProps } from "../../tool-registry";
 import { Collapsible, countLines } from "../collapsible";
 import { resultText, strArg } from "../tool-helpers";
+import { ToolOutput } from "../tool-output";
 
 type ChildStatus = "starting" | "running" | "completed" | "failed" | "cancelled";
 
@@ -134,16 +135,25 @@ function modelLabel(
 	return [modelName, thinkingLevel].filter(Boolean).join(" · ");
 }
 
-export function SubagentCard({ args, result, status }: ToolRenderProps) {
+export function SubagentCard(props: ToolRenderProps) {
+	const { args, result, status, toolName } = props;
 	const details = subagentDetails(result);
+	// Goose's load also discovers/reads agents, skills and recipes, not just child runs.
+	if (toolName === "load" && !details.status && !details.results?.length) {
+		return <DefaultToolRenderer {...props} />;
+	}
 	const child = details.results?.[0];
 	const task =
 		strArg(args, "task") || strArg(args, "instructions") || strArg(args, "source") || child?.task;
-	const output = resultText(result);
-	const currentStatus = childStatus(details) ?? (status === "error" ? "failed" : undefined);
+	const currentStatus = status === "error" ? "failed" : childStatus(details);
+	const output = resultText(result, status === "error" || currentStatus === "failed");
 	const sessionId = details.childSessionId || details.runId || child?.runId;
 	const model = modelLabel(child?.model, child?.thinkingLevel);
-	const label = statusLabel(currentStatus, child?.currentTool, child?.error);
+	const label = currentStatus
+		? statusLabel(currentStatus, child?.currentTool, child?.error)
+		: status === "done"
+			? "Delegation returned"
+			: "Subagent running…";
 
 	return (
 		<div data-testid="tool-subagent" className="flex flex-col gap-xs">
@@ -164,13 +174,11 @@ export function SubagentCard({ args, result, status }: ToolRenderProps) {
 				<pre className="overflow-auto px-sm py-xs text-feedback-error tr-code-text">
 					{child?.error || output || "Child failed."}
 				</pre>
-			) : currentStatus === "completed" && output ? (
+			) : (
 				<Collapsible lines={countLines(output)}>
-					<pre className="overflow-auto rounded-[var(--radius-sm)] bg-container-header-bg p-sm tr-code-text text-text-default">
-						{output}
-					</pre>
+					<ToolOutput result={result ?? child?.finalOutput} />
 				</Collapsible>
-			) : null}
+			)}
 		</div>
 	);
 }

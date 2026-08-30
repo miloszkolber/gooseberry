@@ -12,6 +12,7 @@ import "./subagent/register";
 import "./signet/register";
 
 registerToolRenderer("bash", BashCard, { summary: ({ args }) => strArg(args, "command") });
+registerToolRenderer("shell", BashCard, { summary: ({ args }) => strArg(args, "command") });
 registerToolRenderer("read", ReadCard, {
 	summary: ({ args, projectAreaRoot }) =>
 		projectRelativePath(strArg(args, "path"), projectAreaRoot),

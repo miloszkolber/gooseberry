@@ -11,7 +11,6 @@ import {
 	Wrench,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
 	cn,
 	parseSkillInvocation,
@@ -20,8 +19,8 @@ import {
 	userText,
 } from "@/lib";
 import { ActivityGroup } from "./activity-group";
-import { FileChip } from "./file-chip";
 import { useFold, useSelection } from "./fold-state";
+import { ImageChip } from "./image-chip";
 import { Markdown } from "./markdown";
 import type { ChatRow, TurnDividerData } from "./rows";
 import { formatTokens } from "./session-stats-bar";
@@ -113,38 +112,6 @@ function userAttachments(content: UserMessage["content"], names?: string[]) {
 const USER_BUBBLE =
 	"max-w-[85%] whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-bubble-user-border bg-clip-padding bg-bubble-user-bg px-md py-sm tr-text-reading text-text-muted";
 
-function AttachmentChip({ label, img }: { label: string; img: ImageContent }) {
-	const [open, setOpen] = useState(false);
-	return (
-		<>
-			<FileChip
-				data-testid="chat-attachment-chip"
-				title={label}
-				aria-label={`View attachment ${label}`}
-				onClick={() => setOpen(true)}
-				label={label}
-			/>
-			<Dialog open={open} onOpenChange={setOpen}>
-				<DialogContent
-					data-testid="chat-attachment-dialog"
-					className="flex max-h-[90vh] w-auto max-w-[95vw] flex-col gap-sm"
-				>
-					<DialogHeader>
-						<DialogTitle>{label}</DialogTitle>
-					</DialogHeader>
-					<div className="min-h-0 flex-1 overflow-auto">
-						<img
-							src={`data:${img.mimeType};base64,${img.data}`}
-							alt=""
-							className="max-h-[80vh] max-w-full rounded-[var(--radius-sm)]"
-						/>
-					</div>
-				</DialogContent>
-			</Dialog>
-		</>
-	);
-}
-
 function UserTurn({
 	id,
 	message,
@@ -178,7 +145,7 @@ function UserTurn({
 				{attachments.length > 0 ? (
 					<div className="flex flex-wrap gap-xs pb-xs" data-testid="chat-message-images">
 						{attachments.map(({ key, label, img }) => (
-							<AttachmentChip key={key} label={label} img={img} />
+							<ImageChip key={key} label={label} image={img} />
 						))}
 					</div>
 				) : null}
@@ -195,7 +162,7 @@ function AssistantImageTurn({ image }: { image: ImageContent }) {
 			data-role="assistant"
 			className="tr-text-reading text-text-default"
 		>
-			<AttachmentChip label={image.mimeType} img={image} />
+			<ImageChip label={image.mimeType} image={image} />
 		</div>
 	);
 }

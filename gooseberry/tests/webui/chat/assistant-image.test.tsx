@@ -26,5 +26,7 @@ test("assistant image replays hydrate, project to an image row, and render an at
 	const image = rows.find((row) => row.kind === "image");
 	if (image?.kind !== "image") throw new Error("expected image row");
 	expect(image.image).toEqual({ type: "image", data: "AA==", mimeType: "image/png" });
-	expect(renderToStaticMarkup(<ChatTurnView row={image} />)).toContain("chat-attachment-chip");
+	const markup = renderToStaticMarkup(<ChatTurnView row={image} />);
+	expect(markup).toContain("chat-attachment-chip");
+	expect(markup).toContain('aria-haspopup="dialog"');
 });

@@ -146,12 +146,21 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldConnection := entry.context(ctx)
+	entry.state.Lock()
+	entry.pendingToolOutputs = map[string]toolOutput{"interrupted": {LiveText: "old preview"}}
+	entry.state.Unlock()
 	manager.releaseEntry(entry)
 	images := []ImageContent{{Type: "image", MimeType: "image/png", Data: "AA=="}, {Type: "image", MimeType: "image/png", Data: "AQ=="}}
 	if err := manager.Prompt(ctx, "chat", "", images); err != nil {
 		t.Fatal(err)
 	}
 	initial := take("session/prompt")
+	entry.state.Lock()
+	retired := len(entry.pendingToolOutputs) == 0
+	entry.state.Unlock()
+	if !retired {
+		t.Fatal("a new idle prompt retained interrupted tool previews")
+	}
 	if blocks := arrayValue(initial.params["prompt"]); len(blocks) != 3 || mapValue(blocks[0])["text"] != "" || mapValue(blocks[1])["data"] != "AA==" || mapValue(blocks[2])["data"] != "AQ==" {
 		t.Fatal("image-only prompt changed at the ACP boundary")
 	}

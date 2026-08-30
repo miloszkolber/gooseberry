@@ -1,0 +1,174 @@
+import { expect, test } from "bun:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { messagesToRuntime } from "@/chat/hydrate";
+import { createSessionRuntime, reduceSessionEvent } from "@/chat/session-runtime";
+import { DefaultToolRenderer, getToolRenderer, type ToolRenderProps } from "@/chat/tool-registry";
+import { BashCard } from "@/chat/tools/bash-card";
+import { EditCard } from "@/chat/tools/edit-card";
+import { resultText } from "@/chat/tools/tool-helpers";
+import "@/chat/tools/register";
+
+const props = (
+	toolName: string,
+	result: unknown,
+	args: Record<string, unknown> = {},
+): ToolRenderProps => ({
+	toolCallId: "builtin-tool",
+	toolName,
+	args,
+	result,
+	status: "done",
+	streaming: false,
+});
+
+test("generic builtin output preserves ordered text, image and resource blocks without executing HTML", () => {
+	const blocks = [
+		{ type: "text", text: "Loaded image" },
+		{ type: "image", mimeType: "image/png", data: "YWJjZA==" },
+		{
+			type: "resource",
+			resource: {
+				uri: "ui://apps/example",
+				mimeType: "text/html;profile=mcp-app",
+				text: "<script>unsafe()</script>",
+			},
+		},
+		{ type: "future-output", value: "kept for compatibility" },
+	];
+	for (const result of [
+		blocks,
+		{ content: blocks },
+		{
+			structuredContent: { path: "/repo/image.png", width: 12 },
+			content: blocks.map((content) => ({ type: "content", content })),
+		},
+	]) {
+		const markup = renderToStaticMarkup(
+			<DefaultToolRenderer {...props("read_image", result)} status="running" />,
+		);
+		expect(markup).toContain("Loaded image");
+		expect(markup).toContain("chat-attachment-chip");
+		expect(markup).not.toContain("YWJjZA==");
+		expect(markup).toContain("ui://apps/example");
+		expect(markup).toContain("&lt;script&gt;unsafe()&lt;/script&gt;");
+		expect(markup).not.toContain("<script");
+		expect(markup).not.toContain("<iframe");
+		expect(markup).toContain("kept for compatibility");
+		expect(markup.indexOf("Loaded image")).toBeLessThan(markup.indexOf("chat-attachment-chip"));
+	}
+	expect(
+		renderToStaticMarkup(
+			<DefaultToolRenderer
+				{...props("orchestrator__view_session", {
+					content: [],
+					structuredContent: { status: "done" },
+				})}
+			/>,
+		),
+	).toContain("done");
+	const failure = {
+		structuredContent: { error: "permission denied" },
+		content: blocks.slice(0, 2),
+	};
+	for (const Renderer of [DefaultToolRenderer, BashCard]) {
+		const markup = renderToStaticMarkup(<Renderer {...props("shell", failure)} status="error" />);
+		expect(markup).toContain("permission denied");
+		expect(markup).toContain("Loaded image");
+		if (Renderer === DefaultToolRenderer) expect(markup).toContain("chat-attachment-chip");
+	}
+});
+
+test("only completed Apps creation and iteration explain the unavailable interactive window", () => {
+	for (const toolName of ["apps__create_app", "apps__iterate_app"]) {
+		const markup = renderToStaticMarkup(
+			<DefaultToolRenderer {...props(toolName, "Opened in a new window")} />,
+		);
+		expect(markup).toContain("Opened in a new window");
+		expect(markup).toContain("Interactive app windows are not supported here yet");
+	}
+	for (const toolName of ["apps__list_apps", "other__create_app"]) {
+		expect(
+			renderToStaticMarkup(<DefaultToolRenderer {...props(toolName, "Result")} />),
+		).not.toContain("Interactive app windows");
+	}
+	expect(
+		renderToStaticMarkup(
+			<DefaultToolRenderer {...props("apps__create_app", "Failed")} status="error" />,
+		),
+	).not.toContain("App saved");
+});
+
+test("official developer and summon results use their real arguments and show returned output", () => {
+	expect(getToolRenderer("shell")).toBe(BashCard);
+	expect(getToolRenderer("third_party__shell")).toBe(DefaultToolRenderer);
+	const shellResult = [
+		{ type: "text", text: "stdout" },
+		{ type: "text", text: "stderr" },
+	];
+	expect(resultText(shellResult)).toBe("stdout\nstderr");
+	const edit = renderToStaticMarkup(
+		<EditCard
+			{...props("edit", "Updated file", {
+				path: "/repo/file.ts",
+				before: "old value",
+				after: "new value",
+			})}
+		/>,
+	);
+	expect(edit).toContain("old value");
+	expect(edit).toContain("new value");
+	expect(edit).toContain("Updated file");
+	for (const toolName of ["delegate", "load"]) {
+		const Renderer = getToolRenderer(toolName);
+		const returned = renderToStaticMarkup(
+			<Renderer
+				{...props(toolName, { content: [{ type: "text", text: "Actual Goose result" }] })}
+			/>,
+		);
+		expect(returned).toContain("Actual Goose result");
+		expect(returned).not.toContain("Subagent running");
+		const failed = renderToStaticMarkup(
+			<Renderer
+				{...props(toolName, { content: [{ type: "text", text: "Actual Goose failure" }] })}
+				status="error"
+			/>,
+		);
+		expect(failed).toContain("Actual Goose failure");
+		expect(failed).toContain("text-feedback-error");
+	}
+});
+
+test("status-only tool completion retains the right streamed result and matches history hydration", () => {
+	const image = [{ type: "image", mimeType: "image/png", data: "YWJjZA==" }];
+	let runtime = createSessionRuntime(null, "off");
+	runtime = reduceSessionEvent(runtime, {
+		type: "tool-start",
+		toolCallId: "image",
+		toolName: "read_image",
+		tool: { path: "/repo/image.png" },
+	});
+	expect(runtime.toolResults.image?.raw).toBeUndefined();
+	runtime = reduceSessionEvent(runtime, { type: "tool-update", toolCallId: "image", tool: image });
+	runtime = reduceSessionEvent(runtime, {
+		type: "tool-update",
+		toolCallId: "other",
+		tool: "other result",
+	});
+	runtime = reduceSessionEvent(runtime, {
+		type: "tool-end",
+		toolCallId: "image",
+		status: "completed",
+	});
+	const history = messagesToRuntime([{ role: "toolResult", toolCallId: "image", content: image }]);
+	expect(runtime.toolResults.image).toEqual(history.toolResults.image);
+	expect(runtime.toolResults.other?.raw).toBe("other result");
+	for (const tool of ["", false]) {
+		runtime = reduceSessionEvent(runtime, {
+			type: "tool-end",
+			toolCallId: "image",
+			status: "completed",
+			tool,
+		});
+		expect(runtime.toolResults.image?.raw).toBe(tool);
+	}
+});

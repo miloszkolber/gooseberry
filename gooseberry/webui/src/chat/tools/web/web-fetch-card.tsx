@@ -22,7 +22,7 @@ function firstUrl(args: Record<string, unknown>): string {
 export function WebFetchCard({ args, result, status }: ToolRenderProps) {
 	const url = firstUrl(args);
 	const label = url ? hostOf(url) : "fetch";
-	const output = resultText(result);
+	const output = resultText(result, status === "error");
 
 	return (
 		<div data-testid="tool-fetch_content" className="flex flex-col gap-xs">

@@ -10,7 +10,7 @@ export function ReadCard({ args, result, status, projectAreaRoot }: ToolRenderPr
 	const displayPath = projectRelativePath(path, projectAreaRoot);
 	const offset = numArg(args, "offset");
 	const limit = numArg(args, "limit");
-	const output = resultText(result);
+	const output = resultText(result, status === "error");
 	const lang = languageFromPath(path);
 
 	let range = "";

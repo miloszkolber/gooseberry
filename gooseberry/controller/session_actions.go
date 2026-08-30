@@ -199,6 +199,11 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 		content = blocks
 	}
 	entry.state.Lock()
+	if !entry.streaming {
+		// Retire previews left by an interrupted turn. Do this at the next
+		// prompt, after the SDK has drained the prior turn's notifications.
+		entry.pendingToolOutputs = nil
+	}
 	entry.messages = append(entry.messages, map[string]any{"role": "user", "content": content})
 	entry.pendingEcho = &userEcho{text: text, images: echoImages, matched: make([]bool, len(echoImages))}
 	entry.stats.TotalMessages = len(entry.messages)
