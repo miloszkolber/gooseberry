@@ -1,15 +1,16 @@
 # Application workspace
 
-One Go module serves the application and browser API. The React/Vite frontend communicates with it through a small browser protocol; there is no JavaScript server.
+One Go module builds the application and browser service as separate executables. The React/Vite frontend communicates with the application through a small WebSocket protocol; there is no JavaScript server.
 
 ```text
-main.go       startup, coordinated shutdown and health check
+main.go       application startup, shutdown and health check
+cmd/browser/  browser-service entry point and health check
 controller/   Goose ACP, application HTTP/MCP, projects and persistence
-browser/      browser HTTP API, command policy and Chromium lifecycle
-contracts/    browser wire types and envelope validation
+browser/      browser MCP/HTTP API, guidance, artifacts and Chromium lifecycle
+contracts/    frontend wire types and envelope validation
 webui/        React application, feature state and presentation
 scripts/      dependency and source checks
-Dockerfile    multi-stage build for the single runtime image
+Dockerfile    multi-stage build with gooseberry and browser runtime targets
 ```
 
 Use Go and Bun versions pinned in `Dockerfile` and `package.json`. Prefer disposable build containers when these tools are not installed locally.
@@ -25,6 +26,6 @@ go test -race ./...
 go vet ./...
 ```
 
-`bun run test` includes the contract, frontend and Go tests. `bun run build` writes the executable to `dist/gooseberry` and static assets to `webui/dist`. Bun is a build/test dependency only; the final image contains neither Bun nor Node.
+`bun run test` includes the contract, frontend and Go tests. `bun run build` writes the application executable to `dist/gooseberry` and static assets to `webui/dist`. Build the standalone browser with `go build -trimpath -o dist/gooseberry-browser ./cmd/browser`. Docker builds both executables into their respective images. Bun is a build/test dependency only; neither final image contains Bun or Node.
 
-See [development](../docs/development.md) for focused validation and performance boundaries, [architecture](../docs/architecture.md) for state ownership, and [deployment](../docs/deployment.md) for the supported one-container runtime.
+See [development](../docs/development.md) for focused validation and performance boundaries, [architecture](../docs/architecture.md) for state ownership, and [deployment](../docs/deployment.md) for the two-service Compose configuration.

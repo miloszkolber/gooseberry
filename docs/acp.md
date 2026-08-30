@@ -1,6 +1,6 @@
 # ACP coverage
 
-Gooseberry uses standard ACP session methods and Goose extensions. It authenticates requests, checks project access and sends the browser only the fields its UI needs. The current upstream release and commit are recorded in [`goose/version`](../goose/version) and [`goose/source-commit`](../goose/source-commit).
+Gooseberry uses standard ACP session methods and Goose extensions. It authenticates requests, checks project access and sends the browser only the fields its UI needs. [`upstream.json`](../gooseberry/tests/goose/upstream.json) records the supported official Goose release and artifacts.
 
 ## Standard ACP
 
@@ -10,7 +10,7 @@ Coder's SDK handles typed methods, JSON-RPC and request ordering. A small adapte
 
 The controller authenticates the ACP connection itself. The UI has no separate ACP login or session-close control; it loads persistent sessions as needed. Model and thinking controls use configuration options rather than a separate mode selector.
 
-Initialization checks the negotiated protocol version. Advertised capabilities are not yet used to enable or disable UI controls. The integration is tested against the pinned Goose build, not a general-purpose client for arbitrary ACP agents.
+Initialization checks the negotiated protocol version. Advertised capabilities are not yet used to enable or disable UI controls. Compatibility checks target the recorded official Goose release; this is not a general-purpose client for arbitrary ACP agents.
 
 ## Goose extensions used by the UI
 
@@ -26,16 +26,16 @@ Initialization checks the negotiated protocol version. Advertised capabilities a
 
 Goose stores the underlying data. The browser does not receive raw provider secrets, extension commands, environment values, source paths, schemas or upstream diagnostics. Agent instructions reach the editor as plain text. See [security](security.md) for access rules and [models](models.md) for catalog behavior.
 
-## Browser-owned surfaces
+## Gooseberry surfaces
 
-These are Gooseberry browser-protocol methods, not upstream ACP names:
+These belong to Gooseberry, not upstream ACP:
 
 | Method or surface | Current access |
 | --- | --- |
 | `skill.list` | Calls Goose slash-command discovery. There is no current UI caller; the composer uses session commands and agent mentions instead. |
 | `git.listCommits` | The Changes scope menu loads up to 200 recent commits when opened. Loading, empty history and failed reads have separate states. |
 | `git.status` and `git.diffFile` scopes | The Changes panel supports uncommitted changes, a selected commit and comparisons between a pinned commit and the working tree. The retained branch scope still behaves like uncommitted changes; it has no UI selector until branch-base comparison is implemented. |
-| Browser automation | The HTTP command API works independently of ACP. The installed skill documents a smaller subset of its accepted commands. |
+| Browser automation | A separate service exposes MCP tools and guidance, plus HTTP command and artifact routes. It works independently of ACP. |
 | Extension-UI dialogs | Components and state exist, but no controller/transport producer connects them to a live operation. |
 
 These distinctions matter when adding UI controls: an existing method is not proof that a feature is reachable or complete. Planned work is in [roadmap](roadmap.md).
@@ -44,4 +44,4 @@ These distinctions matter when adding UI controls: an existing method is not pro
 
 The UI does not currently expose conversation truncation, manual compaction, generic tool calls, arbitrary configuration, diagnostic reports, import/export/share, custom-provider administration, non-agent source/app editing, local-inference management or dictation. Goose still handles automatic compaction; the chat shows reported context and usage.
 
-Gooseberry's own projects, goals, tasks, questions and file/Git views are outside ACP. Objectives and questions use session-scoped MCP. Follow-up queues live in controller memory and send ordinary ACP prompts. Browser automation uses HTTP, not MCP.
+Gooseberry's own projects, goals, tasks, questions and file/Git views are outside ACP. Objectives and questions use session-scoped MCP. Follow-up queues live in controller memory and send ordinary ACP prompts. Browser automation uses its own MCP endpoint or HTTP API.

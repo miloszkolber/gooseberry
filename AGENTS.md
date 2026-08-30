@@ -22,8 +22,8 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Goose boundary
 
-- Run the pinned upstream Goose distribution at `/usr/local/bin/goose`; `goose/version` and `goose/source-commit` own the release and source identity. Keep upstream Rust runtime code unchanged.
-- Permit only the exact generated `Cargo.lock` correction checked by `goose/source-policy.sh` and documented in `docs/goose.md`. Record it in provenance, preserve third-party dependency entries and build with `--locked`; unexpected source or lockfile changes must fail verification, not broaden the exception.
+- Use an official upstream Goose release installed and managed by the user. `gooseberry/tests/goose/upstream.json` records the supported release and official artifact identities.
+- Do not fork or rebuild Goose, package an installer or systemd unit, or add an automatic updater. Optional service configuration belongs in documentation, not a setup script.
 - Keep Goose authoritative for sessions, history, providers, models, tools, compaction, permissions, recipes, and scheduler state.
 - Do not build competing provider, model, credential, session, usage, or tool registries.
 - Use the Goose ACP service boundary and small Gooseberry adapters rather than forking Goose.
@@ -39,14 +39,15 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Runtime boundaries
 
-- Goose runs as a host user service on loopback. One host-networked Gooseberry container runs one Go executable with application and browser HTTP listeners.
-- Objective updates use MCP on the application listener. Browser automation uses a lazy skill and the browser HTTP listener. Both remain accessible to trusted external host-network services.
-- Browser subprocess environments are filtered, but the browser shares the container filesystem. Do not describe this as separate-container filesystem isolation.
+- Goose runs on the host as the user's authenticated loopback service. Two host-networked containers run separate application and browser executables from one Go module.
+- Objective updates use session-scoped MCP on the application listener. Browser tools and essential instructions use MCP on the browser listener; its HTTP command and artifact routes remain available. Both MCP endpoints can serve trusted external host-network services.
+- The user registers the remote browser extension in private Goose configuration. Do not install host skills or put secrets in model-visible instructions.
+- The browser has its own state mount, without project, application-state or Goose-configuration mounts. Its sessions still share one UID and filesystem; host networking is not network isolation.
 
 ## Engineering approach
 
 - Keep only behavior required by the baseline. Add an abstraction only when retained behavior requires it.
-- Keep browser-host contracts as small as the baseline permits.
+- Keep frontend contracts as small as the baseline permits.
 - Classify dormant protocol methods and UI hooks before changing them. Wire retained functionality; do not remove it merely as cleanup.
 - Keep final Docker images non-root, read-only, multi-stage, and free of source, tests, compilers, caches, and unused native runtimes.
 
@@ -61,7 +62,7 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 - Run the narrowest relevant check during development.
 - Test observable retained behavior and meaningful security/failure boundaries.
-- Keep TypeScript and deployment tests in `gooseberry/tests/`. Go tests that exercise private package state stay beside their package; native Goose distribution tests stay in `goose/tests/`.
+- Keep TypeScript and upstream Goose compatibility tests in `gooseberry/tests/`. Go tests that exercise private package state stay beside their package.
 - Use broader integration/image checks for changes crossing Goose, browser, or persistence boundaries.
 - Before committing, review stale imports, protocol fields, scripts, documentation, generated files, and dependency-lock entries.
 
@@ -71,4 +72,4 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Current stack
 
-The controller and browser packages share one Go module and executable. The frontend uses TypeScript, React, Zustand, and Vite, with Bun as a build/test tool only. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.
+The controller and browser packages share one Go module, with separate executables and images. The frontend uses TypeScript, React, Zustand, and Vite, with Bun as a build/test tool only. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.

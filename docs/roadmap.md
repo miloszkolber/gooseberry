@@ -4,7 +4,7 @@ Planned work builds on the [current baseline](baseline.md). Latency, resource ow
 
 ## Current gaps
 
-1. Verify p95 on the deployment host. The latest release-equivalent local comparison passes the 5% limit, but earlier runs missed it and workstation timings vary. Keep the gate unchanged; check concurrent-client behavior and browser activity alongside latency. The [performance notes](performance.md) record the current evidence and limits.
+1. Verify the separate application/browser deployment and deployment-host p95. The recorded optimization comparison passes the 5% limit, but predates the image split; earlier runs missed it and workstation timings vary. Keep the gate unchanged and include concurrent clients and browser activity. The [performance notes](performance.md) record the evidence and limits.
 2. Give branch comparison an explicit base rather than treating it as uncommitted changes. Retain linked-worktree, submodule, unusual-filename and initial-commit checks. Keep Git views read-only.
 3. Verify the new commit selector and reconnect/tab-close behavior visually on desktop and narrow screens, including keyboard use. State and protocol tests do not establish visual fidelity.
 
@@ -23,15 +23,15 @@ These are proposed additions, separate from the correctness fixes above.
 ### Goose and ACP
 
 - Use initialization capabilities to enable supported controls and explain unavailable ones. Keep standard ACP operations separate from Goose-specific methods, with Goose as the default integration. Use advertised extension metadata where upstream supplies it; ACP does not provide a complete custom-method directory. This does not require a fork or a generic service framework.
-- Review `skill.list`, browser-skill instructions and dormant extension-UI hooks against their actual callers. The browser command API is live; its skill instructions cover only a subset. Extension-dialog state has no current transport producer. Connect supported behavior without removing features just because their wiring is incomplete.
+- Review `skill.list` and dormant extension-UI hooks against their actual callers. Extension-dialog state has no current transport producer. Keep browser MCP guidance aligned with the supported command API. Connect supported behavior without removing features just because their wiring is incomplete.
 - Add export, share, import and broader source management only through supported upstream methods and small, safe browser records. Do not duplicate Goose's stores.
 
 ### Local operations
 
 - Make readiness and degraded states easier to diagnose. Expose useful build provenance, limited logs and counters locally, without a telemetry service or another runtime.
 - Improve remote setup with optional TLS/identity configuration.
-- Consider a browser egress policy for private-network and cloud-metadata destinations. It does not replace the single-container filesystem trust boundary.
-- Keep release notices easy to audit across the host binary and container.
+- Consider a browser egress policy for private-network and cloud-metadata destinations. Separate state mounts do not restrict host-network access.
+- Keep image release notices and compatibility with user-installed upstream Goose easy to audit.
 
 ## Verification and maintenance
 

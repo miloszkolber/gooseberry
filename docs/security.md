@@ -2,13 +2,17 @@
 
 Gooseberry is for one trusted user. Goose tools run with that user's host permissions. A read-only file UI does not restrict what the host agent can do.
 
-## Shared container
+## Service isolation
 
-The controller, browser API and Chromium share a container UID and filesystem. Browser subprocesses get a restricted environment and separate session home directories, but can read mounted project files and application data. Read-only mounts prevent writes, not reading or sending data elsewhere.
+The application and browser run in separate containers. Only the application mounts project roots and application state. The browser mounts its own state and artifacts; it has no mount for project files, application data or Goose configuration.
 
-The default Compose file does not mount Goose configuration. Settings go through ACP, and Goose keeps its credentials on the host. Avoid adding broad home-directory mounts that would expose them again.
+Neither container mounts Goose configuration. Settings go through ACP, and Goose keeps its provider credentials on the host. Avoid broad home-directory mounts that would expose them. Compose passes explicit environment variables to each service; the browser does not receive the Goose secret or controller login token.
 
-The image runs as a non-root user with a read-only root filesystem and limited writable tmpfs areas. Command restrictions, quotas and URL checks reduce accidental misuse; they are not a browser sandbox. Network egress restrictions, including access to private services or cloud metadata, remain a deployment responsibility.
+Both images run as a non-root user with a read-only root filesystem and limited writable tmpfs areas. Browser subprocesses get a restricted environment and separate session home directories, but all browser sessions still share one container UID and filesystem. Their session IDs are not separate security identities.
+
+Chromium runs with `--no-sandbox`, so its internal sandbox is disabled. Container and mount isolation remain, but they are not a substitute for Chromium's sandbox.
+
+Host networking allows access to local services. Command restrictions, quotas and URL checks do not provide network isolation. Egress restrictions, including access to private services or cloud metadata, remain a deployment responsibility. Page content is untrusted, and actions on websites still need the user's authorization.
 
 ## Credentials
 
@@ -16,13 +20,15 @@ The image runs as a non-root user with a read-only root filesystem and limited w
 | --- | --- |
 | Goose ACP | `GOOSE_SERVER__SECRET_KEY`, matched by the controller's `GOOSEBERRY_GOOSE_SECRET_KEY`. |
 | Web UI | Optional `GOOSEBERRY_AUTH_ENABLED` and `GOOSEBERRY_TOKEN`; off for the default loopback listener. |
-| Browser API | Separate `GOOSEBERRY_BROWSER_AUTH` and `GOOSEBERRY_BROWSER_TOKEN`; off on loopback by default. |
+| Browser MCP, HTTP and artifacts | Compose requires a separate `GOOSEBERRY_BROWSER_TOKEN` and sets `GOOSEBERRY_BROWSER_AUTH=true`. Goose's private MCP configuration and the application's artifact proxy use that token. |
 | Objective/question MCP | Always uses a session-specific bearer token. UI and browser tokens do not grant this access. |
 | Model providers | Goose validates and stores credentials submitted through setup. |
 
 Controller and browser tokens must differ. A non-loopback controller bind requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` is explicitly set. Use authenticated HTTPS for remote access, set the trusted `GOOSEBERRY_PUBLIC_ORIGIN`, and keep same-origin checks enabled. WebSocket upgrades check that exact public origin even when a proxy forwards a different internal Host. Controller cookies last 90 days.
 
-Protect `.gooseberry`, Goose's user configuration/state and the Gooseberry state directory. Setup writes `~/.config/goose/gooseberry.env` with mode `0600`.
+Browser MCP checks Host and Origin as well as authentication. Set `GOOSEBERRY_BROWSER_PUBLIC_ORIGIN` for an authenticated reverse proxy. A non-loopback browser bind requires authentication; there is no unsafe-network override. The standalone browser supports unauthenticated loopback for local development, but the supplied Compose deployment does not use it.
+
+Protect `.gooseberry`, Goose's user configuration/state and both service state directories. Keep environment and configuration files containing tokens readable only by your user. The MCP registration can reference the browser token through `env_keys` and header expansion; keep its value in Goose's private environment or secret store, not in prompts, tool arguments, agent files or shared examples.
 
 Provider secrets pass through the browser and controller only during an explicit setup request. They are forwarded to Goose and excluded from replay storage, logs and browser snapshots. Native login flows do not give the browser direct access to Goose's configuration files.
 

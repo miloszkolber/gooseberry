@@ -1,26 +1,27 @@
 # Architecture
 
-```text
-Gooseberry container                     Host
-├─ controller :7312 ─────── ACP ───────── /usr/local/bin/goose
-│  ├─ Web UI, projects, Git and files      ├─ sessions, providers and tools
-│  └─ objectives/questions MCP            └─ recipes and scheduler
-└─ browser :8787 ◀──── Goose browser skill
-   └─ agent-browser and Chromium
-```
+| Process | Location | Responsibility |
+| --- | --- | --- |
+| Goose, `:3284` | Host | ACP, conversations, providers, tools and runtime configuration. |
+| Application, `:7312` | `gooseberry` container | Web UI, projects, files, Git and objective/question MCP. |
+| Browser, `:8787` | `gooseberry-browser` container | Browser MCP/HTTP, Chromium sessions and artifacts. |
 
-The container uses host networking. One Go process serves both HTTP listeners; `main.go` starts and stops them together. A listener failure ends the process. Application liveness, Goose readiness and browser liveness are separate checks, so an unavailable Goose service does not look like a dead container.
+The application connects to Goose over ACP and proxies authenticated artifact reads to the browser. Goose calls objective/question MCP on the application and browser MCP on the browser service.
+
+Both containers use host networking. Each runs its own Go executable and has its own health check and lifecycle. Application liveness, Goose readiness and browser liveness are separate checks, so an unavailable Goose service does not look like a dead application container.
 
 ## Code layout
 
-| Directory | Responsibility |
+| Path | Responsibility |
 | --- | --- |
-| `controller/` | Goose ACP, browser requests, projects, objectives, files, Git and persistence. |
-| `browser/` | Browser HTTP requests, command restrictions, processes, artifacts and quotas. |
+| `main.go` | Application entry point. |
+| `cmd/browser/` | Browser-service entry point. |
+| `controller/` | Goose ACP, Web UI requests, projects, objectives, files, Git and persistence. |
+| `browser/` | Browser MCP/HTTP requests, embedded guidance, processes, artifacts and quotas. |
 | `webui/` | React presentation, navigation and drafts. |
-| `contracts/` | Browser wire types and message validation. |
+| `contracts/` | Frontend wire types and message validation. |
 
-The Go service uses Coder's ACP SDK and WebSocket library, plus fsnotify. A small adapter converts the SDK's newline-delimited stream to Goose's WebSocket frames. The SDK handles JSON-RPC; Gooseberry does not implement another protocol stack.
+The executables share one Go module. The controller uses Coder's ACP SDK and WebSocket library, plus fsnotify; the browser uses the MCP Go SDK. A small adapter converts the ACP SDK's newline-delimited stream to Goose's WebSocket frames. The SDKs handle the protocols; Gooseberry does not implement another protocol stack.
 
 ACP connection setup is shared between callers, with a separate deadline for each caller. A slow handshake cannot hold readiness checks past their deadline. Reset and shutdown cancel unfinished setup; unsupported negotiated protocol versions are rejected. ACP readiness confirms a connection, not that a provider can complete a prompt.
 
@@ -56,10 +57,12 @@ Components, state and helpers live together by responsibility: `chat/`, `workspa
 
 Desktop and narrow layouts share one mounted file/change tree. Workspace subscriptions watch chat availability and streaming status, not every transcript chunk. React memoization skips unchanged Markdown. Radix handles accessible dialogs and menus, Virtuoso handles long lists, and Shiki loads highlighting grammars as needed.
 
-Browser types describe the data the UI needs; they are not exported Go internals. There is no JavaScript backend, permanent language bridge or generic service layer.
+Frontend types describe the data the UI needs; they are not exported Go internals. There is no JavaScript backend, permanent language bridge or generic service layer.
 
-## Image and browser process
+## Images and browser state
 
-The runtime image contains the executable, static UI, Git, Chromium, agent-browser, fonts, CA certificates, Tini and dependency licenses. It does not contain source, tests, compilers, Node, Bun or `node_modules`. Chromium and fonts account for much of the image size.
+The application image contains its executable, static UI and Git. The browser image contains its executable, Chromium, agent-browser and fonts. Both include the certificates, process supervision and legal notices they need, without source, tests, compilers, Node, Bun or `node_modules`. Chromium and fonts account for much of the browser image's size.
 
-Browser state lives under `/var/lib/gooseberry-browser`. Artifact accounting is incremental, and polling slows down when state is unchanged. Each browser session gets its own home directory and a restricted environment, but all sessions share the container UID and filesystem. See [security](security.md).
+Browser state lives under `/var/lib/gooseberry-browser`. It has no mount for project files, application state or Goose configuration. Artifact accounting is incremental, and polling slows down when state is unchanged. Each browser session gets its own home directory and a restricted environment, but all browser sessions share that container's UID and filesystem.
+
+Browser MCP session IDs are explicit tool arguments, not Goose conversation IDs or MCP transport IDs. Reusing an ID keeps the same browser state; `close` cleans it up. Guidance is embedded in the browser service and available through MCP, without a host-installed skill. See [integration](integration.md) and [security](security.md).
