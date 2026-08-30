@@ -36,8 +36,15 @@ type GooseClient struct {
 
 	mu         sync.Mutex
 	connection *gooseConnection
+	connecting *gooseConnectAttempt
 	closed     bool
 	generation uint64
+}
+
+type gooseConnectAttempt struct {
+	done   chan struct{}
+	cancel context.CancelFunc
+	err    error // Written before done closes.
 }
 
 type gooseConnection struct {
@@ -68,37 +75,102 @@ func (c *GooseClient) Ready(ctx context.Context) (uint64, error) {
 }
 
 func (c *GooseClient) ready(ctx context.Context) (*gooseConnection, uint64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, 0, fmt.Errorf("Goose client has been shut down")
-	}
-	if expected, attached := ctx.Value(connectionGenerationKey{}).(uint64); attached {
-		if expected == 0 || c.connection == nil || c.generation != expected || isDone(c.connection) {
-			return nil, 0, fmt.Errorf("Goose ACP connection changed; reload the chat before retrying")
+	waited := false
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
 		}
-	}
-	if c.connection != nil {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return nil, 0, fmt.Errorf("Goose client has been shut down")
+		}
+		if expected, attached := ctx.Value(connectionGenerationKey{}).(uint64); attached {
+			if expected == 0 || c.connection == nil || c.generation != expected || isDone(c.connection) {
+				c.mu.Unlock()
+				return nil, 0, fmt.Errorf("Goose ACP connection changed; reload the chat before retrying")
+			}
+		}
+		previous := c.connection
+		if previous != nil && !isDone(previous) {
+			generation := c.generation
+			c.mu.Unlock()
+			return previous, generation, nil
+		}
+		if waited {
+			c.mu.Unlock()
+			if previous != nil {
+				c.drop(previous)
+			}
+			return nil, 0, fmt.Errorf("Goose ACP connection closed during setup")
+		}
+		c.connection = nil
+		attempt := c.connecting
+		if attempt == nil {
+			// Setup belongs to the client, not the first readiness probe's deadline.
+			bounded, cancel := c.bounded(context.Background())
+			attempt = &gooseConnectAttempt{done: make(chan struct{}), cancel: cancel}
+			c.connecting = attempt
+			// Never reuse a cancelled attempt's notification generation.
+			c.generation++
+			go c.connect(bounded, attempt, c.generation)
+		}
+		c.mu.Unlock()
+		if previous != nil {
+			previous.close()
+		}
 		select {
-		case <-c.connection.client.Done():
-			c.connection.cancel()
-			c.connection.stream.Close()
-			c.connection = nil
-		default:
-			return c.connection, c.generation, nil
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		case <-attempt.done:
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+			if attempt.err != nil {
+				return nil, 0, attempt.err
+			}
+			waited = true
 		}
 	}
-	bounded, cancel := c.bounded(ctx)
-	defer cancel()
-	connection, err := dialGoose(bounded, c.URL, c.SecretKey, c.Events, c.generation+1)
-	if err != nil {
-		return nil, 0, err
+}
+
+func (c *GooseClient) connect(ctx context.Context, attempt *gooseConnectAttempt, generation uint64) {
+	defer attempt.cancel()
+	connection, err := dialGoose(ctx, c.URL, c.SecretKey, c.Events, generation)
+	if err == nil {
+		// The SDK writes before waiting on the request context. Closing the stream
+		// also interrupts a blocked initialize write on cancellation or shutdown.
+		stop := context.AfterFunc(ctx, connection.close)
+		err = c.initialize(ctx, connection)
+		stop()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 	}
+	c.mu.Lock()
+	if c.connecting == attempt {
+		c.connecting = nil
+		if err == nil {
+			c.connection = connection
+		}
+		attempt.err = err
+		close(attempt.done)
+	} else if err == nil {
+		// Reset or Close retired this attempt while its network work completed.
+		err = context.Canceled
+	}
+	c.mu.Unlock()
+	if err != nil && connection != nil {
+		connection.close()
+	}
+}
+
+func (c *GooseClient) initialize(ctx context.Context, connection *gooseConnection) error {
 	version := c.Version
 	if version == "" {
 		version = "0.0.0"
 	}
-	_, err = connection.client.Initialize(bounded, acp.InitializeRequest{
+	response, err := connection.client.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersion(acp.ProtocolVersionNumber),
 		ClientInfo:      &acp.Implementation{Name: "gooseberry", Version: version},
 		ClientCapabilities: acp.ClientCapabilities{
@@ -106,13 +178,12 @@ func (c *GooseClient) ready(ctx context.Context) (*gooseConnection, uint64, erro
 		},
 	})
 	if err != nil {
-		connection.cancel()
-		connection.stream.Close()
-		return nil, 0, fmt.Errorf("initialize Goose ACP: %w", err)
+		return fmt.Errorf("initialize Goose ACP: %w", err)
 	}
-	c.generation++
-	c.connection = connection
-	return connection, c.generation, nil
+	if response.ProtocolVersion != acp.ProtocolVersionNumber {
+		return fmt.Errorf("unsupported Goose ACP protocol version %d (expected %d)", response.ProtocolVersion, acp.ProtocolVersionNumber)
+	}
+	return nil
 }
 
 func (c *GooseClient) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -137,14 +208,7 @@ func (c *GooseClient) CallUntilDone(ctx context.Context, method string, params a
 }
 
 func (c *GooseClient) Reset() {
-	c.mu.Lock()
-	connection := c.connection
-	c.connection = nil
-	c.mu.Unlock()
-	if connection != nil {
-		connection.cancel()
-		_ = connection.stream.Close()
-	}
+	c.disconnect(false)
 }
 
 func (c *GooseClient) ListSessions(ctx context.Context, request acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
@@ -227,14 +291,29 @@ func (c *GooseClient) SetConfig(ctx context.Context, request acp.SetSessionConfi
 }
 
 func (c *GooseClient) Close() {
+	c.disconnect(true)
+}
+
+func (c *GooseClient) disconnect(shutdown bool) {
 	c.mu.Lock()
-	c.closed = true
+	c.closed = c.closed || shutdown
 	connection := c.connection
 	c.connection = nil
+	attempt := c.connecting
+	c.connecting = nil
+	if attempt != nil {
+		attempt.err = fmt.Errorf("Goose ACP connection was reset")
+		if c.closed {
+			attempt.err = fmt.Errorf("Goose client has been shut down")
+		}
+		close(attempt.done)
+	}
 	c.mu.Unlock()
+	if attempt != nil {
+		attempt.cancel()
+	}
 	if connection != nil {
-		connection.cancel()
-		connection.stream.Close()
+		connection.close()
 	}
 }
 
@@ -244,8 +323,12 @@ func (c *GooseClient) drop(connection *gooseConnection) {
 		c.connection = nil
 	}
 	c.mu.Unlock()
-	connection.cancel()
-	connection.stream.Close()
+	connection.close()
+}
+
+func (c *gooseConnection) close() {
+	c.cancel()
+	_ = c.stream.Close()
 }
 
 func (c *GooseClient) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
