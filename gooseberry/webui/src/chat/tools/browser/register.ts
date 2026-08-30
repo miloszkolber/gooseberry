@@ -9,3 +9,6 @@ export function browserSummary(args: Record<string, unknown>): string {
 }
 
 registerToolRenderer("browser", BrowserCard, { summary: ({ args }) => browserSummary(args) });
+registerToolRenderer("browser_command", BrowserCard, {
+	summary: ({ args }) => browserSummary(args),
+});
