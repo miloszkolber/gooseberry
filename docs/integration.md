@@ -1,11 +1,11 @@
 # Goose integration
 
-Gooseberry connects to the Goose release and commit recorded in [`goose/version`](../goose/version) and [`goose/source-commit`](../goose/source-commit). The [distribution guide](goose.md) explains the build policy.
+Gooseberry connects to an official upstream Goose release installed by the user. The supported release and official artifact identities are recorded in [`upstream.json`](../gooseberry/tests/goose/upstream.json). See [Goose](goose.md) for compatibility and update responsibilities.
 
-The systemd user service runs:
+Run Goose on authenticated loopback, optionally with a systemd user service:
 
 ```bash
-/usr/local/bin/goose serve --host 127.0.0.1 --port 3284 --enable-scheduler
+goose serve --host 127.0.0.1 --port 3284 --enable-scheduler
 ```
 
 The controller connects to `ws://127.0.0.1:3284/acp`. Its `GOOSEBERRY_GOOSE_SECRET_KEY` must match the service's `GOOSE_SERVER__SECRET_KEY`; it sends that value in `X-Secret-Key`.
@@ -24,7 +24,13 @@ Follow-up queues live in controller memory. Browser snapshots include them, and 
 
 The controller supplies a session-specific MCP endpoint and bearer credential when creating a Goose session. Agents use it for goals, tasks and supporting questions. It does not authorize general controller operations.
 
-The installer places bundled agents and the browser skill in the user's standard Goose configuration directory. The browser skill calls the HTTP listener in the Gooseberry process. Browser HTTP is not MCP, and Goose remains usable outside the Web UI.
+Agent editing and mentions use the user's Goose agents. Gooseberry does not install agent presets or skills on the host.
+
+The user registers the browser's remote MCP endpoint, `http://127.0.0.1:8787/mcp`, once in private Goose configuration. Browser MCP exposes `browser_command`, the `browser_guidance` tool and the `gooseberry://browser/guide` resource. Essential instructions travel with the tool definitions; detailed guidance is read only when needed. The [deployment example](deployment.md#start-and-register-browser-mcp) resolves its bearer header from Goose's private environment or secret store, never from agent instructions.
+
+`browser_command` takes an explicit `session`, a `command` and optional `args`. Keep that browser session ID across related calls; it is independent of Goose's conversation ID and the MCP connection. The command result retains the outcome, exit code, output and optional artifact. `close` removes the browser session and its artifacts.
+
+The HTTP command route at `/v1/browser` and artifact route at `/v1/artifacts/{session}/{name}` remain available, using the same browser authentication. Trusted services can use either API without going through the Web UI. Goose remains usable directly.
 
 ## Administration
 

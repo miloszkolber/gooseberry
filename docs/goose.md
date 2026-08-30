@@ -1,54 +1,33 @@
-# Goose distribution
+# Goose
 
-The distribution builds [Goose](https://github.com/aaif-goose/goose) without changing its Rust runtime code. [`goose/version`](../goose/version) pins the release; [`goose/source-commit`](../goose/source-commit) pins its source commit. The build checks that the tag and commit agree.
+Gooseberry uses the official [Goose CLI](https://github.com/aaif-goose/goose/releases), installed and managed by the user. It does not build, patch, install or update Goose. The upstream binary keeps its normal features, including the explicit `goose update` command; running `goose serve` does not automatically install updates.
 
-## Build and installation
+## Compatibility
 
-The CLI uses these upstream features with the default bundle disabled:
+[`upstream.json`](../gooseberry/tests/goose/upstream.json) records the supported release and the official GNU Linux arm64 and amd64 archive names and SHA-256 hashes. Use it when choosing a download; a moving `latest` release may not match the integration checks. Follow the [upstream installation guide](https://goose-docs.ai/docs/getting-started/installation/) and verify `goose --version` before starting the service.
 
-```text
-code-mode,aws-providers,nostr,rustls-tls,system-keyring
+Use the GNU archives rather than a reduced musl build to retain the upstream tools and features this integration expects.
+
+Goose owns conversations, providers, credentials, models, tools, permissions, agents, recipes and schedules. Gooseberry uses ACP and supported Goose methods instead of reading their backing stores or maintaining competing registries. [ACP coverage](acp.md) describes the exposed controls and limits.
+
+The compatibility probe under `gooseberry/tests/goose` checks authentication, selected session/provider/settings responses and reconnect persistence against an isolated service. It does not prove every provider, prompt or tool works. See [development](development.md) for the command and test boundaries.
+
+## Privacy and configuration
+
+Set these in the environment that starts Goose, not the application or browser container:
+
+```dotenv
+GOOSE_TELEMETRY_OFF=true
+GOOSE_TELEMETRY_ENABLED=false
+OTEL_SDK_DISABLED=true
 ```
 
-Optional self-update and telemetry features are not selected. Updates are installed by the user, not by the running service.
+These disable runtime telemetry through the supported controls; they do not remove features from the upstream binary. Langfuse has separate credentials and configuration: leave them unset unless you deliberately want tracing. Model-provider requests and tools still make the network calls needed for your work.
 
-Linux x86-64 and arm64 archives each contain one `goose` executable. Unneeded symbols are stripped before version and live ACP checks. Release assets also include checksums, provenance and legal notices. `GOOSE-PROVENANCE` records the upstream repository, version, commit and any allowed lockfile adjustment. A checksum verifies the downloaded bytes; trust in their origin still depends on the release source.
+Keep provider credentials, the service secret and browser MCP registration in private host configuration. Gooseberry installs no agents or skills. Existing user agents remain yours to edit and use; objective/question MCP remains session-scoped. Browser tools and guidance come from the browser MCP service.
 
-The installer verifies those records, the archive contents and the executable version before replacing `/usr/local/bin/goose`. It also installs the bundled Goose agents and browser skill in the user's configuration directory. The [setup guide](deployment.md) explains private downloads without passing a GitHub token to `sudo`.
+## Updates
 
-## One lockfile correction
+Choose when to update Goose independently of the Gooseberry images. Back up its configuration and state, check the supported release record, and stop the service before replacing the binary. Restart it and check ACP readiness afterward. Updating this checkout or pulling images never changes the host binary.
 
-Goose v1.48.0's generated `Cargo.lock` names the first-party `goose-roaming` package as `1.47.0`, while the workspace package is `1.48.0`. The [allowed patch](../goose/cargo-lock-v1.48.0.patch) changes only that entry so Cargo can build with `--locked`. Rust code, manifests, third-party versions and checksums stay unchanged.
-
-[`source-policy.sh`](../goose/source-policy.sh) permits this correction only for the exact approved release/commit pair. It requires a clean checkout, checks the complete lockfile hashes before and after the patch, and rejects other source changes after compilation. Ignored build output is allowed. Other commits must build without an adjustment.
-
-Provenance must contain `cargo-lock-adjustment=goose-roaming-1.47.0-to-1.48.0` for that pair, or `cargo-lock-adjustment=none` otherwise. The installer and release checks use the same helper to determine the expected value. The exception does not authorize regenerating the lockfile or updating dependencies.
-
-## Running Goose
-
-The systemd user service runs:
-
-```bash
-goose serve --host 127.0.0.1 --port 3284 --enable-scheduler
-```
-
-`GOOSE_SERVER__SECRET_KEY` authenticates ACP. Gooseberry connects over WebSocket and leaves Goose in charge of its sessions, configuration and tools. The bundled agents are ordinary Goose agents; the browser skill calls Gooseberry's HTTP API. See [integration](integration.md).
-
-## Releases
-
-| Workflow | UTC schedule | Purpose |
-| --- | --- | --- |
-| Goose distribution | Daily, 03:17 | Check, build and verify new stable Goose releases. |
-| Container images | Sunday, 04:37 | Validate source and rebuild the image, refreshing runtime packages. |
-
-Schedules use the default branch and require GitHub Actions to be enabled. Relevant pushes and manual dispatches also run the workflows; pull requests validate without publishing. A manual Goose run accepts a stable release tag, or uses the current pin when left blank.
-
-A Goose update resolves the upstream tag to a commit, checks source integrity, and builds both architectures natively. The resulting binaries are tested through the production ACP adapter: authentication rejection/acceptance, session and provider reads, defaults, a temporary preference write/read, reconnect persistence and selected administration responses. Required method registrations are checked against upstream source.
-
-After those checks pass, the workflow updates the two pin files, publishes the complete release and explicitly starts the Gooseberry image build for that commit. Existing published assets are verified rather than replaced; incomplete drafts can be completed. If the latest stable version already has a complete verified release, the daily job does not rebuild it.
-
-The image build publishes architecture variants and a source-commit tag. It updates `latest` only if that source is still the default-branch tip. Scheduled image builds bypass the runtime-stage cache to refresh Debian packages.
-
-The workflow needs content-write permission for pins/releases and package-write permission for GHCR. Branch protection can block pin updates. A branch change during the Goose build also stops publication; rerun against the new tip. Neither case bypasses verification.
-
-These checks do not exercise every model, tool or future response shape. They use temporary state and make no paid model call. Repository releases never install a host binary or restart a deployment; follow the [update procedure](deployment.md).
+The [deployment guide](deployment.md) includes an optional systemd example, manual state-directory setup and browser MCP registration.
