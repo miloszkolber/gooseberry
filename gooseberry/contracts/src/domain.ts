@@ -183,6 +183,7 @@ export type GitFileStatus = "added" | "modified" | "deleted" | "renamed" | "untr
 
 export interface GitFileChange {
 	path: string;
+	originalPath?: string;
 	status: GitFileStatus;
 	added?: number;
 	removed?: number;
@@ -219,6 +220,7 @@ export type GitDiffScope =
 export interface GitDiffFile {
 	original: string;
 	modified: string;
+	originalPath?: string;
 	unavailable?: true;
 	binary?: true;
 	tooLarge?: true;

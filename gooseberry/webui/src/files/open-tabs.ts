@@ -168,7 +168,8 @@ export function openDiffInTab(
 				path: canonicalPath,
 				scope,
 			}),
-		({ original, modified }, loadedTick) => ({
+		(preview, loadedTick) => ({
+			...preview,
 			kind: "diff",
 			id,
 			projectAreaId,
@@ -176,8 +177,6 @@ export function openDiffInTab(
 			path: canonicalPath,
 			scope,
 			name: diffTabName(scope, canonicalPath),
-			original,
-			modified,
 			loadedTick,
 			loadedTarget: target,
 		}),

@@ -1,4 +1,4 @@
-import type { GitDiffScope, Project } from "@gooseberry/contracts";
+import type { GitDiffFile, GitDiffScope, Project } from "@gooseberry/contracts";
 import { randomId, tupleKey } from "../lib";
 
 /** Transitional view identity: one UI work area per directory-based project. */
@@ -39,7 +39,7 @@ export interface ChatTab {
 	name: string;
 	sessionId: string;
 }
-export interface DiffTab {
+export interface DiffTab extends GitDiffFile {
 	kind: "diff";
 	id: string;
 	projectAreaId: string;
@@ -48,8 +48,6 @@ export interface DiffTab {
 	path: string;
 	scope: GitDiffScope;
 	loadedTarget: string;
-	original: string;
-	modified: string;
 	ignoreWhitespace?: boolean;
 	loadedTick?: number;
 }

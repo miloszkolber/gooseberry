@@ -41,9 +41,9 @@ export function diffTabName(scope: GitDiffScope, path: string): string {
 export function scopeLabel(scope: GitDiffScope, commits: readonly GitCommit[] = []): string {
 	if (scope.kind === "branch") return "All changes";
 	if (scope.kind === "uncommitted") return "Uncommitted";
-	if (scope.kind === "pinned") return scope.baseRef.slice(0, 7);
+	if (scope.kind === "pinned") return `Since ${scope.baseRef.slice(0, 7)}`;
 	const known = commits.find((c) => c.sha === scope.sha);
-	return known?.shortSha ?? scope.sha.slice(0, 7);
+	return `Commit ${known?.shortSha ?? scope.sha.slice(0, 7)}`;
 }
 
 export function scopeTitle(scope: GitDiffScope, commits: readonly GitCommit[] = []): string {

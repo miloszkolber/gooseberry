@@ -24,31 +24,41 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 					path: tab.path,
 					scope: tab.scope,
 				}),
-			applyFresh: ({ original, modified }, tick) =>
+			applyFresh: (preview, tick) =>
 				useAppStore
 					.getState()
-					.updateDiffTabContent(tab.projectAreaId, tab.id, original, modified, tick, targetRef),
+					.updateDiffTabContent(tab.projectAreaId, tab.id, preview, tick, targetRef),
 			keepCurrent: (tick) =>
 				useAppStore
 					.getState()
-					.updateDiffTabContent(
-						tab.projectAreaId,
-						tab.id,
-						tab.original,
-						tab.modified,
-						tick,
-						tab.loadedTarget,
-					),
+					.updateDiffTabContent(tab.projectAreaId, tab.id, tab, tick, tab.loadedTarget),
 		},
 		targetRef,
 		tab.loadedTarget,
 	);
 
 	const ignoreWhitespace = tab.ignoreWhitespace ?? false;
+	const unavailable = tab.unavailable || tab.binary || tab.tooLarge;
+	const notice =
+		tab.message ||
+		(tab.binary
+			? "Binary files cannot be previewed"
+			: tab.tooLarge
+				? "File is too large to preview"
+				: "File is unavailable for preview");
 	const { dir, base } = splitPath(tab.path);
 	const diff = useMemo(
-		() => simpleUnifiedDiff(tab.path, tab.original, tab.modified, ignoreWhitespace),
-		[ignoreWhitespace, tab.modified, tab.original, tab.path],
+		() =>
+			unavailable
+				? ""
+				: simpleUnifiedDiff(
+						tab.path,
+						tab.original,
+						tab.modified,
+						ignoreWhitespace,
+						tab.originalPath,
+					),
+		[ignoreWhitespace, tab.modified, tab.original, tab.path, tab.originalPath, unavailable],
 	);
 	const copy = async () => {
 		if (!(await copyText(diff))) return;
@@ -61,9 +71,12 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 			<div className="flex h-8 shrink-0 items-center gap-xs border-border-default border-b bg-container-header-bg px-sm">
 				<span
 					data-testid="diff-path"
-					title={tab.path}
+					title={tab.originalPath ? `${tab.originalPath} → ${tab.path}` : tab.path}
 					className="mr-auto flex min-w-0 items-baseline tr-code-text"
 				>
+					{tab.originalPath ? (
+						<span className="min-w-0 truncate text-text-muted">{tab.originalPath} → </span>
+					) : null}
 					{dir ? <span className="min-w-0 shrink truncate text-text-muted">{dir}</span> : null}
 					<span className="max-w-full shrink-0 truncate text-text-muted">{base}</span>
 				</span>
@@ -73,6 +86,7 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 					data-active={ignoreWhitespace || undefined}
 					aria-pressed={ignoreWhitespace}
 					aria-label="Hide whitespace changes"
+					disabled={unavailable}
 					title="Hide whitespace changes"
 					onClick={() => setDiffTabIgnoreWhitespace(tab.id, !ignoreWhitespace)}
 					className="flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[active]:bg-control-bg-selected data-[active]:text-text-default"
@@ -82,8 +96,9 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 				<button
 					type="button"
 					data-testid="diff-copy"
-					aria-label="Copy file contents"
-					title="Copy file contents"
+					aria-label="Copy diff"
+					title="Copy diff"
+					disabled={unavailable}
 					onClick={() => void copy()}
 					className="flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 				>
@@ -95,12 +110,19 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 				</button>
 			</div>
 			<div className="min-h-0 flex-1">
-				<SourceDiff
-					path={tab.path}
-					original={tab.original}
-					modified={tab.modified}
-					ignoreWhitespace={ignoreWhitespace}
-				/>
+				{unavailable ? (
+					<p role="status" className="p-lg tr-text-ui text-text-muted">
+						{notice}
+					</p>
+				) : (
+					<SourceDiff
+						path={tab.path}
+						originalPath={tab.originalPath}
+						original={tab.original}
+						modified={tab.modified}
+						ignoreWhitespace={ignoreWhitespace}
+					/>
+				)}
 			</div>
 		</div>
 	);

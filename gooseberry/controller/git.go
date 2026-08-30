@@ -23,10 +23,11 @@ type GitHead struct {
 }
 
 type GitFileChange struct {
-	Path    string `json:"path"`
-	Status  string `json:"status"`
-	Added   *int   `json:"added,omitempty"`
-	Removed *int   `json:"removed,omitempty"`
+	Path         string `json:"path"`
+	OriginalPath string `json:"originalPath,omitempty"`
+	Status       string `json:"status"`
+	Added        *int   `json:"added,omitempty"`
+	Removed      *int   `json:"removed,omitempty"`
 }
 
 type GitRepository struct {
@@ -106,7 +107,7 @@ func (g *Git) ListRepositories(ctx context.Context, projectID string) (GitReposi
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				statuses[index], errors[index] = g.sharedStatus(ctx, project, discovery.paths[index], g.projectRepository)
+				statuses[index], errors[index] = g.sharedStatus(ctx, project, discovery.paths[index], GitDiffScope{}, g.projectRepository)
 			}
 		}()
 	}
@@ -126,12 +127,12 @@ func (g *Git) ListRepositories(ctx context.Context, projectID string) (GitReposi
 	return result, nil
 }
 
-func (g *Git) Status(ctx context.Context, projectID, requested string) (GitRepository, error) {
+func (g *Git) Status(ctx context.Context, projectID, requested string, scope GitDiffScope) (GitRepository, error) {
 	project, repository, err := g.repositoryFor(ctx, projectID, requested)
 	if err != nil {
 		return GitRepository{}, err
 	}
-	return g.sharedStatus(ctx, project, repository, g.projectRepository)
+	return g.sharedStatus(ctx, project, repository, scope, g.projectRepository)
 }
 
 func (g *Git) MarkDirty(projectID, path string) {
@@ -144,11 +145,14 @@ func (g *Git) MarkDirty(projectID, path string) {
 	}
 }
 
-func (g *Git) sharedStatus(ctx context.Context, project Project, repository string, inspect func(context.Context, Project, string) (GitRepository, error)) (GitRepository, error) {
+func (g *Git) sharedStatus(ctx context.Context, project Project, repository string, scope GitDiffScope, inspect func(context.Context, Project, string, GitDiffScope) (GitRepository, error)) (GitRepository, error) {
 	if err := ctx.Err(); err != nil {
 		return GitRepository{}, err
 	}
-	key := project.ID + "\x00" + repository
+	if scope.Kind == "" || scope.Kind == "branch" {
+		scope = GitDiffScope{Kind: "uncommitted"}
+	}
+	key := project.ID + "\x00" + repository + "\x00" + scope.Kind + "\x00" + scope.SHA + "\x00" + scope.BaseRef
 	g.mu.Lock()
 	flight := g.statusFlights[key]
 	if flight == nil {
@@ -157,12 +161,12 @@ func (g *Git) sharedStatus(ctx context.Context, project Project, repository stri
 		go func() {
 			bounded, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			result, err := inspect(bounded, project, repository)
+			result, err := inspect(bounded, project, repository, scope)
 			g.mu.Lock()
 			dirty := flight.dirty
 			g.mu.Unlock()
-			if err == nil && dirty {
-				result, err = inspect(bounded, project, repository)
+			if err == nil && dirty && scope.Kind != "commit" {
+				result, err = inspect(bounded, project, repository, scope)
 			}
 			g.mu.Lock()
 			flight.result, flight.err = result, err
@@ -325,8 +329,8 @@ func (g *Git) repositoryFor(ctx context.Context, projectID, requested string) (P
 	return Project{}, "", fmt.Errorf("directory is not a discovered repository in this project")
 }
 
-func (g *Git) projectRepository(ctx context.Context, project Project, repository string) (GitRepository, error) {
-	changes, err := g.changes(ctx, repository)
+func (g *Git) projectRepository(ctx context.Context, project Project, repository string, scope GitDiffScope) (GitRepository, error) {
+	changes, err := g.changes(ctx, repository, scope)
 	if err != nil {
 		return GitRepository{}, err
 	}
