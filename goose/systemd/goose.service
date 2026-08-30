@@ -16,6 +16,6 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 
-# User service install (run as the technical host user, never root). Run setup-deployment.sh first:
+# Install as the same non-root user who runs Goose. Run setup-deployment.sh first:
 # install -Dm644 goose.service ~/.config/systemd/user/goose.service
 # systemctl --user daemon-reload && systemctl --user enable --now goose.service

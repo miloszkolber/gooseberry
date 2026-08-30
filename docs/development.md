@@ -1,10 +1,10 @@
 # Development
 
-Keep changes focused on the [product baseline](baseline.md). Organize code by responsibility, keep one owner for each piece of state and preserve observable behavior. The [architecture](architecture.md) explains package and state boundaries; [ACP coverage](acp.md) defines the Goose projection.
+The application lives in `gooseberry/`. Keep code with the responsibility it serves, give state one owner and preserve behavior when moving it. [Architecture](architecture.md) describes the layout; [ACP coverage](acp.md) lists the integration surface.
 
-## Build and check
+## Checks
 
-The application workspace is `gooseberry/`. Go and Bun build versions are pinned in its `Dockerfile` and `package.json`; JavaScript dependencies use the frozen `bun.lock`, and Go modules use `go.mod` and `go.sum`.
+Use the Go and Bun versions selected in `Dockerfile`, `go.mod` and `package.json`. Dependencies are recorded in `bun.lock` and `go.sum`.
 
 ```bash
 cd gooseberry
@@ -18,60 +18,72 @@ go test -race ./...
 go vet ./...
 ```
 
-`bun run build` builds the Go executable and the production frontend, including generated style checks and the initial-JavaScript budget. `bun run test` includes the contracts, frontend and both Go packages. Run the affected test file or Go test first while developing; the complete checks belong before integration.
+Run the relevant test first during development. The complete commands check contracts, frontend and Go code; the production build also checks generated styles and the JavaScript budget.
 
-Deployment changes also need the shell fixtures from the repository root:
+TypeScript tests live under `gooseberry/tests/contracts` and `gooseberry/tests/webui`, grouped by the code they exercise. `bunfig.toml` uses hoisted dependency resolution so these tests share the application dependencies without a separate test package; `bun run typecheck` includes `tests/tsconfig.json`. Go tests stay beside their packages so they can test private behavior without adding exports or a custom runner. Goose distribution tests stay in `goose/tests`.
+
+From the repository root, deployment changes also need:
 
 ```bash
-sh scripts/setup-deployment.test.sh
+sh gooseberry/tests/deployment/setup-deployment.test.sh
 sh goose/tests/install-goose.test.sh
 ```
 
-The shell fixtures run on Linux and macOS; production deployment requires Linux and Docker Engine/Compose host networking. Apple `container` is useful for disposable Linux builds and checks on macOS, but running an OCI image there alone does not validate Linux Docker Compose networking or native x86-64 performance. Avoid installing build dependencies permanently when a disposable pinned-tool image suffices.
+These shell fixtures run on Linux and macOS. The deployed service requires Linux. Apple `container` can run disposable build/test environments on macOS, but an OCI run alone does not verify Docker Compose host networking.
 
-## Tests that earn their maintenance
+## What to test
 
-Prefer a small regression in an existing boundary fixture over a parallel test framework or broad snapshots. Important boundaries include:
+Prefer a regression case in an existing test over a second framework or broad snapshot suite.
 
-| Change | Relevant evidence |
+| Area | Important cases |
 | --- | --- |
-| ACP, reconnect or replay | Notification ordering, stale connection generations, exactly-once execution identity, lost acknowledgements, concurrent sessions and slow-reader isolation. |
-| Persistence or paths | Interrupted/invalid primary writes, last-valid backups, bounded reads, same-size file changes, symlink retargeting and multi-root identity. |
-| Objectives and permissions | Session-scoped authentication, project ownership, single-use replies, cancellation and concurrent updates. |
-| Goose administration | Exact upstream parameters, secret sanitization, provider-login cancellation, opaque agent IDs and recipe security scans. |
-| Browser automation | Command admission, authentication, cancellation, process cleanup, output/artifact/state bounds and byte-exact artifact proxying. |
-| Frontend state and interaction | Welcome snapshots, stale async responses, navigation teardown, immutable streaming state, focus-managed dialogs and responsive selection. |
+| ACP and reconnects | Notification order, old connection events, duplicate retries, missing acknowledgements, concurrent chats and slow readers. |
+| Persistence and paths | Corrupt/interrupted writes, backup recovery, file limits, same-size changes, moved symlinks and multiple roots. |
+| Objectives and permissions | Session authentication, ownership, single-use replies, cancellation and concurrent updates. |
+| Goose settings | Exact method parameters, hidden secrets, cancelled login, agent source IDs and recipe scans. |
+| Browser use | Allowed commands, authentication, cancellation, process cleanup and output/state/artifact limits. |
+| UI state | Welcome snapshots, stale async results, subscription cleanup, streaming immutability, focus and responsive navigation. |
 
-Go fixtures live beside their packages; contract and frontend tests live beside their owners. The race detector is important for reconnect, lifecycle and browser-process changes. Use synthetic credentials and disposable project/state directories for integration runs. Real provider calls, tool execution or permission changes need their own explicit scope.
+Use the race detector for session, reconnect and process-lifecycle changes. Integration checks should use temporary state and synthetic credentials. Tests that call real providers or execute tools need a deliberately chosen environment.
 
-## Performance gates
+## Images
 
-The initial frontend JavaScript closure must remain at or below **500,000 raw bytes**. `webui/scripts/check-bundle.ts` follows the production Vite manifest; moving code to another eagerly imported chunk does not evade the budget. Load large surfaces and language grammars on demand, keep virtualization, and avoid subscribing the workspace shell to transcript content.
+Build from the repository root:
 
-The controller latency gate is **no p95 regression above 5%** against the accepted comparison workload. Measure project listing, one-MiB file reads and HTTP image delivery separately, and include concurrent clients. Use identical admitted files and authenticated routes, warm both builds, alternate run order and retain per-round results. Verify response contents outside the latency timer. Do not trade path authorization, persistence recovery, replay identity or bounded I/O for a faster score.
+```bash
+docker build -f gooseberry/Dockerfile -t gooseberry:local .
+```
 
-The local Linux arm64 sample on 2026-08-30 uses four CPUs, 3 GiB memory, Go 1.25.13 with `GOGC=200`, and a Bun 1.3.14 comparison baseline. Each of five rounds includes 500 project-list requests, 300 one-MiB ASCII reads, 60 PNG transfers and eight concurrent clients making 100 project-list requests each. Two complete comparisons meet the gate. The second run records:
+The root `.dockerignore` limits the build context. Legal notices come from the repository root. The Dockerfile uses Debian Trixie for the runtime, native-platform build stages and Go cross-compilation for the target architecture. Bun builds static frontend files; no build runtime is included in the final image.
 
-| Operation | Go p95 | Difference from comparison baseline |
-| --- | ---: | ---: |
-| Project list | 0.147 ms | +0.7% |
-| One-MiB text read | 9.722 ms | +3.1% |
-| PNG delivery | 2.337 ms | −13.3% |
+For packaging changes, check both architectures, non-root execution, read-only mounts, licenses and the absence of source/build tools. Exercise both listeners, Goose-unavailable readiness, listener failure and normal shutdown. Test external authenticated MCP and an actual Chromium interaction with a decodable screenshot that survives the artifact proxy unchanged.
 
-These are medians of per-round percentiles, not pooled percentiles or production guarantees. The controller-only workload excludes Chromium and model execution; its 22.4 MiB post-workload resident memory is not total application memory. A separate wire fixture covers escaped and UTF-8 text. Target-host validation with representative concurrent browser activity remains necessary.
+## Performance
 
-The implementation avoids repeated decoding of identical freshly read project bytes, duplicate authorization work within a request, and response copies in replay bookkeeping. Root authorization and file bounds remain fresh. `GOGC=200` is the standard Go collection target, trading modestly more controller memory for less collection work; change it only with measurements. There is no custom serializer or memory manager.
+The initial JavaScript budget is **500,000 raw bytes**. The bundle check follows Vite's manifest, including eager imports. Large views and language grammars should load on demand. Keep virtualization and avoid making the workspace subscribe to every transcript chunk.
 
-## Runtime and visual acceptance
+Controller p95 must not regress by more than **5%** against the comparison workload. Measure project listing, one-MiB file reads, image delivery and concurrent clients using identical inputs and authentication. Warm both builds, alternate their order, retain per-round results and check response contents outside the timer. Authorization, recovery, replay and I/O limits are not optional performance costs.
 
-For changes crossing packaging or service boundaries, build the final image for both Linux architectures and inspect its non-root user, read-only root, tmpfs mounts, licenses and absence of build runtimes. Test both HTTP health endpoints with Goose unavailable, failure of either listener, coordinated shutdown and external authenticated objective MCP. Browser automation also needs a real Chromium interaction and a decodable screenshot whose bytes survive the authenticated artifact proxy.
+The 2026-08-30 checks use the current Go 1.27.0 image with `GOGC=200` against the retained Bun 1.3.14 backend baseline, on Linux arm64 with four CPUs and 3 GiB memory. Both five-round comparisons exceed the project-list limit: +6.56% in the first run and +5.65% in the repeat. The overall latency gate is still open.
 
-Local combined-runtime evidence covers these boundaries on arm64, including concurrent chats, queues, fork history, synthetic administration and real Chromium. The x86-64 image has an emulated authenticated smoke check, not native performance certification. Synthetic ACP integration and source/markup comparisons do not establish live-provider behavior or visual fidelity.
+The repeat records:
 
-Fresh frontend visual acceptance remains open. Check desktop and narrow layouts against deterministic project/session fixtures: pane transitions, sidebar refresh, direct images and source previews, long histories, streamed content, loading/error states, permissions, questions, keyboard focus and scrolling. Capture screenshots and exercise the controls; passing unit tests or matching markup alone is insufficient.
+| Operation | Go p95 | Bun baseline p95 | Difference |
+| --- | ---: | ---: | ---: |
+| Project list | 0.131 ms | 0.124 ms | +5.65% |
+| One-MiB text read | 5.529 ms | 5.448 ms | +1.49% |
+| PNG delivery | 1.104 ms | 1.286 ms | −14.15% |
 
-## Changes and releases
+Each round alternated runtime order and used 500 project lists, 300 one-MiB ASCII reads, 60 PNG transfers and eight clients making 100 project-list requests each. Values are medians of per-round p95s; response validation is outside the timer. Concurrent project-list throughput was about 49,800 requests/s for Go and 40,100 for the baseline, but higher throughput does not waive the latency limit.
 
-Use lowercase kebab-case for TypeScript source and directory names; use conventional lowercase Go filenames and `_test.go`. Keep wire projections narrow and explicit. A generated type is useful only when it eliminates genuine duplication without exporting internal Go state or requiring a schema framework. Retain the existing accessibility, virtualization and highlighting libraries.
+Chromium and model execution were excluded. These results do not establish deployment-host performance, and the difference from older measurements cannot be attributed to the Go version alone. Profile the remaining project-list overhead and repeat the gate on the deployment host with concurrent browser activity.
 
-Before submitting, review imports, protocol fields, generated files, lock entries, Compose, workflows and documentation together. Put proposed directions in [roadmap](roadmap.md), not current-state instructions. See [Goose distribution](goose.md) for scheduled upstream validation and [deployment](deployment.md) for operator-controlled updates.
+The controller reuses decoded project metadata only when freshly read bytes match, avoids duplicate work within a request and retains encoded replay responses without copying them. Path checks remain fresh. `GOGC=200` trades some memory for less collection work; change it only after measuring.
+
+## UI and changes
+
+For UI changes, exercise desktop and narrow layouts with deterministic project/session data. Check panes, images, source previews, long histories, streaming, errors, permissions, questions, keyboard focus and scrolling. Screenshots and interaction checks are still needed; matching markup or passing unit tests does not prove visual behavior.
+
+Use lowercase kebab-case for TypeScript paths and conventional Go filenames. Keep browser types small and explicit. Keep accessibility, virtualization and highlighting in their existing libraries.
+
+Before submitting, check related imports, protocol fields, generated files, locks, `docker-compose.yaml`, workflows and docs. Future work belongs in [roadmap](roadmap.md). [Goose distribution](goose.md) describes release checks; [deployment](deployment.md) describes user-controlled updates.

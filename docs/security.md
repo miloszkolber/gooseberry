@@ -1,45 +1,45 @@
-# Security and trust
+# Security
 
-Gooseberry is a trusted single-user development appliance, not a multi-tenant sandbox. Goose tools act with the technical host user's permissions. The container limits the Web UI's direct filesystem view, not the authority of the host agent.
+Gooseberry is for one trusted user. Goose tools run with that user's host permissions. A read-only file UI does not restrict what the host agent can do.
 
-## One container, shared filesystem
+## Shared container
 
-The controller and browser API run in one Go process and container. Chromium and agent-browser receive a fixed minimal environment and per-session home directories, not controller or Goose secrets as inherited environment variables. They nevertheless share the container UID and filesystem, including application state, project roots and the read-only Goose configuration mount.
+The controller, browser API and Chromium share a container UID and filesystem. Browser subprocesses get a restricted environment and separate session home directories, but can read mounted project files and application data. Read-only mounts prevent writes, not reading or sending data elsewhere.
 
-Read-only prevents writes, not reads or exfiltration. Command restrictions, URL checks, output bounds and quotas are not an OS sandbox. Treat browser workloads as trusted; destination-network controls and protection of private-network or cloud-metadata endpoints remain the operator's responsibility. Mount only necessary project roots.
+The default Compose file does not mount Goose configuration. Settings go through ACP, and Goose keeps its credentials on the host. Avoid adding broad home-directory mounts that would expose them again.
 
-The final image runs as a non-root user with a read-only root filesystem and bounded writable tmpfs mounts. It has no application source or build runtimes. These are defense-in-depth measures, not tenant isolation.
+The image runs as a non-root user with a read-only root filesystem and limited writable tmpfs areas. Command restrictions, quotas and URL checks reduce accidental misuse; they are not a browser sandbox. Network egress restrictions, including access to private services or cloud metadata, remain a deployment responsibility.
 
-## Credentials and network access
+## Credentials
 
-| Boundary | Credential and default |
+| Connection | Authentication |
 | --- | --- |
-| Host Goose ACP | `GOOSE_SERVER__SECRET_KEY`; controller uses the matching `GOOSEBERRY_GOOSE_SECRET_KEY`. Loopback only. |
-| Browser-to-controller UI | Authentication is off for the default loopback listener. Enable `GOOSEBERRY_AUTH_ENABLED` and a strong `GOOSEBERRY_TOKEN` when needed. |
-| Browser automation API | Independent `GOOSEBERRY_BROWSER_AUTH` and `GOOSEBERRY_BROWSER_TOKEN`; loopback and authentication off by default. |
-| Objective/question MCP | Always uses its session-scoped bearer credential, not the controller or browser API token. |
-| Model providers | Goose validates and persists credentials. Gooseberry forwards explicit setup requests without retaining the secrets. |
+| Goose ACP | `GOOSE_SERVER__SECRET_KEY`, matched by the controller's `GOOSEBERRY_GOOSE_SECRET_KEY`. |
+| Web UI | Optional `GOOSEBERRY_AUTH_ENABLED` and `GOOSEBERRY_TOKEN`; off for the default loopback listener. |
+| Browser API | Separate `GOOSEBERRY_BROWSER_AUTH` and `GOOSEBERRY_BROWSER_TOKEN`; off on loopback by default. |
+| Objective/question MCP | Always uses a session-specific bearer token. UI and browser tokens do not grant this access. |
+| Model providers | Goose validates and stores credentials submitted through setup. |
 
-Controller and browser API tokens must be distinct. A non-loopback controller bind requires authentication unless the operator explicitly sets `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true`. Do not use that escape hatch as normal remote setup. A trusted TLS reverse proxy should set `GOOSEBERRY_PUBLIC_ORIGIN`; controller requests retain same-origin checks. Controller cookies last 90 days.
+Controller and browser tokens must differ. A non-loopback controller bind requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` is explicitly set. Use authenticated HTTPS for remote access, set the trusted `GOOSEBERRY_PUBLIC_ORIGIN`, and keep same-origin checks enabled. Controller cookies last 90 days.
 
-Protect `.gooseberry`, the Goose user's home configuration/state and the Gooseberry data directory. Setup writes `~/.config/goose/gooseberry.env` with mode `0600` and preserves unrelated entries. Compose mounts Goose configuration read-only, which still makes it readable inside the shared container.
+Protect `.gooseberry`, Goose's user configuration/state and the Gooseberry state directory. Setup writes `~/.config/goose/gooseberry.env` with mode `0600`.
 
-Submitted provider keys exist transiently in the browser/controller setup request and are forwarded over authenticated ACP. They are omitted from replay storage, logs and browser snapshots. Native OAuth/device-code values are projected without giving the browser access to Goose configuration. Use authenticated TLS before provider setup over a network.
+Provider secrets pass through the browser and controller only during an explicit setup request. They are forwarded to Goose and excluded from replay storage, logs and browser snapshots. Native login flows do not give the browser direct access to Goose's configuration files.
 
 ## Files and Git
 
-Projects are authorized against explicit same-path mounts. Reads resolve their root, reject escaping paths and symlinks, and enforce limits while reading. Cached metadata never replaces fresh path authorization. The HTTP file route serves only bounded image formats with no-store and same-origin protections; it is not a generic filesystem download endpoint.
+Each read checks the allowed root and resolved path. A cached result does not bypass authorization, and limits apply while reading, not only to the initial file size. The HTTP file route serves supported image formats with same-origin and no-store protections, not arbitrary downloads.
 
-Git views are observational. Git subprocesses receive a minimal environment, ignore global/system Git configuration and disable hooks and filesystem monitors. Repository discovery and command output are bounded, with root identity retained throughout. Goose tools, not these projections, perform mutations.
+Git commands receive a restricted environment, ignore global/system configuration and disable hooks and filesystem monitors. Discovery and output have limits. The UI only observes Git; mutations use Goose tools.
 
-## Goose administration
+## Administration
 
-Every session-scoped operation checks recorded project/session association and its admitted directory. Permissions and supporting-question replies are single-use; lifecycle and mutation guards prevent competing operations from bypassing those checks.
+Session operations require the recorded project/session association and an allowed directory. Permission and question replies are single-use. Locks and connection generations prevent concurrent or stale operations from bypassing these checks.
 
-Extension and tool summaries omit raw commands, arguments, URLs, headers, environment data, client-secret keys, schemas and raw upstream warning text. Permission changes persist in Goose. Recipe/schedule inputs are size-bounded and validated; recipe saves retain Goose's security scan.
+The browser receives selected extension/tool fields, not raw commands, URLs, environment values, secrets, schemas or upstream warnings. Recipe saves retain Goose's security scan.
 
-The agent editor accepts opaque source IDs, not browser-supplied paths. It re-resolves a fresh writable authorized source inside a mutation lock and permits project scope only through an explicitly selected admitted root. Instructions are bounded plain text; arbitrary source properties and supporting files remain controller-side.
+Agent editing uses opaque IDs, then rechecks the authorized source and its writability inside the mutation lock. Project editing requires an explicitly selected allowed root. Instructions are limited plain text; source paths, arbitrary properties and supporting files remain server-side.
 
-Preferences expose only `autoCompactThreshold` and `gooseThinkingEffort`. Provider defaults validate a configured, available provider while preserving Goose's support for custom or null model IDs. Readiness checks return only sanitized booleans. Raw upstream errors and source paths are not a browser diagnostic API.
+Only `autoCompactThreshold` and `gooseThinkingEffort` are exposed as preferences. Provider-default changes require a configured, available provider. Readiness reports return booleans rather than raw diagnostics.
 
-See [deployment](deployment.md) for supported network access and [development](development.md) for the security and concurrency fixtures.
+See [deployment](deployment.md) for access and backups, and [development](development.md) for security-related checks.

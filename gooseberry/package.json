@@ -1,7 +1,7 @@
 {
 	"name": "gooseberry",
 	"private": true,
-	"packageManager": "bun@1.3.14",
+	"packageManager": "bun@1.4.0",
 	"workspaces": {
 		"packages": [
 			"contracts",
@@ -9,7 +9,7 @@
 		],
 		"catalog": {
 			"@fontsource-variable/geist-mono": "5.3.0",
-			"@types/bun": "1.3.14",
+			"@types/bun": "1.4.0",
 			"typescript": "6.0.3"
 		}
 	},
@@ -19,8 +19,8 @@
 		"build:go": "go build -trimpath -o dist/gooseberry .",
 		"dev:web": "bun --filter @gooseberry/web dev",
 		"build:web": "bun --filter @gooseberry/web build",
-		"typecheck": "bun --filter @gooseberry/contracts typecheck && bun --filter @gooseberry/web typecheck",
-		"test": "bun --filter @gooseberry/contracts test && bun --filter @gooseberry/web test && go test ./...",
+		"typecheck": "bun --filter @gooseberry/contracts typecheck && bun --filter @gooseberry/web typecheck && tsc --noEmit -p tests/tsconfig.json",
+		"test": "bun test tests && go test ./...",
 		"check:filenames": "bun scripts/check-filenames.ts",
 		"lint": "bun run check:filenames && biome check .",
 		"format": "biome check --write .",

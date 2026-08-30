@@ -226,7 +226,7 @@ for command in realpath grep sed awk mktemp id; do
 	}
 done
 if [ "$(id -u)" -eq 0 ]; then
-	echo "setup must run as the non-root technical user" >&2
+	echo "setup must run as the same non-root user as Goose" >&2
 	exit 1
 fi
 

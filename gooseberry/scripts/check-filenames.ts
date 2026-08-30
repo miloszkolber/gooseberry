@@ -11,6 +11,7 @@ const roots = [
 	resolve(projectRoot, "webui", "scripts"),
 	resolve(projectRoot, "webui", "src"),
 	resolve(projectRoot, "browser"),
+	resolve(projectRoot, "tests"),
 ];
 
 const ignoredDirectories = new Set(["coverage", "dist", "node_modules"]);

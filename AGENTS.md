@@ -47,7 +47,7 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 - Keep only behavior required by the baseline. Add an abstraction only when retained behavior requires it.
 - Keep browser-host contracts as small as the baseline permits.
-- Remove dead protocol methods, state, dependencies, generated assets, and tests with their feature.
+- Classify dormant protocol methods and UI hooks before changing them. Wire retained functionality; do not remove it merely as cleanup.
 - Keep final Docker images non-root, read-only, multi-stage, and free of source, tests, compilers, caches, and unused native runtimes.
 
 ## Source naming
@@ -61,8 +61,13 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 - Run the narrowest relevant check during development.
 - Test observable retained behavior and meaningful security/failure boundaries.
+- Keep TypeScript and deployment tests in `gooseberry/tests/`. Go tests that exercise private package state stay beside their package; native Goose distribution tests stay in `goose/tests/`.
 - Use broader integration/image checks for changes crossing Goose, browser, or persistence boundaries.
 - Before committing, review stale imports, protocol fields, scripts, documentation, generated files, and dependency-lock entries.
+
+## Git history
+
+- Keep changes in separate, coherent commits. Do not squash or amend commits, or rewrite existing history, unless the user explicitly asks.
 
 ## Current stack
 

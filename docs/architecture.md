@@ -1,53 +1,59 @@
 # Architecture
 
 ```text
-One Gooseberry container                 Native host Goose
+Gooseberry container                     Host
 ├─ controller :7312 ─────── ACP ───────── /usr/local/bin/goose
-│  ├─ Web UI, projects, Git and files      ├─ providers, sessions and tools
-│  └─ objectives/questions MCP            └─ recipes, scheduler and permissions
-└─ browser :8787 ◀──── lazy Goose skill
-   └─ native agent-browser and Chromium
+│  ├─ Web UI, projects, Git and files      ├─ sessions, providers and tools
+│  └─ objectives/questions MCP            └─ recipes and scheduler
+└─ browser :8787 ◀──── Goose browser skill
+   └─ agent-browser and Chromium
 ```
 
-Goose runs as a host user service. The host-networked container contains one Go process with two HTTP listeners. `gooseberry/main.go` owns startup and shutdown; failure of either listener stops the application. `/livez` reports application liveness, `/readyz` reports Goose ACP reachability, and the image health check requires both application and browser liveness.
+The container uses host networking. One Go process serves both HTTP listeners; `main.go` starts and stops them together. A listener failure ends the process. Application liveness, Goose readiness and browser liveness are separate checks, so an unavailable Goose service does not look like a dead container.
 
-## Ownership
+## Code layout
 
-| Owner | Responsibilities |
+| Directory | Responsibility |
 | --- | --- |
-| Host Goose | Canonical sessions and history, providers and credentials, models, tools, permissions, agents, recipes and scheduler state. |
-| `controller/` | Goose ACP adaptation, authorized browser requests, project roots, objectives, bounded file/Git projections and presentation metadata. |
-| `browser/` | Browser HTTP command policy, authentication, per-session process state, output bounds and artifact quotas. |
-| `webui/` | Navigation, drafts and presentation; it is not a second authority for Goose state. |
-| `contracts/` | The narrow browser protocol and validation, not a dump of internal Go structures. |
+| `controller/` | Goose ACP, browser requests, projects, objectives, files, Git and persistence. |
+| `browser/` | Browser HTTP requests, command restrictions, processes, artifacts and quotas. |
+| `webui/` | React presentation, navigation and drafts. |
+| `contracts/` | Browser wire types and message validation. |
 
-The controller uses Coder's ACP SDK and WebSocket library. A small framing adapter bridges the SDK's newline-delimited stream to Goose's WebSocket messages; it does not implement JSON-RPC. Native filesystem events use fsnotify. The Go module has three direct dependencies; versions are pinned in `gooseberry/go.mod`.
+The Go service uses Coder's ACP SDK and WebSocket library, plus fsnotify. A small adapter converts the SDK's newline-delimited stream to Goose's WebSocket frames. The SDK handles JSON-RPC; Gooseberry does not implement another protocol stack.
 
-## State and authorization
+Goose owns its sessions and configuration. The controller stores project associations, objectives and presentation data, and asks Goose for current runtime information.
 
-Projects consist of admitted roots with optional display names and icons. Files, Markdown links, image URLs, diffs and filesystem events carry their owning root or repository. Read-only same-path mounts make the controller's paths agree with Goose's host working directories. Every path is authorized at the request boundary, including when metadata or discovery results are cached.
+## State, paths and reconnects
 
-Application state is mounted at `/var/lib/gooseberry`. Project/configuration data, project-session association and objectives use bounded atomic JSON replacement, synchronization and last-valid backup recovery. Session records contain association, working directory and optional immediate fork parent; Goose remains the transcript store. Fresh project-file bytes may reuse their validated decoded representation, but root and symlink authorization is still fresh.
+Project roots have the same path on the host and in the container. Requests check the root and resolved path before reading, including when metadata comes from a cache. Files, diffs, links and watcher events carry their root or repository identity.
 
-Browser tabs lease controller projections. Inactive projections are bounded by count and approximate transcript bytes and reload from Goose. Active work, queues and pending user replies retain their projections. Follow-up queues deliberately live only in controller memory because the pinned Goose ACP boundary has no queue-manipulation method.
+Application JSON stores use atomic replacement, synchronization and last-valid backups. Session records hold a project, working directory and optional fork parent, not a transcript. Project metadata can reuse a decoded value only when newly read bytes match; path and symlink checks still run.
 
-Connection generations, single-flight session hydration and deletion tombstones protect different races. Request replay retains execution identity across reconnects so retrying an operation does not execute it twice. Browser outputs are ordered and bounded; a slow consumer is disconnected without blocking other clients. These guards are retained even when other duplicated state is removed.
+Session copies have count and memory limits and can be reconstructed from Goose. Active work, queued messages and pending replies prevent eviction. The tab lease is currently shared by the session rather than tracked per browser: closing a tab in one browser can clear another browser's lease, while a vanished browser can leave a lease behind. Client-scoped leases are planned in the [roadmap](roadmap.md). Follow-up queues are currently in memory only.
 
-## Frontend organization
+Several concurrency guards serve different purposes:
 
-- `chat/` owns session presentation, event reduction, permissions and supporting questions.
-- `workspace/` owns project navigation, root-qualified tabs, placement, persistence and lifecycle reconciliation.
-- `files/` owns file/Git browsing, previews, diffs and live-content helpers.
-- `settings/` owns provider/model administration, preferences and provider-login state.
-- `connection/` owns controller authentication, socket handling and reconnect behavior.
-- `components/` holds shared UI and accessible primitives.
+- Connection generations reject late events from a replaced ACP connection.
+- Shared in-flight loads prevent duplicate session hydration.
+- Deletion markers prevent late responses from restoring removed sessions.
+- Request replay prevents a reconnect retry from executing the same operation twice.
+- Ordered, limited output queues isolate slow browsers from other clients.
 
-`store/app-store.ts` composes the feature state creators into one Zustand store and installs welcome snapshots atomically. Cross-feature actions that change session placement and runtime state together stay atomic. The authenticated application effect owns and disposes navigation subscriptions. Desktop and narrow layouts share one mounted file/change activity tree. Workspace subscriptions observe chat availability and streaming state, not transcript chunks; unchanged Markdown uses ordinary React memoization.
+These are not interchangeable caches or duplicate state.
 
-Radix dialogs and menus, Virtuoso virtualization and Shiki highlighting remain library responsibilities. A wire-type generator is worthwhile only for genuinely identical duplicated structures: current projections are small and constrained, so they remain explicit. There is no JavaScript backend, language bridge or forwarding-only service layer.
+## Frontend
 
-## Packaging and browser trust
+Components, state and helpers live together by responsibility: `chat/`, `workspace/`, `files/`, `settings/` and `connection/`. Shared UI lives in `components/`.
 
-The runtime image includes the Go executable, static UI, Git, Chromium, native agent-browser, fonts, CA certificates, Tini and dependency licenses. It contains no application source, tests, compiler, Bun, Node or `node_modules`. Chromium and fonts are the main image-size cost; one container does not imply a tiny download.
+`store/app-store.ts` composes feature state into one Zustand store. Welcome data and actions that affect both session placement and runtime state update atomically. The application owns navigation subscriptions and disposes them when it disconnects.
 
-Browser state is mounted at `/var/lib/gooseberry-browser`. Artifact accounting is incremental, and unchanged state polling backs off. Browser subprocesses receive a fixed minimal environment and per-session home directory, but share the container UID and filesystem with the controller. The command policy is not an OS sandbox. See [security](security.md).
+Desktop and narrow layouts share one mounted file/change tree. Workspace subscriptions watch chat availability and streaming status, not every transcript chunk. React memoization skips unchanged Markdown. Radix handles accessible dialogs and menus, Virtuoso handles long lists, and Shiki loads highlighting grammars as needed.
+
+Browser types describe the data the UI needs; they are not exported Go internals. There is no JavaScript backend, permanent language bridge or generic service layer.
+
+## Image and browser process
+
+The runtime image contains the executable, static UI, Git, Chromium, agent-browser, fonts, CA certificates, Tini and dependency licenses. It does not contain source, tests, compilers, Node, Bun or `node_modules`. Chromium and fonts account for much of the image size.
+
+Browser state lives under `/var/lib/gooseberry-browser`. Artifact accounting is incremental, and polling slows down when state is unchanged. Each browser session gets its own home directory and a restricted environment, but all sessions share the container UID and filesystem. See [security](security.md).

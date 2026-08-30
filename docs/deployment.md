@@ -1,19 +1,19 @@
 # Deployment
 
-The supported setup is Linux with a native Goose systemd user service and **one host-networked `gooseberry` container**. Run the service, setup script and Compose as the same non-root technical user. Only installation of the system-wide Goose executable needs `sudo`.
+Run Goose as a Linux user service and Gooseberry in one host-networked container. Use the same non-root Linux user for setup, the service and Compose. Only installation of `/usr/local/bin/goose` needs `sudo`.
 
-## Prerequisites
+## Requirements
 
-- Linux x86-64 or arm64 with systemd user services.
-- Docker Engine and its Compose plugin, accessible to the technical user.
-- Git, GitHub CLI for private release access, and the installer's standard Linux tools: `curl`, `tar`, `sha256sum` and `mktemp`.
-- A dedicated writable directory for Gooseberry state, and explicit access to the project directories you want Goose to use.
+- A glibc-based Linux system on x86-64 or arm64, with the standard C/GCC runtime libraries and systemd user services.
+- Docker Engine and Compose, usable by that user.
+- Git, GitHub CLI for private downloads, and `curl`, `tar`, `sha256sum`, `mktemp`.
+- A dedicated state directory and access to your project directories.
 
-The Compose default is UID/GID `1000:1000`. Check `id -u` and `id -g`; when they differ, update `user` and the `uid`/`gid` values of all three tmpfs entries in `compose.yaml` together. State directories are private to this user. Avoid running Compose with `sudo`: it changes the home directory used for the Goose configuration mount.
+`docker-compose.yaml` defaults to UID/GID `1000:1000`. Check `id -u` and `id -g`; if they differ, change `user` and all three tmpfs `uid`/`gid` values together. Run setup without `sudo` so its state and service files belong to your user.
 
-## 1. Obtain the source and Goose binary
+## Install Goose
 
-Authenticate an account that can read this repository and its releases:
+Clone the repository using an account with access:
 
 ```bash
 gh auth login
@@ -21,7 +21,7 @@ gh repo clone miloszkolber/gooseberry
 cd gooseberry
 ```
 
-The two files `goose/version` and `goose/source-commit` define the required upstream release and source commit. Download the matching distribution with the authenticated GitHub CLI, then pass only local files to the privileged installer:
+Download the release selected by `goose/version`. The installer also checks the commit in `goose/source-commit`.
 
 ```bash
 release_dir=$(mktemp -d)
@@ -40,40 +40,42 @@ gh release download "$goose_version" \
 sudo env GOOSE_RELEASE_BASE="file://$release_dir" ./goose/install-goose.sh
 ```
 
-The installer checks the archive checksum, pinned provenance, safe archive contents and exact executable version before replacing `/usr/local/bin/goose`. It also installs the bundled agents and browser skill for the invoking `sudo` user. Use `GOOSE_HOME` only when deliberately installing configuration for another technical user. The temporary download directory can be removed after a successful installation.
+This keeps GitHub credentials out of the privileged installer. The script verifies the files and executable before replacing `/usr/local/bin/goose`, then installs agents and the browser skill for the user who invoked `sudo`. Set `GOOSE_HOME` only when installing for another user. Remove the temporary download directory when you no longer need it.
 
-A completed distribution release for the selected pin is required. A private release may appear missing when authentication lacks access; verify both access and the **Goose distribution** workflow result before retrying. Building the Gooseberry container does not build or install host Goose. For a publicly readable distribution, `sudo ./goose/install-goose.sh` can download the same verified files directly.
+If the release appears missing, check repository access and the **Goose distribution** workflow. Building the container does not install host Goose. Public releases can also be installed directly with `sudo ./goose/install-goose.sh`.
 
-## 2. Configure state and mounts
+## Configure Gooseberry
 
 ```bash
 cp .gooseberry.example .gooseberry
 chmod 600 .gooseberry
 ```
 
-Edit `.gooseberry` before continuing:
+Edit these values:
 
-- Set `GOOSEBERRY_DATA_PATH` to a dedicated absolute directory. It must contain only Gooseberry's `app` and `browser` directories, not unrelated files.
-- Replace `GOOSEBERRY_GOOSE_SECRET_KEY` with a random 32–256-character token. For example, `openssl rand -hex 32` produces a suitable value.
-- Leave both services loopback-only for local use. If you enable controller or browser authentication, set the corresponding strong token; controller and browser tokens must be distinct.
+- `GOOSEBERRY_DATA_PATH`: a dedicated absolute directory, containing only the application's `app` and `browser` state.
+- `GOOSEBERRY_GOOSE_SECRET_KEY`: a random token of 32–256 characters. `openssl rand -hex 32` generates a suitable value.
+- Optional controller/browser authentication and their tokens. Keep the tokens distinct.
 
-Use plain `KEY=value` lines without shell commands, quoting or variable expansion. Setup accepts only the documented keys and rejects duplicate managed values.
+Use plain `KEY=value` lines, without shell expressions, quoting or variable expansion. Setup rejects unsupported keys and duplicate managed entries.
 
-Add every allowed project root to the `volumes` list in `compose.yaml`:
+Add each allowed project root to the `volumes` list in `docker-compose.yaml`:
 
 ```yaml
 - /absolute/path/to/project:/absolute/path/to/project:ro
 ```
 
-The host and container paths must be identical: Goose runs on the host while the Web UI's read-only projections run in the container. A project may have several such roots. Mount only what you intend to expose; read-only prevents writes, not reads.
+The two paths must match because Goose runs on the host and the file UI runs in the container. Mount only directories you intend to expose.
 
 ```bash
 ./scripts/setup-deployment.sh
 ```
 
-Setup creates `app`, `browser/artifacts` and `browser/state` under the data directory. It writes `~/.config/goose/gooseberry.env` with mode `0600`, synchronizing the Goose secret and browser-skill connection settings while preserving unrelated entries. It neither starts services nor configures a model provider.
+Setup creates application/browser state and writes `~/.config/goose/gooseberry.env` with mode `0600`. It synchronizes the Goose secret and browser-skill settings while preserving unrelated entries. It does not start services or configure providers.
 
-## 3. Start the services
+Goose configuration stays on the host; the default Compose file does not mount it. Gooseberry reads and changes Goose settings through ACP.
+
+## Start
 
 ```bash
 install -Dm644 goose/systemd/goose.service ~/.config/systemd/user/goose.service
@@ -82,58 +84,58 @@ systemctl --user enable --now goose.service
 docker compose --env-file .gooseberry up -d --build --remove-orphans
 ```
 
-This builds the single Gooseberry image locally and needs no GHCR login. It downloads pinned build tools inside the multi-stage build, not onto the host. If the user service must run without an active login session, an administrator can enable lingering with `sudo loginctl enable-linger "$USER"`.
+This builds the image locally without a GHCR login. Build tools stay inside the build stages, not on your host. To keep the Goose user service running after logout, an administrator can enable lingering with `sudo loginctl enable-linger "$USER"`.
 
-Alternatively, use the published image when your account can read the GHCR package. Authenticate Docker to `ghcr.io` using a credential with package-read access and `--password-stdin`, then run:
+To use a published image instead, log Docker in to `ghcr.io` with package-read access and `--password-stdin`, then run:
 
 ```bash
 docker compose --env-file .gooseberry pull gooseberry
 docker compose --env-file .gooseberry up -d --no-build --remove-orphans
 ```
 
-Repository access and package access are separate; a successful private Git clone does not prove Docker can pull the image.
+GitHub repository and GHCR package access are separate permissions.
 
-Open `http://127.0.0.1:7312`. Configure a provider in Settings, choose defaults if needed and create a project from the mounted roots. Goose remains the credential store.
+Open `http://127.0.0.1:7312`, configure a provider in Settings and create a project from the mounted directories.
 
-## Health and troubleshooting
+## Check the services
 
-| Check | Meaning |
+| Command | Checks |
 | --- | --- |
-| `curl -fsS http://127.0.0.1:7312/livez` | Application listener is alive. `/health` is also a liveness alias. |
-| `curl -fsS http://127.0.0.1:7312/readyz` | Goose ACP is reachable with the configured credential. |
-| `curl -fsS http://127.0.0.1:8787/health` | Browser API listener is alive; this does not start Chromium. |
-| `systemctl --user status goose.service` | Host Goose service state. |
-| `journalctl --user -u goose.service -n 100` | Recent Goose service logs. |
+| `curl -fsS http://127.0.0.1:7312/livez` | Application listener. `/health` is an alias. |
+| `curl -fsS http://127.0.0.1:7312/readyz` | Controller's Goose ACP connection status, not provider readiness. |
+| `curl -fsS http://127.0.0.1:8787/health` | Browser API listener, without starting Chromium. |
+| `systemctl --user status goose.service` | Goose process state. |
+| `journalctl --user -u goose.service -n 100` | Recent Goose logs. |
 | `docker compose --env-file .gooseberry logs --tail=100 gooseberry` | Application and browser logs. |
 
-The image health check requires both application and browser liveness. A Goose outage makes readiness fail without marking the container dead. Failure of either application listener stops the shared process; normal shutdown cancels work and closes both listeners.
+Container health requires both HTTP listeners. A Goose outage fails readiness without making the container unhealthy. If either listener fails, the shared process exits.
 
-If Goose is disconnected, check the user service, matching secret and setup-generated environment. If a root is missing, check its same-path mount and filesystem permissions. Do not print secrets into bug reports. See [security](security.md) for network and credential boundaries.
+For a disconnected Goose service, check the user service, matching secrets and setup-generated environment. For a missing project root, check the mount and filesystem permissions. Keep secrets out of bug reports.
 
-## External access
+## Access from another machine or service
 
-For a remote browser, prefer an SSH tunnel to the loopback application:
+An SSH tunnel keeps the application on loopback:
 
 ```bash
 ssh -N -L 7312:127.0.0.1:7312 user@host
 ```
 
-For a trusted reverse proxy, enable controller authentication, set a strong `GOOSEBERRY_TOKEN` and set `GOOSEBERRY_PUBLIC_ORIGIN` to the HTTPS origin. A non-loopback controller bind requires authentication unless the operator explicitly accepts the unsafe `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` mode. The proxy must support WebSockets. Public multi-user hosting is not a supported security model.
+For a reverse proxy, enable controller authentication, set `GOOSEBERRY_TOKEN` and set `GOOSEBERRY_PUBLIC_ORIGIN` to the HTTPS origin. The proxy must support WebSockets. A non-loopback bind requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` explicitly disables that protection. Do not use this as a multi-user public service.
 
-Host processes and trusted host-networked containers can use:
+Other host processes or trusted host-networked containers can use:
 
-- Objective MCP: `http://127.0.0.1:7312/mcp/objective`, authenticated with its existing session-scoped bearer token. A controller login token is not an objective credential.
-- Browser HTTP: `POST http://127.0.0.1:8787/v1/browser`, with the distinct browser bearer token when `GOOSEBERRY_BROWSER_AUTH=true`. This is not an MCP endpoint.
+- Objective MCP at `http://127.0.0.1:7312/mcp/objective`, with its session-specific bearer token.
+- Browser HTTP at `http://127.0.0.1:8787/v1/browser`, with the browser token when authentication is enabled. This is not MCP.
 
-An ordinary bridge-networked container's loopback is its own, not the host's. Use the trusted host-network arrangement; do not solve connectivity by disabling authentication or publicly exposing the browser listener.
+Loopback in a bridge-networked container refers to that container, not the host. Use the host-network arrangement rather than exposing an unauthenticated listener.
 
-Chromium shares the application's UID and mounted filesystem, including read-only project and Goose configuration mounts. Filtered environments and bounded commands do not isolate browser workloads from those files.
+Chromium can read the container's mounted project files and application data. Read the [security guide](security.md) before using untrusted browser workloads.
 
-## Updates and backups
+## Update and back up
 
-[Release automation](goose.md) checks and builds upstream Goose, but does not update a running host or restart your services. Choose an update window, let active sessions settle and back up both the Goose user's configuration/state and the complete Gooseberry data directory. Follow-up queues are memory-only and are lost on restart.
+Release workflows publish binaries and images; they do not update your running host. Let active sessions settle and back up Goose's configuration/state and the complete Gooseberry data directory. Follow-up queues are memory-only and disappear on restart.
 
-Update the checkout, repeat the verified Goose installation for its pin, then run setup and restart:
+Update the checkout and install its selected Goose release, then run:
 
 ```bash
 ./scripts/setup-deployment.sh
@@ -143,6 +145,6 @@ systemctl --user restart goose.service
 docker compose --env-file .gooseberry up -d --build --remove-orphans
 ```
 
-For published images, pull before `up --no-build` instead. Rerun setup whenever the Goose secret or browser authentication changes. Preserve the app/browser state mounts; removing a container does not remove those bind-mounted files.
+For published images, pull before `up --no-build`. Rerun setup after changing secrets or browser authentication. Container removal does not delete the bind-mounted state.
 
-The image defaults to `GOGC=200`, a measured controller-memory/CPU tradeoff. Override it through Compose `environment`, not `.gooseberry`'s small setup allowlist, only after target-host measurement. Browser-process memory is additional. See [development](development.md) for the latency gate and current measurement limits.
+The image sets `GOGC=200` to reduce collection work at the cost of some controller memory. Change it through Compose `environment`, not `.gooseberry`, after measuring your workload. Chromium uses additional memory. See [development](development.md).
