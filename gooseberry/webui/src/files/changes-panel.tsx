@@ -3,18 +3,21 @@ import { GitBranch, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ToggleSegment } from "../components/toggle-segment";
 import { errorText, getTransport } from "../connection";
+import { tupleKey } from "../lib";
 import {
 	matchesChangePath,
 	selectActiveContentTab,
+	selectDiffScope,
 	type TabIntent,
 	toast,
 	useAppStore,
 } from "../store";
 import { useProjectRead } from "../workspace/use-project-read";
 import { ChangeRowActions } from "./change-row-actions";
-import { splitPath, statusNameClass } from "./changes-model";
+import { scopeKey, splitPath, statusNameClass } from "./changes-model";
 import { ChangesTree } from "./changes-tree";
 import { DiffStatBadge } from "./diff-stat-badge";
+import { GitScopeMenu } from "./git-scope-menu";
 import { openDiffInTab } from "./open-tabs";
 
 const SCOPE: GitDiffScope = { kind: "uncommitted" };
@@ -26,12 +29,31 @@ export function ChangesPanel({
 	projectAreaId: string;
 	onOpen?: () => void;
 }) {
-	const [repositories, setRepositories] = useState<GitRepository[]>([]);
+	const [catalog, setCatalog] = useState<{
+		projectAreaId: string;
+		repositories: GitRepository[];
+	} | null>(null);
+	const repositories = catalog?.projectAreaId === projectAreaId ? catalog.repositories : [];
 	const [selectedRepository, setSelectedRepository] = useState<string | null>(null);
-	const status =
+	const repository =
 		repositories.find((repository) => repository.root === selectedRepository) ??
 		repositories[0] ??
 		null;
+	const selectedScope = useAppStore((state) => selectDiffScope(state, projectAreaId));
+	const scope = selectedScope.kind === "branch" ? SCOPE : selectedScope;
+	const setDiffScope = useAppStore((state) => state.setDiffScope);
+	const readKey = tupleKey(projectAreaId, repository?.root ?? "", scopeKey(scope));
+	const [scoped, setScoped] = useState<{
+		key: string;
+		status?: GitRepository;
+		error?: string;
+	} | null>(null);
+	const status =
+		scope.kind === "uncommitted"
+			? repository
+			: scoped?.key === readKey
+				? (scoped.status ?? null)
+				: null;
 	const [error, setError] = useState<string | null>(null);
 	const [warnings, setWarnings] = useState<string[]>([]);
 	const warnedRef = useRef(false);
@@ -41,21 +63,27 @@ export function ChangesPanel({
 	const setChangesView = useAppStore((state) => state.setChangesView);
 	const activeDiffTab = useAppStore((state) => {
 		const tab = selectActiveContentTab(state, projectAreaId);
-		return tab?.kind === "diff" ? tab : null;
+		return tab?.kind === "diff" &&
+			tab.repository === repository?.root &&
+			scopeKey(tab.scope) === scopeKey(scope)
+			? tab
+			: null;
 	});
 
 	const { reload } = useProjectRead(
 		projectAreaId,
 		(id) => getTransport().request("git.listRepositories", { projectId: id }),
 		{
-			onResult: (result) => {
-				setRepositories(result.repositories);
+			onResult: (result, id) => {
+				setCatalog({ projectAreaId: id, repositories: result.repositories });
 				setWarnings(result.warnings);
-				setSelectedRepository((current) =>
-					result.repositories.some((repository) => repository.root === current)
-						? current
-						: (result.repositories[0]?.root ?? null),
-				);
+				const next = result.repositories.some(
+					(repository) => repository.root === selectedRepository,
+				)
+					? selectedRepository
+					: (result.repositories[0]?.root ?? null);
+				if (selectedRepository !== null && next !== selectedRepository) setDiffScope(id, SCOPE);
+				setSelectedRepository(next);
 				setError(null);
 				warnedRef.current = false;
 			},
@@ -67,7 +95,7 @@ export function ChangesPanel({
 				setError(errorText(failure));
 			},
 			onSwitch: () => {
-				setRepositories([]);
+				setCatalog(null);
 				setSelectedRepository(null);
 				setError(null);
 				setWarnings([]);
@@ -76,30 +104,58 @@ export function ChangesPanel({
 			},
 		},
 	);
+	const { reload: reloadScoped } = useProjectRead(
+		repository && scope.kind !== "uncommitted" ? projectAreaId : null,
+		(id) =>
+			getTransport().request("git.status", {
+				projectId: id,
+				repository: repository?.root ?? "",
+				scope,
+			}),
+		{
+			onResult: (result) => setScoped({ key: readKey, status: result }),
+			onFailure: (_id, failure) => setScoped({ key: readKey, error: errorText(failure) }),
+			onSwitch: () => setScoped(null),
+		},
+		readKey,
+	);
+	const refresh = () => {
+		reload();
+		reloadScoped();
+	};
+	const visibleError = error ?? (scoped?.key === readKey ? scoped.error : null);
+	const loadingScope =
+		repository !== null && scope.kind !== "uncommitted" && scoped?.key !== readKey;
+	const loadingRepositories = catalog?.projectAreaId !== projectAreaId && error === null;
 
 	const openDiff = useCallback(
 		(path: string, intent: TabIntent) => {
 			setHighlighted(path);
 			if (status)
-				void openDiffInTab(projectAreaId, SCOPE, path, intent, undefined, status.root).then(
+				void openDiffInTab(projectAreaId, scope, path, intent, undefined, status.root).then(
 					(opened) => {
 						if (opened) onOpen?.();
 					},
 				);
 		},
-		[status, projectAreaId, onOpen],
+		[status, projectAreaId, scope, onOpen],
 	);
 
 	useEffect(() => {
-		if (!status || changesRequest?.projectAreaId !== projectAreaId) return;
+		if (changesRequest?.projectAreaId !== projectAreaId) return;
 		if (useAppStore.getState().changesRequest !== changesRequest) return;
+		if (scope.kind !== "uncommitted") {
+			setDiffScope(projectAreaId, SCOPE);
+			return;
+		}
+		if (!status) return;
 		const match = status.changes.find((change) =>
 			matchesChangePath(changesRequest.path, change.path),
 		);
 		if (match) openDiff(match.path, "preview");
 		else setHighlighted(changesRequest.path);
 		useAppStore.getState().clearChangesRequest();
-	}, [changesRequest, openDiff, status, projectAreaId]);
+	}, [changesRequest, openDiff, status, projectAreaId, scope, setDiffScope]);
 
 	useEffect(() => {
 		if (activeDiffTab) setHighlighted(null);
@@ -116,8 +172,11 @@ export function ChangesPanel({
 					{repositories.length > 1 ? (
 						<select
 							aria-label="Git repository"
-							value={status?.root ?? ""}
-							onChange={(event) => setSelectedRepository(event.target.value)}
+							value={repository?.root ?? ""}
+							onChange={(event) => {
+								setSelectedRepository(event.target.value);
+								setDiffScope(projectAreaId, SCOPE);
+							}}
 							className="min-w-0 bg-transparent text-text-muted"
 						>
 							{repositories.map((repository) => (
@@ -128,11 +187,11 @@ export function ChangesPanel({
 						</select>
 					) : (
 						<span className="truncate">
-							{status
-								? status.head.kind === "branch"
-									? status.head.name
-									: status.head.kind === "detached"
-										? status.head.oid.slice(0, 8)
+							{repository
+								? repository.head.kind === "branch"
+									? repository.head.name
+									: repository.head.kind === "detached"
+										? repository.head.oid.slice(0, 8)
 										: "Unborn repository"
 								: "Git changes"}
 						</span>
@@ -142,7 +201,7 @@ export function ChangesPanel({
 					type="button"
 					aria-label="Refresh changes"
 					title="Refresh changes"
-					onClick={reload}
+					onClick={refresh}
 					className="flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 				>
 					<RefreshCw className="size-3.5" />
@@ -160,6 +219,17 @@ export function ChangesPanel({
 					onClick={() => setChangesView("tree")}
 				/>
 			</div>
+			{repository ? (
+				<div className="shrink-0 border-border-default border-b px-xs py-xs">
+					<GitScopeMenu
+						key={tupleKey(projectAreaId, repository.root)}
+						projectAreaId={projectAreaId}
+						repository={repository.root}
+						scope={scope}
+						onSelect={(next) => setDiffScope(projectAreaId, next)}
+					/>
+				</div>
+			) : null}
 			<div className="min-h-0 flex-1 overflow-auto">
 				{warnings.length > 0 ? (
 					<p
@@ -169,24 +239,32 @@ export function ChangesPanel({
 						{warnings.join(" ")}
 					</p>
 				) : null}
-				{status === null && error !== null ? (
+				{visibleError ? (
 					<div className="flex flex-col items-start gap-xs px-sm py-xs">
 						<p className="tr-text-metadata text-feedback-error">
-							Could not read the changes: {error}
+							Could not read the changes: {visibleError}
 						</p>
 						<button
 							type="button"
-							onClick={reload}
+							onClick={refresh}
 							className="rounded-[var(--radius-sm)] px-xs py-0.5 tr-text-metadata text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 						>
 							Retry
 						</button>
 					</div>
+				) : loadingScope || loadingRepositories ? (
+					<p role="status" className="px-sm py-xs tr-text-metadata text-text-muted">
+						Loading changes…
+					</p>
 				) : status === null ? (
 					<p className="px-sm py-xs tr-text-metadata text-text-muted">No Git repositories found.</p>
 				) : status.changes.length === 0 ? (
 					<p data-testid="changes-empty" className="px-sm py-xs tr-text-metadata text-text-muted">
-						Working tree is clean.
+						{scope.kind === "uncommitted"
+							? "Working tree is clean."
+							: scope.kind === "commit"
+								? "No file changes in this commit."
+								: "No changes since this commit."}
 					</p>
 				) : changesView === "tree" ? (
 					<ChangesTree changes={status.changes} onOpen={openDiff} isActive={isActive} />

@@ -1,4 +1,5 @@
 import type {
+	GitDiffFile,
 	GitDiffScope,
 	Project,
 	ProjectFsChangedPayload,
@@ -103,8 +104,7 @@ export interface WorkspaceState {
 	updateDiffTabContent: (
 		projectAreaId: string,
 		id: string,
-		original: string,
-		modified: string,
+		preview: GitDiffFile,
 		tick: number,
 		loadedTarget: string,
 	) => void;
@@ -668,7 +668,7 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 				},
 			};
 		}),
-	updateDiffTabContent: (projectAreaId, id, original, modified, tick, loadedTarget) =>
+	updateDiffTabContent: (projectAreaId, id, preview, tick, loadedTarget) =>
 		set((s) => {
 			if (s.removedProjectAreaIds[projectAreaId]) return {};
 			const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
@@ -676,11 +676,28 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 			return {
 				tabsByProjectArea: {
 					...s.tabsByProjectArea,
-					[projectAreaId]: tabs.map((tab) =>
-						tab.id === id && tab.kind === "diff"
-							? { ...tab, original, modified, loadedTick: tick, loadedTarget }
-							: tab,
-					),
+					[projectAreaId]: tabs.map((tab) => {
+						if (tab.id !== id || tab.kind !== "diff") return tab;
+						const next: DiffTab = {
+							...tab,
+							original: preview.original,
+							modified: preview.modified,
+							loadedTick: tick,
+							loadedTarget,
+						};
+						// Successful reads omit these fields; clear any previous notice or rename.
+						for (const key of [
+							"originalPath",
+							"unavailable",
+							"binary",
+							"tooLarge",
+							"message",
+						] as const) {
+							if (preview[key] === undefined) delete next[key];
+							else Object.assign(next, { [key]: preview[key] });
+						}
+						return next;
+					}),
 				},
 			};
 		}),

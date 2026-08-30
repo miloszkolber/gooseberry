@@ -19,6 +19,7 @@ export function simpleUnifiedDiff(
 	original: string,
 	modified: string,
 	ignoreWhitespace = false,
+	originalPath = path,
 ): string {
 	const before = lines(original);
 	const after = lines(modified);
@@ -46,7 +47,7 @@ export function simpleUnifiedDiff(
 	const suffixStartBefore = Math.max(prefix, before.length - suffix);
 	const suffixStartAfter = Math.max(prefix, after.length - suffix);
 	const suffixContext = Math.min(context, suffix);
-	const output = [`--- a/${path}`, `+++ b/${path}`, "@@"];
+	const output = [`--- a/${originalPath}`, `+++ b/${path}`, "@@"];
 
 	for (const line of before.slice(prefixStart, prefix)) output.push(` ${line}`);
 	for (const line of before.slice(prefix, suffixStartBefore)) output.push(`-${line}`);

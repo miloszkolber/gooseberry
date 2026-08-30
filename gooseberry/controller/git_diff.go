@@ -25,12 +25,13 @@ type GitDiffScope struct {
 }
 
 type GitDiffFile struct {
-	Original    string `json:"original"`
-	Modified    string `json:"modified"`
-	Unavailable bool   `json:"unavailable,omitempty"`
-	Binary      bool   `json:"binary,omitempty"`
-	TooLarge    bool   `json:"tooLarge,omitempty"`
-	Message     string `json:"message,omitempty"`
+	Original     string `json:"original"`
+	Modified     string `json:"modified"`
+	OriginalPath string `json:"originalPath,omitempty"`
+	Unavailable  bool   `json:"unavailable,omitempty"`
+	Binary       bool   `json:"binary,omitempty"`
+	TooLarge     bool   `json:"tooLarge,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 type GitCommit struct {
@@ -59,10 +60,11 @@ func resolveCommit(ctx context.Context, repository, ref string) string {
 
 func resolveDiffRange(ctx context.Context, repository string, scope GitDiffScope) (diffRange, error) {
 	if scope.Kind == "" || scope.Kind == "uncommitted" || scope.Kind == "branch" {
-		if resolveCommit(ctx, repository, "HEAD") == "" {
+		head := resolveCommit(ctx, repository, "HEAD")
+		if head == "" {
 			return diffRange{prefix: []string{"diff", "--cached"}, untracked: true}, nil
 		}
-		return diffRange{prefix: []string{"diff"}, revisions: []string{"HEAD"}, untracked: true, originalRef: "HEAD"}, nil
+		return diffRange{prefix: []string{"diff"}, revisions: []string{head}, untracked: true, originalRef: head}, nil
 	}
 	requested := scope.SHA
 	if scope.Kind == "pinned" {
@@ -94,13 +96,13 @@ func (e *codedError) Error() string { return e.message }
 
 func changedArgs(value diffRange, mode string) []string {
 	args := append([]string(nil), value.prefix...)
-	args = append(args, "--no-ext-diff", "--no-textconv", mode, "-z", "--end-of-options")
+	args = append(args, "--no-ext-diff", "--no-textconv", "--find-renames", mode, "-z", "--end-of-options")
 	args = append(args, value.revisions...)
 	return append(args, "--")
 }
 
-func (g *Git) changes(ctx context.Context, repository string) ([]GitFileChange, error) {
-	rangeValue, err := resolveDiffRange(ctx, repository, GitDiffScope{Kind: "uncommitted"})
+func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope) ([]GitFileChange, error) {
+	rangeValue, err := resolveDiffRange(ctx, repository, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +126,12 @@ func (g *Git) changes(ctx context.Context, repository string) ([]GitFileChange, 
 			change := GitFileChange{Path: name, Status: "untracked"}
 			absolute := filepath.Join(repository, filepath.FromSlash(name))
 			if counted < 64 {
-				if _, err := g.policy.Resolve(absolute, false, true, "Git status path"); err == nil {
-					if preview := readWorktreePreview(absolute); preview.issue == "" {
+				if canonical, err := g.policy.Resolve(absolute, false, true, "Git status path"); err == nil && within(repository, canonical) {
+					previewPath := canonical
+					if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
+						previewPath = absolute // Read the link text, never its target contents.
+					}
+					if preview := readWorktreePreview(previewPath); preview.issue == "" {
 						added, removed := lineCount(preview.content), 0
 						change.Added, change.Removed = &added, &removed
 					}
@@ -180,7 +186,9 @@ func parseNameStatus(output string, counts map[string][2]int) []GitFileChange {
 			index++
 			name = records[index]
 		}
+		originalPath := ""
 		if (strings.HasPrefix(code, "R") || strings.HasPrefix(code, "C")) && index+1 < len(records) {
+			originalPath = name
 			index++
 			name = records[index]
 		}
@@ -196,7 +204,7 @@ func parseNameStatus(output string, counts map[string][2]int) []GitFileChange {
 		case 'R':
 			status = "renamed"
 		}
-		change := GitFileChange{Path: name, Status: status}
+		change := GitFileChange{Path: name, OriginalPath: originalPath, Status: status}
 		if value, ok := counts[name]; ok {
 			added, removed := value[0], value[1]
 			change.Added, change.Removed = &added, &removed
@@ -222,15 +230,45 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 	if !within(admitted, absolute) {
 		return GitDiffFile{}, fmt.Errorf("path escapes the repository")
 	}
-	if _, err := g.policy.Resolve(absolute, false, true, "Git diff path"); err != nil {
+	resolvedPath, err := g.policy.Resolve(absolute, false, true, "Git diff path")
+	if err != nil {
 		return GitDiffFile{}, err
 	}
-	original := filePreview{content: ""}
-	if rangeValue.originalRef != "" {
-		original = readBlobPreview(ctx, admitted, rangeValue.originalRef, name)
+	if !within(admitted, resolvedPath) {
+		return GitDiffFile{}, fmt.Errorf("path escapes the repository")
 	}
-	if original.issue != "" {
-		return unavailableDiff(original), nil
+	name, err = filepath.Rel(admitted, absolute)
+	if err != nil {
+		return GitDiffFile{}, err
+	}
+	name = filepath.ToSlash(name)
+	originalPath := ""
+	originalName := name
+	original := filePreview{issue: "missing"}
+	if rangeValue.originalRef != "" {
+		// Rename detection needs both paths: filtering the diff to the destination
+		// alone would make Git report it as an added file.
+		changed := runGit(ctx, admitted, changedArgs(rangeValue, "--name-status"), gitOutputLimit)
+		if !changed.ok {
+			return unavailableDiff(filePreview{issue: "unavailable"}, ""), nil
+		}
+		for _, change := range parseNameStatus(changed.out, nil) {
+			if change.Path == name && change.OriginalPath != "" {
+				originalPath, originalName = change.OriginalPath, change.OriginalPath
+				break
+			}
+		}
+		resolvedOriginal, err := g.policy.Resolve(filepath.Join(admitted, filepath.FromSlash(originalName)), false, true, "Git original path")
+		if err != nil {
+			return GitDiffFile{}, err
+		}
+		if !within(admitted, resolvedOriginal) {
+			return GitDiffFile{}, fmt.Errorf("original path escapes the repository")
+		}
+		original = readBlobPreview(ctx, admitted, rangeValue.originalRef, originalName)
+	}
+	if original.issue != "" && original.issue != "missing" {
+		return unavailableDiff(original, originalPath), nil
 	}
 	modified := filePreview{}
 	if rangeValue.modifiedRef != "" {
@@ -239,12 +277,15 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 		modified = readWorktreePreview(absolute)
 	}
 	if modified.issue == "missing" {
-		return GitDiffFile{Original: original.content}, nil
+		if original.issue == "missing" {
+			return unavailableDiff(modified, originalPath), nil
+		}
+		return GitDiffFile{Original: original.content, OriginalPath: originalPath}, nil
 	}
 	if modified.issue != "" {
-		return unavailableDiff(modified), nil
+		return unavailableDiff(modified, originalPath), nil
 	}
-	return GitDiffFile{Original: original.content, Modified: modified.content}, nil
+	return GitDiffFile{Original: original.content, Modified: modified.content, OriginalPath: originalPath}, nil
 }
 
 func (g *Git) ListCommits(ctx context.Context, projectID, repository string) (map[string]any, error) {
@@ -254,12 +295,25 @@ func (g *Git) ListCommits(ctx context.Context, projectID, repository string) (ma
 	}
 	log := runGit(ctx, admitted, []string{"log", "--max-count=200", "--format=%H%x00%h%x00%cI%x00%an%x00%s", "--"}, gitOutputLimit)
 	commits := []GitCommit{}
-	if log.ok {
-		for _, line := range strings.Split(strings.TrimSpace(log.out), "\n") {
-			parts := strings.Split(line, "\x00")
-			if len(parts) >= 5 && parts[0] != "" && parts[1] != "" {
-				commits = append(commits, GitCommit{SHA: parts[0], ShortSHA: parts[1], CommittedAt: parts[2], Author: plainGitText(parts[3]), Subject: plainGitText(strings.Join(parts[4:], "\x00"))})
+	if !log.ok {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// An unborn branch has a symbolic HEAD but no branch ref. A broken
+		// repository, rejected command or output limit is not an empty history.
+		head := runGit(ctx, admitted, []string{"symbolic-ref", "--quiet", "HEAD"}, gitOutputLimit)
+		if head.ok && strings.HasPrefix(strings.TrimSpace(head.out), "refs/heads/") {
+			refs := runGit(ctx, admitted, []string{"for-each-ref", "--format=%(refname)", "--", strings.TrimSpace(head.out)}, gitOutputLimit)
+			if refs.ok && strings.TrimSpace(refs.out) == "" {
+				return map[string]any{"commits": commits}, nil
 			}
+		}
+		return nil, &codedError{code: "GIT_LOG_UNAVAILABLE", message: "Could not read commit history"}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(log.out), "\n") {
+		parts := strings.Split(line, "\x00")
+		if len(parts) >= 5 && parts[0] != "" && parts[1] != "" {
+			commits = append(commits, GitCommit{SHA: parts[0], ShortSHA: parts[1], CommittedAt: parts[2], Author: plainGitText(parts[3]), Subject: plainGitText(strings.Join(parts[4:], "\x00"))})
 		}
 	}
 	return map[string]any{"commits": commits}, nil
@@ -271,18 +325,28 @@ type filePreview struct {
 }
 
 func readWorktreePreview(name string) filePreview {
-	file, err := os.Open(name)
+	info, err := os.Lstat(name)
 	if os.IsNotExist(err) {
 		return filePreview{issue: "missing"}
 	}
 	if err != nil {
 		return filePreview{issue: "unavailable"}
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(name)
+		if err != nil {
+			return filePreview{issue: "unavailable"}
+		}
+		return filePreview{content: target}
+	}
+	if info.Size() > gitPreviewMaxBytes {
+		return filePreview{issue: "tooLarge"}
+	}
+	file, info, err := openRegularFile(name, 1<<63-1)
+	if err != nil {
 		return filePreview{issue: "unavailable"}
 	}
+	defer file.Close()
 	if info.Size() > gitPreviewMaxBytes {
 		return filePreview{issue: "tooLarge"}
 	}
@@ -300,24 +364,31 @@ func readWorktreePreview(name string) filePreview {
 }
 
 func readBlobPreview(ctx context.Context, repository, ref, name string) filePreview {
-	object := ref + ":" + name
-	size := runGit(ctx, repository, []string{"cat-file", "-s", "--end-of-options", object}, gitOutputLimit)
-	if !size.ok {
-		return filePreview{content: ""}
+	entry := runGit(ctx, repository, []string{"ls-tree", "--full-tree", "-l", "-z", "--end-of-options", ref, "--", ":(literal)" + name}, gitOutputLimit)
+	if !entry.ok {
+		return filePreview{issue: "unavailable"}
 	}
-	bytesCount, err := strconv.Atoi(strings.TrimSpace(size.out))
+	if entry.out == "" {
+		return filePreview{issue: "missing"}
+	}
+	metadata, entryName, _ := strings.Cut(entry.out, "\t")
+	fields := strings.Fields(metadata)
+	if len(fields) != 4 || fields[1] != "blob" || entryName != name+"\x00" {
+		return filePreview{issue: "unavailable"}
+	}
+	bytesCount, err := strconv.Atoi(fields[3])
 	if err != nil || bytesCount < 0 {
 		return filePreview{issue: "unavailable"}
 	}
 	if bytesCount > gitPreviewMaxBytes {
 		return filePreview{issue: "tooLarge"}
 	}
-	shown := runGit(ctx, repository, []string{"show", "--no-ext-diff", "--no-textconv", "--end-of-options", object}, gitPreviewMaxBytes)
+	shown := runGit(ctx, repository, []string{"cat-file", "blob", fields[2]}, gitPreviewMaxBytes)
 	if shown.failure == "output-limit" {
 		return filePreview{issue: "tooLarge"}
 	}
 	if !shown.ok {
-		return filePreview{content: ""}
+		return filePreview{issue: "unavailable"}
 	}
 	if strings.IndexByte(shown.out, 0) >= 0 {
 		return filePreview{issue: "binary"}
@@ -325,8 +396,8 @@ func readBlobPreview(ctx context.Context, repository, ref, name string) filePrev
 	return filePreview{content: shown.out}
 }
 
-func unavailableDiff(preview filePreview) GitDiffFile {
-	result := GitDiffFile{Unavailable: true}
+func unavailableDiff(preview filePreview, originalPath string) GitDiffFile {
+	result := GitDiffFile{Unavailable: true, OriginalPath: originalPath}
 	switch preview.issue {
 	case "binary":
 		result.Binary, result.Message = true, "Binary files cannot be previewed"

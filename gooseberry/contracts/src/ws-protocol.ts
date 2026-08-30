@@ -211,7 +211,7 @@ export interface WsMethodMap {
 		result: { content: string };
 	};
 	"git.status": {
-		params: { projectId: string; repository: string };
+		params: { projectId: string; repository: string; scope?: GitDiffScope };
 		result: GitRepository;
 	};
 	"git.diffFile": {

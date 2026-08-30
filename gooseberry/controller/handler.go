@@ -174,8 +174,9 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		return h.Git.ListRepositories(ctx, request.ProjectID)
 	case "git.status":
 		var request struct {
-			ProjectID  string `json:"projectId"`
-			Repository string `json:"repository"`
+			ProjectID  string       `json:"projectId"`
+			Repository string       `json:"repository"`
+			Scope      GitDiffScope `json:"scope"`
 		}
 		if h.Git == nil || decodeParams(raw, &request) != nil {
 			return nil, fmt.Errorf("malformed Git request")
@@ -183,7 +184,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err := h.ensureWatch(request.ProjectID); err != nil {
 			return nil, err
 		}
-		return h.Git.Status(ctx, request.ProjectID, request.Repository)
+		return h.Git.Status(ctx, request.ProjectID, request.Repository, request.Scope)
 	case "git.diffFile":
 		var request struct {
 			ProjectID  string       `json:"projectId"`
