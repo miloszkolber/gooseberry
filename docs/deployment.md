@@ -1,30 +1,19 @@
 # Deployment
 
-Run official upstream Goose on the host and the application and browser as two host-networked Compose services. Use the same non-root Linux user for Goose, the state directories and Compose.
-
-## Requirements
-
-- Linux x86-64 or arm64 with the libraries required by the official Goose CLI.
-- Docker Engine and Compose, usable by your user.
-- The supported upstream Goose release, recorded in [`upstream.json`](../gooseberry/tests/goose/upstream.json).
-- A dedicated state directory and access to the project directories you want to admit.
-- GitHub access for private repository or container downloads. You can build locally without GHCR access.
-
-Clone the repository, using an authenticated account if required:
+Use Linux x86-64 or arm64, Docker Engine with Compose, and the official Goose CLI. GNU Goose needs glibc, libstdc++ and libgcc. Run Goose and own the state directories as the same non-root Linux user.
 
 ```bash
-gh auth login
-gh repo clone miloszkolber/gooseberry
+git clone https://github.com/miloszkolber/gooseberry.git
 cd gooseberry
 ```
 
-## Install and configure Goose
+Use authenticated GitHub access when required. Local image builds need no GHCR login.
 
-Use the [official installation instructions](https://goose-docs.ai/docs/getting-started/installation/) or download the matching GNU Linux archive from [upstream releases](https://github.com/aaif-goose/goose/releases). Compare its SHA-256 digest with the artifact entry in `upstream.json` before extracting it. Install the executable in a location you manage, such as `~/.local/bin/goose`, and check `goose --version`.
+## Goose
 
-Gooseberry supplies no Goose installer, updater, setup script or service unit. Do not put Goose configuration inside either container.
+Install the GNU archive listed in [`upstream.json`](../gooseberry/tests/goose/upstream.json), verify its SHA-256 and check `goose --version`. See [upstream installation](https://goose-docs.ai/docs/getting-started/installation/) and [compatibility](goose.md).
 
-Give the service a random secret and the privacy settings below. Keep them in a private environment file, for example `~/.config/goose/service.env`, with mode `0600`:
+Create `~/.config/goose/service.env` with mode `0600`. Generate each secret separately with `openssl rand -hex 32`:
 
 ```dotenv
 GOOSE_SERVER__SECRET_KEY=replace-with-a-random-goose-secret
@@ -34,9 +23,7 @@ GOOSE_TELEMETRY_ENABLED=false
 OTEL_SDK_DISABLED=true
 ```
 
-Use `openssl rand -hex 32` to generate each token. The same two values go in `.gooseberry` below. Goose needs the browser token for its MCP extension; the browser never receives the Goose service secret. Leave Langfuse credentials unset unless you want tracing; [Goose](goose.md) explains the privacy boundary.
-
-For a manual start, load the private file you wrote above. Keep it to simple `KEY=value` entries you trust, because the shell sources it:
+Leave Langfuse credentials unset unless you want tracing. For a manual start, source this trusted, simple `KEY=value` file:
 
 ```bash
 (
@@ -47,11 +34,114 @@ For a manual start, load the private file you wrote above. Keep it to simple `KE
 )
 ```
 
-The subshell keeps those exports out of your interactive shell. Compose does not configure the host process; an existing service manager can load the same values instead.
+Keep Goose configuration and credentials on the host.
 
-### Optional systemd user service
+## Containers
 
-Create `~/.config/systemd/user/goose.service` yourself. This example assumes the binary is in `~/.local/bin`; change `ExecStart` if yours is elsewhere.
+```bash
+cp .gooseberry.example .gooseberry
+chmod 600 .gooseberry
+```
+
+Set:
+
+| Variable | Value |
+| --- | --- |
+| `GOOSEBERRY_DATA_PATH` | Dedicated absolute state directory. |
+| `GOOSEBERRY_GOOSE_SECRET_KEY` | Goose's `GOOSE_SERVER__SECRET_KEY`. |
+| `GOOSEBERRY_BROWSER_TOKEN` | Browser token from the Goose environment above. |
+| `GOOSEBERRY_AUTH_ENABLED`, `GOOSEBERRY_TOKEN` | Optional UI login; use a third token. Required for authenticated remote access. |
+
+Compose uses UID/GID `1000:1000`. Compare `id -u` and `id -g`; adjust `user` and every tmpfs `uid`/`gid` in both services if needed.
+
+Create the state directories as that user, using your configured path:
+
+```bash
+gooseberry_data=/absolute/path/to/gooseberry-data
+install -d -m 700 "$gooseberry_data/app" "$gooseberry_data/browser" \
+  "$gooseberry_data/browser/artifacts" "$gooseberry_data/browser/state"
+```
+
+Each service mounts only its own state. `create_host_path: false` makes missing paths fail instead of creating root-owned directories.
+
+Add admitted project roots to the application's `volumes` in `docker-compose.yaml`, with identical host/container paths:
+
+```yaml
+- type: bind
+  source: /absolute/path/to/project
+  target: /absolute/path/to/project
+  read_only: true
+  bind:
+    create_host_path: false
+```
+
+The browser keeps only its state mount. Start both services:
+
+```bash
+docker compose --env-file .gooseberry up -d --build
+```
+
+For published images, authenticate to `ghcr.io` with package-read access, then run:
+
+```bash
+docker compose --env-file .gooseberry pull
+docker compose --env-file .gooseberry up -d --no-build
+```
+
+## Browser MCP
+
+Merge this entry into `~/.config/goose/config.yaml` under the existing `extensions` mapping:
+
+```yaml
+extensions:
+  gooseberry-browser:
+    name: Gooseberry Browser
+    type: streamable_http
+    enabled: true
+    uri: http://127.0.0.1:8787/mcp
+    timeout: 130
+    env_keys:
+      - GOOSEBERRY_BROWSER_TOKEN
+    headers:
+      Authorization: 'Bearer ${GOOSEBERRY_BROWSER_TOKEN}'
+```
+
+Goose expands the header from its private environment or secret store. Keep token values out of agent instructions. Restart Goose after environment changes; enable the extension in sessions that need it.
+
+`browser_command` provides automation. `browser_guidance` and `gooseberry://browser/guide` provide detailed instructions. Both MCP and HTTP routes are available to trusted host-network services; see [integration](integration.md).
+
+Open **http://127.0.0.1:7312**, configure a provider and create a project.
+
+## Health and access
+
+| Request | Checks |
+| --- | --- |
+| `curl -fsS http://127.0.0.1:7312/livez` | Application liveness. |
+| `curl -fsS http://127.0.0.1:7312/readyz` | Goose ACP connection, not provider readiness. |
+| `curl -fsS http://127.0.0.1:8787/health` | Browser liveness without starting Chromium. |
+
+For status and logs:
+
+```bash
+docker compose --env-file .gooseberry ps
+docker compose --env-file .gooseberry logs --tail=100 gooseberry browser
+```
+
+Each container is independently healthy; Goose outages affect application readiness.
+
+An SSH tunnel keeps the UI on loopback:
+
+```bash
+ssh -N -L 7312:127.0.0.1:7312 user@host
+```
+
+For remote access, configure authentication, HTTPS and the exact public origin as described in [security](security.md). Host networking is required for these loopback URLs; a bridge container's loopback points to itself.
+
+Changing the browser port also requires matching `GOOSEBERRY_BROWSER_URL` and the private MCP URL. The application URL accepts an HTTP(S) origin without a path or credentials.
+
+## Optional systemd service
+
+Save as `~/.config/systemd/user/goose.service`, adjusting the executable path:
 
 ```ini
 [Unit]
@@ -71,127 +161,12 @@ UMask=0077
 WantedBy=default.target
 ```
 
-Start it with `systemctl --user daemon-reload` and `systemctl --user enable --now goose.service`. An administrator can enable lingering with `sudo loginctl enable-linger "$USER"` if it must run after logout. This is an example you own, not a unit managed by Gooseberry.
-
-## Configure the containers
-
-```bash
-cp .gooseberry.example .gooseberry
-chmod 600 .gooseberry
-```
-
-Set these values:
-
-- `GOOSEBERRY_DATA_PATH`: a dedicated absolute directory. Keep your existing path when updating.
-- `GOOSEBERRY_GOOSE_SECRET_KEY`: the host Goose service secret.
-- `GOOSEBERRY_BROWSER_TOKEN`: a different strong random token for browser MCP, HTTP commands and artifacts.
-- Optional controller login: `GOOSEBERRY_AUTH_ENABLED=true` and a third token in `GOOSEBERRY_TOKEN`.
-
-Compose passes an explicit set of variables to each service. The browser gets no Goose secret, controller token or provider configuration. Browser authentication is always enabled in the supplied Compose file.
-
-Check `id -u` and `id -g`. Compose defaults to `1000:1000`; if yours differ, update `user` and every tmpfs `uid`/`gid` value in both services. Create state directories as that user, using the same path you entered in `.gooseberry`:
-
-```bash
-gooseberry_data=/absolute/path/to/gooseberry-data
-install -d -m 700 "$gooseberry_data/app" "$gooseberry_data/browser" \
-  "$gooseberry_data/browser/artifacts" "$gooseberry_data/browser/state"
-```
-
-The app mounts only `app`; the browser mounts only `browser`. Existing contents stay in place. Bind mounts use `create_host_path: false`, so a missing source fails instead of creating a root-owned directory. Do not work around a permission error by running the containers as root.
-
-Add each project root to the application's `volumes` list:
-
-```yaml
-- type: bind
-  source: /absolute/path/to/project
-  target: /absolute/path/to/project
-  read_only: true
-  bind:
-    create_host_path: false
-```
-
-The two paths must match because Goose runs on the host and file/Git previews run in the application container. Add no project or Goose-configuration mounts to the browser service.
-
-## Start and register browser MCP
-
-```bash
-docker compose --env-file .gooseberry up -d --build --remove-orphans
-```
-
-This builds both images locally. Build tools stay inside their build stages. For published images, authenticate Docker to `ghcr.io` with package-read access and `--password-stdin`, then use:
-
-```bash
-docker compose --env-file .gooseberry pull
-docker compose --env-file .gooseberry up -d --no-build --remove-orphans
-```
-
-Register one remote Streamable HTTP extension in the same Linux user's Goose configuration. Merge this entry into the existing `extensions` mapping in `~/.config/goose/config.yaml`; do not replace other settings. See [upstream extension setup](https://goose-docs.ai/docs/getting-started/using-extensions/).
-
-```yaml
-extensions:
-  gooseberry-browser:
-    name: Gooseberry Browser
-    type: streamable_http
-    enabled: true
-    uri: http://127.0.0.1:8787/mcp
-    timeout: 130
-    env_keys:
-      - GOOSEBERRY_BROWSER_TOKEN
-    headers:
-      Authorization: 'Bearer ${GOOSEBERRY_BROWSER_TOKEN}'
-```
-
-Goose resolves `env_keys` from its process environment or secret store and expands the header value. The example therefore contains no token; keep the actual value in the private service environment above. Do not copy it into prompts or agent instructions. Restart Goose after changing its environment, and enable the extension in sessions that need it.
-
-The `browser_command` tool carries essential instructions; detailed syntax is available from `browser_guidance` or the `gooseberry://browser/guide` resource. No host skill installation is needed.
-
-Open `http://127.0.0.1:7312`, configure a provider in Settings and create a project from the mounted directories. Existing Goose agents, agent editing, mentions and session-scoped objective MCP work independently of the browser extension.
-
-## Check the services
-
-| Command | Checks |
-| --- | --- |
-| `curl -fsS http://127.0.0.1:7312/livez` | Application listener. `/health` is an alias. |
-| `curl -fsS http://127.0.0.1:7312/readyz` | Controller's Goose ACP connection, not provider readiness. |
-| `curl -fsS http://127.0.0.1:8787/health` | Browser listener, without starting Chromium. |
-| `docker compose --env-file .gooseberry ps` | Independent application and browser container health. |
-| `docker compose --env-file .gooseberry logs --tail=100 gooseberry browser` | Recent logs from both services. |
-| `journalctl --user -u goose.service -n 100` | Goose logs, if using the example systemd service. |
-
-A Goose outage fails application readiness without making the application container unhealthy. A browser outage does not stop the application or Goose, but browser calls and artifact reads will fail.
-
-For a disconnected Goose service, check its process, port and matching secret. For browser failures, check the browser service, token and MCP registration. If you change `GOOSEBERRY_BROWSER_PORT`, also update `GOOSEBERRY_BROWSER_URL` and the private MCP URL. The application's browser URL accepts an HTTP(S) origin, without a path or credentials.
-
-For missing project roots, check mounts and filesystem permissions. Keep environment files, tokens and raw provider responses out of bug reports.
-
-## Access from another machine or service
-
-An SSH tunnel keeps the application on loopback:
-
-```bash
-ssh -N -L 7312:127.0.0.1:7312 user@host
-```
-
-For a reverse proxy, enable controller authentication and set `GOOSEBERRY_PUBLIC_ORIGIN` to the HTTPS origin. The proxy must support WebSockets. A non-loopback controller bind requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` explicitly disables that protection. Do not use this as a multi-user public service.
-
-Browser MCP and HTTP use their own bearer token. If proxying them, set `GOOSEBERRY_BROWSER_PUBLIC_ORIGIN` and forward the matching public Host. A non-loopback browser bind requires authentication.
-
-Trusted host processes and host-networked containers can use:
-
-- Objective MCP at `http://127.0.0.1:7312/mcp/objective`, with its session-specific bearer token.
-- Browser MCP at `http://127.0.0.1:8787/mcp`, with the browser bearer token.
-- Browser commands at `http://127.0.0.1:8787/v1/browser` and artifacts under `/v1/artifacts/{session}/{name}`, with the same browser token.
-
-Loopback in a bridge-networked container refers to that container, not the host. Browser state is separate from application state, but host networking still permits access to local services. Read [security](security.md) before exposing listeners or browsing untrusted content.
+Run `systemctl --user daemon-reload` and `systemctl --user enable --now goose.service`. Inspect logs with `journalctl --user -u goose.service -n 100`. For operation after logout, an administrator can run `sudo loginctl enable-linger "$USER"`.
 
 ## Updates and backups
 
-Back up Goose's private configuration/state and both directories under `GOOSEBERRY_DATA_PATH`. Let active sessions settle first; controller follow-up queues are memory-only and disappear on restart. Keep copies of the environment and private MCP configuration securely, since they contain tokens.
+Back up Goose's configuration/state, the complete `GOOSEBERRY_DATA_PATH` and private environment files. Let active work settle; queued follow-ups are memory-only.
 
-Update official Goose yourself, checking [compatibility](goose.md) before replacing it. Image builds and pulls never update the host binary.
+Update Goose independently after checking compatibility. Update the checkout and rebuild images, or pull and recreate the containers. Preserve the existing state paths. Image builds run on relevant pushes and Sundays at 04:37 UTC; deployment updates are manual.
 
-The image workflow builds both architectures on relevant pushes and on Sundays at 04:37 UTC. Scheduled builds refresh runtime packages; they do not restart deployments. Source-commit tags remain available, and `latest` is promoted only while the built source is still the default-branch tip.
-
-To update Gooseberry, update the checkout and rebuild both images with `up -d --build`, or pull published images and use `up -d --no-build`. Keep the existing state paths and mounts. Container removal does not remove the bind-mounted data. After rotating tokens, update every owner: Goose and the application for the Goose secret; browser, application and Goose's private environment or secret store for the browser token.
-
-The application image sets `GOGC=200` to reduce collection work at the cost of some memory. Change it through Compose `environment` only after measuring your workload. Chromium uses separate browser-container memory. See [performance](performance.md).
+When rotating secrets, update Goose and the application for the Goose secret; update Goose, application and browser for the browser token.

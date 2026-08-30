@@ -16,6 +16,8 @@ Read these files before changing the product:
 
 Product and engineering documentation belongs under `docs/`. Runtime prompt text may remain beside the small integration that owns it.
 
+Keep documentation short and present-tense: describe the product and direct setup. Give each fact one home and link to it. Omit migration narratives and historical negatives; put proposed work in `docs/roadmap.md`.
+
 ## Maintenance priority
 
 Preserve the focused current baseline. Keep features, dependencies, tests, protocol methods, state, and documents aligned with it. Prefer a focused vertical slice over a generic workbench. Record accepted future improvements in `docs/roadmap.md`.

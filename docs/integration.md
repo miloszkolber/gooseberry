@@ -1,41 +1,28 @@
-# Goose integration
+# Integration
 
-Gooseberry connects to an official upstream Goose release installed by the user. The supported release and official artifact identities are recorded in [`upstream.json`](../gooseberry/tests/goose/upstream.json). See [Goose](goose.md) for compatibility and update responsibilities.
+The controller connects to `ws://127.0.0.1:3284/acp`, sending `GOOSEBERRY_GOOSE_SECRET_KEY` as `X-Secret-Key`. It must match Goose's `GOOSE_SERVER__SECRET_KEY`. See [setup](deployment.md) and [supported Goose release](goose.md).
 
-Run Goose on authenticated loopback, optionally with a systemd user service:
+## Conversations
 
-```bash
-goose serve --host 127.0.0.1 --port 3284 --enable-scheduler
-```
+Every session has a project and admitted working directory. Goose owns its transcript, rename/archive state and forks; Gooseberry records project placement and immediate-parent lineage.
 
-The controller connects to `ws://127.0.0.1:3284/acp`. Its `GOOSEBERRY_GOOSE_SECRET_KEY` must match the service's `GOOSE_SERVER__SECRET_KEY`; it sends that value in `X-Secret-Key`.
+The controller checks empty sessions individually when Goose omits them from the catalog. Archive waits for settled sessions and blocks competing operations. Reconnects and lifecycle notifications reload the catalog; connection generations reject stale replies.
 
-## Session lifecycle
+Queued follow-ups live in controller memory and become ordinary ACP prompts when the current turn settles. Steering uses Goose's session-steer method.
 
-Each session belongs to a Gooseberry project and an allowed working directory. Goose stores the conversation. When a settled session is forked, Goose copies it and Gooseberry records the child's project, directory and immediate parent. Loading the child reads its inherited transcript from Goose.
+## MCP
 
-Goose also owns rename and archive state. An empty recorded session may be missing from `session/list`, so the controller queries it individually to keep archived empty chats restorable. Archive is refused during streaming, loading or another operation, and blocks competing operations until it finishes.
+| Endpoint | Access |
+| --- | --- |
+| Application `/mcp/objective` | Session-specific token supplied to Goose for goals, tasks and questions. |
+| Browser `/mcp` | Browser bearer token, registered in private Goose configuration. |
 
-Lifecycle notifications are not replayed. On reconnect or notification, the browser reloads the active-and-archived catalog. Requests and callbacks carry a connection generation so an old ACP response cannot modify a replacement session.
+Browser tools are `browser_command` and `browser_guidance`; detailed instructions are also at `gooseberry://browser/guide`. Commands take `session`, `command` and optional `args`. Reuse an explicit browser session ID across calls; it is independent of Goose and MCP connection IDs. `close` removes its state and artifacts.
 
-Follow-up queues live in controller memory. Browser snapshots include them, and the controller sends the next message after the current prompt settles. Queues survive a browser reload, not a service restart. Steering uses Goose's session-steer method.
+Authenticated HTTP commands at `/v1/browser` and artifacts at `/v1/artifacts/{session}/{name}` are also available to trusted services.
 
-## Agents, objectives and browser use
+## Settings
 
-The controller supplies a session-specific MCP endpoint and bearer credential when creating a Goose session. Agents use it for goals, tasks and supporting questions. It does not authorize general controller operations.
+Global extension changes affect Goose configuration; active-chat changes affect that session. The controller reloads Goose's result. Tool inventory requires an authorized chat; permission changes use Goose's `always_allow`, `ask_before` and `never_allow` values and require an idle chat.
 
-Agent editing and mentions use the user's Goose agents. Gooseberry does not install agent presets or skills on the host.
-
-The user registers the browser's remote MCP endpoint, `http://127.0.0.1:8787/mcp`, once in private Goose configuration. Browser MCP exposes `browser_command`, the `browser_guidance` tool and the `gooseberry://browser/guide` resource. Essential instructions travel with the tool definitions; detailed guidance is read only when needed. The [deployment example](deployment.md#start-and-register-browser-mcp) resolves its bearer header from Goose's private environment or secret store, never from agent instructions.
-
-`browser_command` takes an explicit `session`, a `command` and optional `args`. Keep that browser session ID across related calls; it is independent of Goose's conversation ID and the MCP connection. The command result retains the outcome, exit code, output and optional artifact. `close` removes the browser session and its artifacts.
-
-The HTTP command route at `/v1/browser` and artifact route at `/v1/artifacts/{session}/{name}` remain available, using the same browser authentication. Trusted services can use either API without going through the Web UI. Goose remains usable directly.
-
-## Administration
-
-Global extension changes update Goose configuration; active-chat extension changes update that session. The controller reloads Goose's result after each change instead of maintaining another catalog.
-
-Tool inventory requires an authorized active chat. Permission changes use Goose's global `permission.yaml` values: `always_allow`, `ask_before` and `never_allow`. Changes are refused while that chat is running or performing another operation.
-
-See [ACP coverage](acp.md) for supported methods, [models](models.md) for catalog behavior and [security](security.md) for what data reaches the browser.
+See [ACP coverage](acp.md), [models](models.md) and [security](security.md).
