@@ -1,23 +1,11 @@
 # Models and providers
 
-Goose manages providers, credentials, model availability and catalog metadata. Gooseberry displays that information and stores the user's model-visibility choices.
+Goose owns providers, credentials and model metadata. Gooseberry stores visibility choices and displays names, limits, modalities, reasoning support and prices when supplied.
 
-## Catalog
+Metadata lookups share in-flight work and have bounded concurrency and deadlines. Failed enrichment leaves the base catalog usable. Prices require finite nonnegative values; missing cache rates display as zero.
 
-The UI shows names, IDs, availability, context/output limits, modalities, reasoning support and prices when Goose reports them. Canonical metadata fills gaps in the inventory; a failed lookup leaves the base catalog usable.
+Chat model/thinking choices use Goose configuration options. Settings can save or clear defaults for a configured, available provider. Agent model preferences also belong to Goose. Hiding a model affects selectors, not existing sessions.
 
-Concurrent lookups share work under a request limit and deadline. Completed metadata is not cached. Prices use the reported currency per million tokens and require finite, nonnegative input/output rates. Missing cache rates display as zero.
+API keys and OAuth/device-code setup travel through authenticated ACP. Goose validates and stores credentials; the UI masks reads. ACP-capable provider readiness exposes only identity, `ready` and `hasIssue`.
 
-Hiding a model changes Gooseberry's selectors. It does not remove the model from Goose or alter existing sessions.
-
-## Choices and defaults
-
-Chat model and thinking controls use Goose configuration options. Settings can save or clear Goose's global provider/model default. The provider must be configured and available; custom or null model IDs remain valid when Goose accepts them. New sessions use that default.
-
-An agent can specify Goose's `model` preference. Gooseberry does not add separate per-agent provider routing.
-
-## Authentication
-
-API keys and native OAuth/device-code flows go through authenticated ACP. Goose validates and stores credentials. Gooseberry masks secrets when reading configuration and sends them only when the user submits setup.
-
-Readiness checks are available for providers marked ACP-capable. The browser receives provider identity plus `ready` and `hasIssue`, not raw diagnostics.
+See [ACP coverage](acp.md) and [security](security.md).
