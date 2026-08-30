@@ -10,7 +10,7 @@ Coder's SDK handles typed methods, JSON-RPC and request ordering. A small adapte
 
 The controller authenticates the ACP connection itself. The UI has no separate ACP login or session-close control; it loads persistent sessions as needed. Model and thinking controls use configuration options rather than a separate mode selector.
 
-The initialization result is not yet used to enable or disable UI capabilities. The integration is tested against the pinned Goose build, not a general-purpose client for arbitrary ACP agents.
+Initialization checks the negotiated protocol version. Advertised capabilities are not yet used to enable or disable UI controls. The integration is tested against the pinned Goose build, not a general-purpose client for arbitrary ACP agents.
 
 ## Goose extensions used by the UI
 
@@ -26,15 +26,15 @@ The initialization result is not yet used to enable or disable UI capabilities. 
 
 Goose stores the underlying data. The browser does not receive raw provider secrets, extension commands, environment values, source paths, schemas or upstream diagnostics. Agent instructions reach the editor as plain text. See [security](security.md) for access rules and [models](models.md) for catalog behavior.
 
-## Retained APIs without complete UI access
+## Browser-owned surfaces
 
 These are Gooseberry browser-protocol methods, not upstream ACP names:
 
 | Method or surface | Current access |
 | --- | --- |
 | `skill.list` | Calls Goose slash-command discovery. There is no current UI caller; the composer uses session commands and agent mentions instead. |
-| `git.listCommits` | The controller returns a limited commit log, but the UI has no commit-log view. |
-| `git.diffFile` scopes | The Changes panel opens uncommitted diffs. Commit and pinned scopes exist in the backend and restored-tab state, but have no current scope selector. The branch scope currently behaves like the uncommitted scope, not a branch-base comparison. |
+| `git.listCommits` | The Changes scope menu loads up to 200 recent commits when opened. Loading, empty history and failed reads have separate states. |
+| `git.status` and `git.diffFile` scopes | The Changes panel supports uncommitted changes, a selected commit and comparisons between a pinned commit and the working tree. The retained branch scope still behaves like uncommitted changes; it has no UI selector until branch-base comparison is implemented. |
 | Browser automation | The HTTP command API works independently of ACP. The installed skill documents a smaller subset of its accepted commands. |
 | Extension-UI dialogs | Components and state exist, but no controller/transport producer connects them to a live operation. |
 

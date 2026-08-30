@@ -4,9 +4,9 @@ Gooseberry is a Web UI for Goose. Goose stores conversations and manages provide
 
 ## Projects
 
-A project contains one or more allowed directory roots and can include any number of Git repositories. Users choose and name projects in the UI. Each root must be mounted read-only in the container at its host path.
+A project contains one or more allowed directory roots and can include zero, one or several Git repositories. Users choose and name projects in the UI. Each root must be mounted read-only in the container at its host path.
 
-File previews, images, Markdown links, diffs and filesystem updates keep their root or repository identity. The UI provides read-only browsing, source highlighting, Git branch/HEAD information, status and uncommitted changes. Discovery results carry warnings when a limit or repository error prevents a full read. File and Git mutations go through Goose tools.
+File previews, images, Markdown links, diffs and filesystem updates keep their root or repository identity. The UI provides read-only browsing, source highlighting, Git branch/HEAD information, uncommitted changes, selected commits and comparisons against an earlier commit. Rename previews retain both paths; binary, oversized and unavailable files show an explanation. Discovery results carry warnings when a limit or repository error prevents a full read. File and Git mutations go through Goose tools.
 
 Desktop has project, content and activity panes. Narrow layouts switch between those panes. Larger views and syntax grammars load on demand; the initial JavaScript budget is 500,000 raw bytes.
 

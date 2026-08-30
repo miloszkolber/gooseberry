@@ -4,11 +4,9 @@ Planned work builds on the [current baseline](baseline.md). Latency, resource ow
 
 ## Current gaps
 
-1. Close the project-list p95 gap on the current image. Two local comparisons exceed the 5% limit by a small amount; file and image latency pass. Keep the gate unchanged, profile before tuning, and check concurrent-client behavior alongside latency.
-2. Track session leases per browser using the existing client identity and reconnect grace period. Closing one client's tab must not clear another's lease; disconnects and project closure must release abandoned leases.
-3. Make the readiness deadline effective while ACP connection setup is busy. Distinguish connection status from provider readiness.
-4. Show binary, oversized and unavailable-diff explanations instead of an empty view. Preserve rename source paths and distinguish failed commit-log reads from an empty log.
-5. Connect the retained commit-log API and commit/pinned diff scopes to the UI. Give branch comparison an explicit base rather than treating it as uncommitted changes. Check worktrees, submodules, unusual filenames and repositories without an initial commit.
+1. Verify p95 on the deployment host. The latest release-equivalent local comparison passes the 5% limit, but earlier runs missed it and workstation timings vary. Keep the gate unchanged; check concurrent-client behavior and browser activity alongside latency. The [performance notes](performance.md) record the current evidence and limits.
+2. Give branch comparison an explicit base rather than treating it as uncommitted changes. Retain linked-worktree, submodule, unusual-filename and initial-commit checks. Keep Git views read-only.
+3. Verify the new commit selector and reconnect/tab-close behavior visually on desktop and narrow screens, including keyboard use. State and protocol tests do not establish visual fidelity.
 
 Git views remain read-only; agents perform mutations through Goose tools. The [API coverage notes](acp.md) distinguish callable methods, incomplete UI wiring and dormant components.
 
@@ -20,7 +18,7 @@ These are proposed additions, separate from the correctness fixes above.
 
 - Persist controller-owned follow-up queues with ordering, recovery and duplicate-submission protection. Goose remains the conversation store.
 - Add paginated browser history and improve inactive-session eviction without changing replayed message order, images, fork lineage or concurrent observers.
-- Profile transcript-size accounting under the session lock, long-history rendering and goal controls before introducing more derived state or caches.
+- Measure long-history rendering and goal controls before introducing more derived state or caches. Inactive transcript-size accounting now reuses unchanged sizes; continue checking its invalidation boundaries when message handling changes.
 
 ### Goose and ACP
 
@@ -39,7 +37,6 @@ These are proposed additions, separate from the correctness fixes above.
 
 - Add local backup/restore checks and verify schema migrations and rollback before changing persisted state. This can stay an optional maintenance tool, without a backup service or another runtime.
 - Extend compatibility checks when upstream schemas or notification behavior change; method-name checks alone are insufficient.
-- Measure controller p95 on the deployment host with concurrent browser activity; keep the 5% regression limit and existing authorization and recovery checks.
 - Add repeatable desktop and narrow-screen fixtures for navigation, dialogs, streaming and file/image previews. Record interaction and cold-load timing alongside the JavaScript budget.
 - Repeat native x86-64 browser checks; emulation is not performance evidence.
 - Keep the frontend organized by responsibility. Consider a framework change or generated wire types only when the saved maintenance work exceeds the new machinery.

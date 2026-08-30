@@ -64,19 +64,7 @@ The initial JavaScript budget is **500,000 raw bytes**. The bundle check follows
 
 Controller p95 must not regress by more than **5%** against the comparison workload. Measure project listing, one-MiB file reads, image delivery and concurrent clients using identical inputs and authentication. Warm both builds, alternate their order, retain per-round results and check response contents outside the timer. Authorization, recovery, replay and I/O limits are not optional performance costs.
 
-The 2026-08-30 checks use the current Go 1.27.0 image with `GOGC=200` against the retained Bun 1.3.14 backend baseline, on Linux arm64 with four CPUs and 3 GiB memory. Both five-round comparisons exceed the project-list limit: +6.56% in the first run and +5.65% in the repeat. The overall latency gate is still open.
-
-The repeat records:
-
-| Operation | Go p95 | Bun baseline p95 | Difference |
-| --- | ---: | ---: | ---: |
-| Project list | 0.131 ms | 0.124 ms | +5.65% |
-| One-MiB text read | 5.529 ms | 5.448 ms | +1.49% |
-| PNG delivery | 1.104 ms | 1.286 ms | −14.15% |
-
-Each round alternated runtime order and used 500 project lists, 300 one-MiB ASCII reads, 60 PNG transfers and eight clients making 100 project-list requests each. Values are medians of per-round p95s; response validation is outside the timer. Concurrent project-list throughput was about 49,800 requests/s for Go and 40,100 for the baseline, but higher throughput does not waive the latency limit.
-
-Chromium and model execution were excluded. These results do not establish deployment-host performance, and the difference from older measurements cannot be attributed to the Go version alone. Profile the remaining project-list overhead and repeat the gate on the deployment host with concurrent browser activity.
+The [performance notes](performance.md) record measured improvements, comparison results and remaining acceptance work. Local results do not establish deployment-host latency; throughput improvements do not waive the p95 limit.
 
 The controller reuses decoded project metadata only when freshly read bytes match, avoids duplicate work within a request and retains encoded replay responses without copying them. Path checks remain fresh. `GOGC=200` trades some memory for less collection work; change it only after measuring.
 

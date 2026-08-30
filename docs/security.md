@@ -20,7 +20,7 @@ The image runs as a non-root user with a read-only root filesystem and limited w
 | Objective/question MCP | Always uses a session-specific bearer token. UI and browser tokens do not grant this access. |
 | Model providers | Goose validates and stores credentials submitted through setup. |
 
-Controller and browser tokens must differ. A non-loopback controller bind requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` is explicitly set. Use authenticated HTTPS for remote access, set the trusted `GOOSEBERRY_PUBLIC_ORIGIN`, and keep same-origin checks enabled. Controller cookies last 90 days.
+Controller and browser tokens must differ. A non-loopback controller bind requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` is explicitly set. Use authenticated HTTPS for remote access, set the trusted `GOOSEBERRY_PUBLIC_ORIGIN`, and keep same-origin checks enabled. WebSocket upgrades check that exact public origin even when a proxy forwards a different internal Host. Controller cookies last 90 days.
 
 Protect `.gooseberry`, Goose's user configuration/state and the Gooseberry state directory. Setup writes `~/.config/goose/gooseberry.env` with mode `0600`.
 
