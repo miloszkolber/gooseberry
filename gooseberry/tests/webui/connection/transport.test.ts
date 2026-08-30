@@ -86,6 +86,45 @@ describe("WsTransport channel replay", () => {
 });
 
 describe("WsTransport reconnect delivery", () => {
+	test("does not reuse pending request IDs after replacing an authenticated transport", async () => {
+		const first = new WsTransport({ url: "ws://localhost:7312/ws" });
+		first.connect();
+		const oldSocket = TestWebSocket.instances[0];
+		oldSocket?.open();
+		const abandoned = first
+			.request("session.create", { projectId: "p1" })
+			.catch((error: unknown) => error);
+		const oldId = requestsIn(oldSocket?.sent ?? [])[0]?.id;
+		if (!oldId) throw new Error("original request ID missing");
+		first.stop();
+		expect(await abandoned).toBeInstanceOf(Error);
+
+		const replacement = new WsTransport({ url: "ws://localhost:7312/ws" });
+		try {
+			replacement.connect();
+			const newSocket = TestWebSocket.instances[1];
+			newSocket?.open();
+			expect(newSocket?.url).toBe(oldSocket?.url);
+			expect(resumesIn(newSocket?.sent ?? [])).toEqual([[]]);
+			const created = replacement.request("session.create", { projectId: "p1" });
+			const newId = requestsIn(newSocket?.sent ?? [])[0]?.id;
+			expect(newId).toBeDefined();
+			expect(newId).not.toBe(oldId);
+			let settled = false;
+			void created.then(() => {
+				settled = true;
+			});
+			// A retained old result must not resolve the new, identical mutation.
+			newSocket?.message(JSON.stringify({ id: oldId, ok: true, result: { sessionId: "old" } }));
+			await tick(0);
+			expect(settled).toBe(false);
+			newSocket?.message(JSON.stringify({ id: newId, ok: true, result: { sessionId: "new" } }));
+			expect(await created).toEqual({ sessionId: "new" });
+		} finally {
+			replacement.stop();
+		}
+	});
+
 	test("stops retrying after an initial connection failure when requested", async () => {
 		let failed = 0;
 		const transport = new WsTransport({
