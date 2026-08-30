@@ -504,11 +504,7 @@ func (r *runningCommand) terminate() {
 		if r.command == nil || r.command.Process == nil {
 			return
 		}
-		select {
-		case <-r.done:
-			return
-		default:
-		}
+		// Reaping the leader does not mean descendants have left its process group.
 		pid := r.command.Process.Pid
 		if err := syscall.Kill(-pid, syscall.SIGTERM); errors.Is(err, syscall.ESRCH) {
 			return
@@ -520,6 +516,9 @@ func (r *runningCommand) terminate() {
 		for {
 			select {
 			case <-r.done:
+				// The leader has exited; finish remaining descendants without
+				// waiting for already-dead group members to be reaped.
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
 				return
 			case <-poll.C:
 				if err := syscall.Kill(-pid, 0); errors.Is(err, syscall.ESRCH) {
@@ -546,6 +545,9 @@ func (a *app) closeSession(session, stateDir, artifactDir string) bool {
 	case <-running.done:
 		err := running.wait()
 		succeeded = err == nil
+		if err != nil {
+			running.terminate()
+		}
 	case <-time.After(closeCommandTimeout):
 		running.terminate()
 		_ = running.wait()
@@ -566,30 +568,39 @@ type outputCollector struct {
 	total          int
 	exceeded       bool
 	stdout, stderr bytes.Buffer
-	kill           func()
+	limit          chan struct{}
 }
 
-func (c *outputCollector) collect(target *bytes.Buffer, reader io.Reader) {
-	buffer := make([]byte, 32*1024)
-	for {
-		count, err := reader.Read(buffer)
-		if count > 0 {
-			c.mutex.Lock()
-			if !c.exceeded {
-				c.total += count
-				if c.total > maxProcessOutputBytes {
-					c.exceeded = true
-					go c.kill()
-				} else {
-					_, _ = target.Write(buffer[:count])
-				}
-			}
-			c.mutex.Unlock()
-		}
-		if err != nil {
-			return
+type outputWriter struct {
+	collector *outputCollector
+	target    *bytes.Buffer
+}
+
+func (w outputWriter) Write(data []byte) (int, error) {
+	c := w.collector
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if !c.exceeded {
+		c.total += len(data)
+		if c.total > maxProcessOutputBytes {
+			c.exceeded = true
+			close(c.limit)
+		} else {
+			_, _ = w.target.Write(data)
 		}
 	}
+	return len(data), nil
+}
+
+func captureCommandOutput(command *exec.Cmd) *outputCollector {
+	collector := &outputCollector{limit: make(chan struct{})}
+	// os/exec joins its writer copies before Wait returns. StdoutPipe/StderrPipe
+	// instead close at Wait and can discard a short child's unread output.
+	command.Stdout = outputWriter{collector, &collector.stdout}
+	command.Stderr = outputWriter{collector, &collector.stderr}
+	// A descendant retaining a pipe must not keep a reaped command waiting forever.
+	command.WaitDelay = terminateGrace
+	return collector
 }
 
 func (c *outputCollector) result() (string, string, bool) {
@@ -706,23 +717,12 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (map[strin
 	command = exec.Command(a.config.AgentBrowser, append([]string{"--config", a.config.BrowserConfig, "--session", request.Session, request.Command}, args...)...)
 	command.Dir, command.Env = artifactDir, runtimeEnvironment(stateDir, a.config.AgentBrowser)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		return fail(serviceFailure("child_process", "the browser process could not be started or reaped", "verify the browser executable and retry", 502, err))
-	}
-	stderr, err := command.StderrPipe()
-	if err != nil {
-		return fail(serviceFailure("child_process", "the browser process could not be started or reaped", "verify the browser executable and retry", 502, err))
-	}
+	collector := captureCommandOutput(command)
 	if err := command.Start(); err != nil {
 		return fail(serviceFailure("child_process", "the browser process could not be started or reaped", "verify the browser executable and retry", 502, err))
 	}
 	running = monitorCommand(command)
-	collector := &outputCollector{kill: running.terminate}
-	var readers sync.WaitGroup
-	readers.Add(2)
-	go func() { defer readers.Done(); collector.collect(&collector.stdout, stdout) }()
-	go func() { defer readers.Done(); collector.collect(&collector.stderr, stderr) }()
+	outputLimit := collector.limit
 	timedOut, artifactExceeded, stateExceeded, cancelled := false, false, false, false
 	var monitorErr error
 	timeout := time.NewTimer(a.config.CommandTimeout)
@@ -750,6 +750,9 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (map[strin
 			running.terminate()
 			waitErr = running.wait()
 			waited = true
+		case <-outputLimit:
+			outputLimit = nil
+			running.terminate()
 		case <-poll.C:
 			if temporaryPath != "" {
 				if info, statErr := os.Lstat(temporaryPath); statErr == nil && info.Size() > a.config.MaxArtifactBytes-artifactBytes {
@@ -776,7 +779,6 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (map[strin
 			statePoll.Reset(statePollInterval)
 		}
 	}
-	readers.Wait()
 	stdoutText, stderrText, outputExceeded := collector.result()
 	if cancelled {
 		return fail(serviceFailure("request_cancelled", "the browser request was cancelled", "retry the browser action", 499, ctx.Err()))

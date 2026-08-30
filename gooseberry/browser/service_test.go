@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +22,100 @@ import (
 )
 
 const testToken = "server-test-token-0123456789abcdef0123456789"
+
+func TestShortCommandWaitsForBothOutputStreams(t *testing.T) {
+	command := exec.Command("/bin/sh", "-c", "printf stdout; printf stderr >&2")
+	collector := captureCommandOutput(command)
+	// Hold both writer copies until the short process has exited, making the
+	// old Wait-before-read ordering deterministic rather than relying on timing.
+	collector.mutex.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			collector.mutex.Unlock()
+		}
+	}()
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer command.Process.Kill()
+	running := monitorCommand(command)
+	deadline := time.Now().Add(time.Second)
+	for !errors.Is(command.Process.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+		if time.Now().After(deadline) {
+			t.Fatal("short child did not exit")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-running.done:
+		t.Fatal("Wait returned before output was collected")
+	default:
+	}
+	collector.mutex.Unlock()
+	locked = false
+	if err := running.wait(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, exceeded := collector.result()
+	if stdout != "stdout" || stderr != "stderr" || exceeded {
+		t.Fatalf("captured output = %q, %q, exceeded=%v", stdout, stderr, exceeded)
+	}
+}
+
+func TestOutputStreamsShareOneBound(t *testing.T) {
+	command := exec.Command("/bin/sh", "-c", "printf '%300000s' x; printf '%300000s' y >&2")
+	collector := captureCommandOutput(command)
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, exceeded := collector.result()
+	if !exceeded || len(stdout)+len(stderr) > maxProcessOutputBytes {
+		t.Fatalf("unbounded capture: stdout=%d, stderr=%d, exceeded=%v", len(stdout), len(stderr), exceeded)
+	}
+	select {
+	case <-collector.limit:
+	default:
+		t.Fatal("output limit did not notify the process monitor")
+	}
+}
+
+func TestFailedWaitTerminatesDescendantsHoldingPipes(t *testing.T) {
+	for _, exit := range []string{"0", "7"} {
+		t.Run("exit-"+exit, func(t *testing.T) {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			command := exec.Command("/bin/sh", "-c", "/bin/sleep 30 & exit "+exit)
+			command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			// Unlike os/exec's output pipes, this descriptor remains ours and proves
+			// that the orphaned child exits rather than just losing its reader.
+			command.ExtraFiles = []*os.File{writer}
+			captureCommandOutput(command)
+			command.WaitDelay = 20 * time.Millisecond
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			_ = writer.Close()
+			running := monitorCommand(command)
+			err = running.wait()
+			if err == nil || (exit == "0" && !errors.Is(err, exec.ErrWaitDelay)) {
+				t.Fatalf("unexpected inherited-pipe result: %v", err)
+			}
+			running.terminate()
+			if err := reader.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reader.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+				t.Fatalf("descendant retained its pipe after termination: %v", err)
+			}
+		})
+	}
+}
 
 func TestEnvironmentUsesExactFixedDefaults(t *testing.T) {
 	lookup := func(values map[string]string) func(string) (string, bool) {
