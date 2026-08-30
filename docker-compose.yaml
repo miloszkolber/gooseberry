@@ -3,19 +3,59 @@ services:
         build:
             context: .
             dockerfile: gooseberry/Dockerfile
+            target: gooseberry
         image: ghcr.io/miloszkolber/gooseberry:latest
         container_name: gooseberry
         restart: unless-stopped
         network_mode: host
         user: "1000:1000"
         read_only: true
-        env_file:
-            - .gooseberry
+        environment:
+            GOOSEBERRY_GOOSE_SECRET_KEY: "${GOOSEBERRY_GOOSE_SECRET_KEY:?set the Goose service secret in .gooseberry}"
+            GOOSEBERRY_AUTH_ENABLED: "${GOOSEBERRY_AUTH_ENABLED:-false}"
+            GOOSEBERRY_TOKEN: "${GOOSEBERRY_TOKEN:-}"
+            GOOSEBERRY_CONTROLLER_HOST: "${GOOSEBERRY_CONTROLLER_HOST:-127.0.0.1}"
+            GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE: "${GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE:-false}"
+            GOOSEBERRY_PUBLIC_ORIGIN: "${GOOSEBERRY_PUBLIC_ORIGIN:-}"
+            GOOSEBERRY_BROWSER_AUTH: "true"
+            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set a distinct strong browser token in .gooseberry}"
+            GOOSEBERRY_BROWSER_URL: "${GOOSEBERRY_BROWSER_URL:-http://127.0.0.1:8787}"
         volumes:
-            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app:/var/lib/gooseberry"
-            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser:/var/lib/gooseberry-browser"
-            # Grant each project root explicitly. The container path must match the host path.
-            # - /absolute/path/to/project:/absolute/path/to/project:ro
+            - type: bind
+              source: "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app"
+              target: /var/lib/gooseberry
+              bind:
+                  create_host_path: false
+            # Add each admitted project root here as a read-only bind at the same absolute path.
+        tmpfs:
+            - /tmp:size=128m,mode=1777,uid=1000,gid=1000
+            - /run:size=16m,mode=700,uid=1000,gid=1000
+        stop_grace_period: 20s
+
+    browser:
+        build:
+            context: .
+            dockerfile: gooseberry/Dockerfile
+            target: browser
+        image: ghcr.io/miloszkolber/gooseberry-browser:latest
+        container_name: gooseberry-browser
+        restart: unless-stopped
+        network_mode: host
+        user: "1000:1000"
+        read_only: true
+        environment:
+            GOOSEBERRY_BROWSER_AUTH: "true"
+            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set a distinct strong browser token in .gooseberry}"
+            GOOSEBERRY_BROWSER_HOST: "${GOOSEBERRY_BROWSER_HOST:-127.0.0.1}"
+            GOOSEBERRY_BROWSER_PORT: "${GOOSEBERRY_BROWSER_PORT:-8787}"
+            GOOSEBERRY_BROWSER_PUBLIC_ORIGIN: "${GOOSEBERRY_BROWSER_PUBLIC_ORIGIN:-}"
+        volumes:
+            # Browser sessions and screenshots only; no application, project or Goose configuration mounts.
+            - type: bind
+              source: "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser"
+              target: /var/lib/gooseberry-browser
+              bind:
+                  create_host_path: false
         tmpfs:
             - /tmp:size=128m,mode=1777,uid=1000,gid=1000
             - /run:size=16m,mode=700,uid=1000,gid=1000

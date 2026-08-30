@@ -1,21 +1,21 @@
-# Dedicated host data directory. Setup creates app and browser state inside it.
+# Existing host directories: app/ and browser/{artifacts,state}/, owned by UID/GID 1000.
 GOOSEBERRY_DATA_PATH=/absolute/path/to/gooseberry-data
 
-# Required controller-to-Goose secret. It must match GOOSE_SERVER__SECRET_KEY.
+# Must match the independently installed Goose service's GOOSE_SERVER__SECRET_KEY.
 GOOSEBERRY_GOOSE_SECRET_KEY=replace-with-a-random-goose-secret
 
-# Optional controller login. Authentication is disabled by default.
+# Browser MCP/API and application artifact proxy share this distinct strong token.
+GOOSEBERRY_BROWSER_TOKEN=replace-with-a-random-browser-token
+
+# Optional controller login; required for remote binding unless explicitly acknowledged.
 GOOSEBERRY_AUTH_ENABLED=false
 # GOOSEBERRY_TOKEN=replace-with-a-random-controller-token
-
-# The controller binds to loopback by default. Remote binding requires authentication or the
-# explicit unsafe-network acknowledgement below.
 # GOOSEBERRY_CONTROLLER_HOST=0.0.0.0
 # GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=false
-
-# Optional trusted reverse-proxy origin used for controller origin checks and secure cookies.
 # GOOSEBERRY_PUBLIC_ORIGIN=https://gooseberry.example.com
 
-# Browser API authentication is disabled by default. When enabled, set a distinct strong token.
-GOOSEBERRY_BROWSER_AUTH=false
-# GOOSEBERRY_BROWSER_TOKEN=replace-with-a-random-browser-token
+# Host networking keeps Goose and browser access on loopback by default.
+# GOOSEBERRY_BROWSER_HOST=127.0.0.1
+# GOOSEBERRY_BROWSER_PORT=8787
+# GOOSEBERRY_BROWSER_URL=http://127.0.0.1:8787
+# GOOSEBERRY_BROWSER_PUBLIC_ORIGIN=https://browser.example.com
