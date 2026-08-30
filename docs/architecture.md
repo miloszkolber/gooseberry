@@ -22,6 +22,8 @@ The container uses host networking. One Go process serves both HTTP listeners; `
 
 The Go service uses Coder's ACP SDK and WebSocket library, plus fsnotify. A small adapter converts the SDK's newline-delimited stream to Goose's WebSocket frames. The SDK handles JSON-RPC; Gooseberry does not implement another protocol stack.
 
+ACP connection setup is shared between callers, with a separate deadline for each caller. A slow handshake cannot hold readiness checks past their deadline. Reset and shutdown cancel unfinished setup; unsupported negotiated protocol versions are rejected. ACP readiness confirms a connection, not that a provider can complete a prompt.
+
 Goose owns its sessions and configuration. The controller stores project associations, objectives and presentation data, and asks Goose for current runtime information.
 
 ## State, paths and reconnects
@@ -30,7 +32,9 @@ Project roots have the same path on the host and in the container. Requests chec
 
 Application JSON stores use atomic replacement, synchronization and last-valid backups. Session records hold a project, working directory and optional fork parent, not a transcript. Project metadata can reuse a decoded value only when newly read bytes match; path and symlink checks still run.
 
-Session copies have count and memory limits and can be reconstructed from Goose. Active work, queued messages and pending replies prevent eviction. The tab lease is currently shared by the session rather than tracked per browser: closing a tab in one browser can clear another browser's lease, while a vanished browser can leave a lease behind. Client-scoped leases are planned in the [roadmap](roadmap.md). Follow-up queues are currently in memory only.
+Session copies have count and memory limits and can be reconstructed from Goose. Each browser sends a revisioned snapshot of its open chats; closing one browser's tab does not release another browser's chat. Disconnect cleanup waits for the reconnect grace period and outstanding replay work. Project closure releases that project's leases unless it has already reopened.
+
+Active work, queued messages and pending replies prevent eviction. Inactive copies retain their measured byte size until an operation or notification changes them, so checking the budget does not repeatedly serialize unchanged histories. Follow-up queues are currently in memory only.
 
 Several concurrency guards serve different purposes:
 
@@ -38,6 +42,8 @@ Several concurrency guards serve different purposes:
 - Shared in-flight loads prevent duplicate session hydration.
 - Deletion markers prevent late responses from restoring removed sessions.
 - Request replay prevents a reconnect retry from executing the same operation twice.
+- Request IDs remain unique when authentication replaces the browser transport.
+- Hydration checks tab-close intent before installing a late history response.
 - Ordered, limited output queues isolate slow browsers from other clients.
 
 These are not interchangeable caches or duplicate state.
@@ -46,7 +52,7 @@ These are not interchangeable caches or duplicate state.
 
 Components, state and helpers live together by responsibility: `chat/`, `workspace/`, `files/`, `settings/` and `connection/`. Shared UI lives in `components/`.
 
-`store/app-store.ts` composes feature state into one Zustand store. Welcome data and actions that affect both session placement and runtime state update atomically. The application owns navigation subscriptions and disposes them when it disconnects.
+`store/app-store.ts` composes feature state into one Zustand store. Welcome data and actions that affect both session placement and runtime state update atomically. The application owns navigation subscriptions: they survive transient connection loss and are disposed on sign-out or application teardown.
 
 Desktop and narrow layouts share one mounted file/change tree. Workspace subscriptions watch chat availability and streaming status, not every transcript chunk. React memoization skips unchanged Markdown. Radix handles accessible dialogs and menus, Virtuoso handles long lists, and Shiki loads highlighting grammars as needed.
 
