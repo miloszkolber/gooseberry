@@ -83,7 +83,12 @@ func (s *WebSocketServer) ServeHTTP(response http.ResponseWriter, request *http.
 			return
 		}
 	}
-	connection, err := websocket.Accept(response, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+	connection, err := websocket.Accept(response, request, &websocket.AcceptOptions{
+		CompressionMode: websocket.CompressionDisabled,
+		// IsExpectedOrigin already enforced the exact public origin above. The
+		// library's Host-based check would reject trusted reverse-proxy origins.
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
 		return
 	}
