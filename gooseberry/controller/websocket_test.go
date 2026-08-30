@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -23,6 +24,51 @@ type countingHandler struct {
 func (h *countingHandler) Handle(ctx context.Context, method string, params json.RawMessage, client string) (any, error) {
 	h.calls.Add(1)
 	return h.inner.Handle(ctx, method, params, client)
+}
+
+func TestBrowserWebSocketUsesConfiguredOriginPolicy(t *testing.T) {
+	const publicOrigin = "http://127.0.0.1:17313"
+	for _, test := range []struct {
+		name         string
+		publicOrigin string
+		origin       string
+		sameHost     bool
+		allowed      bool
+	}{
+		{name: "configured public origin", publicOrigin: publicOrigin, origin: publicOrigin, allowed: true},
+		{name: "configured untrusted origin", publicOrigin: publicOrigin, origin: "https://untrusted.example"},
+		{name: "configured internal host", publicOrigin: publicOrigin, sameHost: true},
+		{name: "default same host", sameHost: true, allowed: true},
+		{name: "default cross origin", origin: "https://untrusted.example"},
+		{name: "default missing origin"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := NewWebSocketServer(CoreHandler{}, nil, AuthConfig{PublicOrigin: test.publicOrigin})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.Close()
+			host := httptest.NewServer(server)
+			defer host.Close()
+			origin := test.origin
+			if test.sameHost {
+				origin = host.URL
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			connection, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(host.URL, "http"), &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {origin}}})
+			if connection != nil {
+				defer connection.CloseNow()
+			}
+			if test.allowed {
+				if err != nil {
+					t.Fatalf("trusted origin %q rejected for internal host %q: %v", origin, host.URL, err)
+				}
+			} else if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+				t.Fatalf("untrusted origin %q: response=%v, error=%v", origin, response, err)
+			}
+		})
+	}
 }
 
 func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
