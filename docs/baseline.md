@@ -1,33 +1,33 @@
 # Product baseline
 
-Gooseberry is a focused Web UI for Goose. The pinned upstream Goose runtime remains authoritative for sessions, history, providers, models, credentials, extensions, tools, compaction, permissions, recipes and schedules. Its Rust code stays unchanged under the [distribution build policy](goose.md). Gooseberry owns projects, objectives, presentation and its integrations.
+Gooseberry is a Web UI for Goose. Goose stores conversations and manages providers, credentials, models, tools, permissions, agents, recipes and schedules. Gooseberry stores project associations, objectives and presentation settings.
 
-## Projects and navigation
+## Projects
 
-A project contains one or more admitted absolute directory roots. It may contain no Git repository, one repository or several. Operators expose roots through read-only container mounts at the same host paths; users select and name projects in the UI.
+A project contains one or more allowed directory roots and can include any number of Git repositories. Users choose and name projects in the UI. Each root must be mounted read-only in the container at its host path.
 
-Files, diffs, images, Markdown links and live updates retain their root or repository identity. File browsing is bounded and read-only. Git views show repository discovery, branch/HEAD, status, changed files and readable diffs; agents perform mutations through Goose tools. Incomplete discovery carries a warning rather than silently appearing complete. Source highlighting loads supported grammars on demand.
+File previews, images, Markdown links, diffs and filesystem updates keep their root or repository identity. The UI provides read-only browsing, source highlighting, Git branch/HEAD information, status and uncommitted changes. Discovery results carry warnings when a limit or repository error prevents a full read. File and Git mutations go through Goose tools.
 
-The desktop shell provides project navigation, content and activity panes. Narrow screens provide reachable pane switching. Settings and large content surfaces load on demand. The production build limits the initial JavaScript closure to 500,000 raw bytes.
+Desktop has project, content and activity panes. Narrow layouts switch between those panes. Larger views and syntax grammars load on demand; the initial JavaScript budget is 500,000 raw bytes.
 
-## Conversations and objectives
+## Conversations
 
-Projects group persistent, concurrent Goose sessions. Chats present streamed text and thinking, tool calls and results, permission requests, errors, usage, context and reported model identity. Turns support multiple images. Users can steer or interrupt work, manage follow-up queues, change model/thinking choices, fork a settled session, rename, archive, restore and search history. Completions project Goose slash commands and agent mentions.
+Projects group persistent Goose sessions, including concurrent chats. The UI shows streamed replies and thinking, tool calls/results, images, permission requests, errors, usage and context. Controls include steering, interruption, follow-up queues, model/thinking choices, forks, rename, archive/restore, history search, slash commands and agent mentions.
 
-Each session may have one user-set goal and ordered agent-owned tasks with `pending`, `active` or `done` states. A session-scoped MCP service supplies objectives and lets agents ask supporting questions. The distribution includes `scout`, `builder`, `strategist` and `auditor` Goose agents. Browser automation is a lazy Goose skill backed by the browser HTTP API.
+Each chat can have one user-set goal and an ordered list of agent-managed tasks: `pending`, `active` or `done`. Session-scoped MCP lets agents update tasks and ask supporting questions. The distribution includes the Goose agents `scout`, `builder`, `strategist` and `auditor`, plus a browser skill that calls Gooseberry's browser HTTP API.
 
-Goose is the session store. Browser tabs lease controller projections; inactive projections are bounded and reconstructible from Goose. Active work, queues and pending replies are not evicted. Follow-up queues are controller-memory state: browser reconnects preserve them, but a controller restart does not.
+Goose stores the transcript. The controller keeps working copies with count and memory limits; inactive copies can be loaded again from Goose. Active work, queues and pending replies are retained. Follow-up queues survive a browser reconnect but not a controller restart.
 
 ## Settings
 
-Settings project Goose provider status, credential setup, native OAuth/device-code authentication, ACP readiness, model metadata and visibility, two allowlisted preferences, and global provider/model defaults. Canonical model details and prices appear only when Goose reports valid values.
+Settings exposes provider setup and native login flows, model choices and metadata, model visibility, ACP readiness, two supported preferences and global provider/model defaults. Prices appear only when Goose supplies valid values.
 
-The agent catalog edits bounded plain-text instructions and a small metadata subset for writable global agents or agents in an admitted project directory. Settings also expose recipes, schedules, sanitized global and active-session extension controls, the active session's tool inventory and Goose's global tool permissions. Optional Signet settings and its health check remain available. Goose retains raw configuration, credentials, source paths and persistent runtime state; Gooseberry does not maintain parallel registries.
+Users can edit the supported fields of writable global or project agents, manage recipes and schedules, enable or remove extensions, inspect active-session tools and change Goose's global tool permissions. Optional Signet settings and a health check are also available. Goose stores the underlying configuration and credentials.
 
-## Runtime and limits
+## Runtime and scope
 
-One native Goose user service listens on loopback. One non-root, read-only, host-networked `gooseberry` container runs one Go executable with application/MCP and browser HTTP listeners. Application state lives under `${GOOSEBERRY_DATA_PATH}/app`; browser state lives under `${GOOSEBERRY_DATA_PATH}/browser`. Goose keeps its standard user configuration and state.
+A native Goose user service and one host-networked `gooseberry` container form the deployment. The container runs one Go executable with application/MCP and browser HTTP listeners. Application and browser state live under `${GOOSEBERRY_DATA_PATH}/app` and `${GOOSEBERRY_DATA_PATH}/browser`.
 
-This is a trusted single-user appliance. Chromium shares the container filesystem and UID. Bounded HTTP commands and filtered subprocess environments do not provide browser filesystem isolation. Goose tools have the technical user's host permissions.
+There is no terminal, file editor, language server, debugger or collaborative IDE in the Web UI. Gooseberry does not run its own providers or keep a second Goose transcript store.
 
-The scope excludes a terminal, file editor, language server, debugger, collaborative IDE, custom provider runtime and generic administration framework. See [ACP coverage](acp.md) for exact projected and omitted capabilities, [security](security.md) for authority boundaries and [deployment](deployment.md) for supported operations.
+This is a single-user application. Goose has the Linux user's host permissions; Chromium shares the container's UID and mounted files. See [security](security.md), [deployment](deployment.md) and [ACP coverage](acp.md).

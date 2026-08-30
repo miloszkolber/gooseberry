@@ -7,7 +7,7 @@
 		"dev": "vite",
 		"build": "bun run typography:check && bun run colors:check && tsc --noEmit && vite build && bun scripts/check-bundle.ts",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test",
+		"test": "bun test ../tests/webui",
 		"preview": "vite preview",
 		"typography:generate": "bun scripts/generate-typography.ts",
 		"typography:validate": "bun scripts/validate-typography.ts",

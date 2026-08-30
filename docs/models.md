@@ -1,23 +1,23 @@
 # Models and providers
 
-Goose is authoritative for provider configuration, credentials, authentication, model availability and catalog metadata. Gooseberry displays a sanitized projection and stores only model visibility.
+Goose manages providers, credentials, model availability and catalog metadata. Gooseberry displays that information and stores the user's model-visibility choices.
 
-## Catalog and metadata
+## Catalog
 
-The UI shows identifiers, names, availability, context/output limits, modalities, reasoning support and prices when Goose reports them. Canonical metadata lookup fills missing context/reasoning data and adds output limits and pricing; existing inventory values win. Missing or failed lookup leaves the base catalog usable.
+The UI shows names, IDs, availability, context/output limits, modalities, reasoning support and prices when Goose reports them. Canonical metadata fills gaps in the inventory; a failed lookup leaves the base catalog usable.
 
-Current lookups share a bounded concurrency limit and a projection deadline. Concurrent requests share in-flight work, not a persistent metadata cache. Prices are shown per million tokens in the reported currency only when input/output rates are finite and nonnegative. Absent cache rates are displayed as zero.
+Concurrent lookups share work under a request limit and deadline. Completed metadata is not cached. Prices use the reported currency per million tokens and require finite, nonnegative input/output rates. Missing cache rates display as zero.
 
-Hiding a model affects Gooseberry selection surfaces, not Goose's catalog, existing sessions or credentials.
+Hiding a model changes Gooseberry's selectors. It does not remove the model from Goose or alter existing sessions.
 
-## Selection and defaults
+## Choices and defaults
 
-Per-session model and thinking controls use Goose configuration options. Settings can read, save or clear Goose's global provider/model default. A saved provider must be configured and available, but model IDs may be custom or null as allowed by Goose. New sessions use Goose's persisted default.
+Chat model and thinking controls use Goose configuration options. Settings can save or clear Goose's global provider/model default. The provider must be configured and available; custom or null model IDs remain valid when Goose accepts them. New sessions use that default.
 
-Agent sources expose the bounded upstream `model` model-ID preference, not a separate Gooseberry provider binding. Gooseberry does not introduce per-agent provider routing.
+An agent can specify Goose's `model` preference. Gooseberry does not add separate per-agent provider routing.
 
-## Authentication and readiness
+## Authentication
 
-API-key setup and native OAuth/device-code flows are forwarded through authenticated ACP. Goose validates and persists credentials. Gooseberry masks secret fields on reads and forwards values only on explicit submission; it does not store or return provider secrets.
+API keys and native OAuth/device-code flows go through authenticated ACP. Goose validates and stores credentials. Gooseberry masks secrets when reading configuration and sends them only when the user submits setup.
 
-The focused readiness action is available only for inventory entries marked ACP-capable. Its browser response contains provider identity and `ready`/`hasIssue` booleans, not raw diagnostics. Provider and model views refresh from Goose; they are not an independently managed registry.
+Readiness checks are available for providers marked ACP-capable. The browser receives provider identity plus `ready` and `hasIssue`, not raw diagnostics.

@@ -1,37 +1,34 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUN_VERSION=1.3.14
-ARG BUN_IMAGE=oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
-ARG GO_IMAGE=golang:1.25.13-bookworm@sha256:e401dae1bf814e29204a8cb7915682e1780951e609ca0dd8865ee1937f510c48
+ARG BUN_IMAGE=oven/bun:1.4.0-debian@sha256:5bb0f9be3a1a36a03e27c9a9dd894a3b1ad26657155c7df4dda771e17bf872ef
+ARG GO_IMAGE=golang:1.27.0-trixie@sha256:ae28539d2ef595b9a2930dd7f031d9592376829dc0eae7cb869559f7d5812c3a
 ARG AGENT_BROWSER_VERSION=0.34.0
-ARG DEBIAN_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
-FROM ${BUN_IMAGE} AS dependencies
-ARG BUN_VERSION
+FROM --platform=$BUILDPLATFORM ${BUN_IMAGE} AS web-build
 WORKDIR /work
-RUN test "$(bun --version)" = "${BUN_VERSION}"
-COPY package.json bun.lock ./
-COPY webui/package.json webui/package.json
-COPY contracts/package.json contracts/package.json
+COPY gooseberry/package.json gooseberry/bun.lock gooseberry/bunfig.toml ./
+COPY gooseberry/webui/package.json webui/package.json
+COPY gooseberry/contracts/package.json contracts/package.json
 RUN bun install --frozen-lockfile
-
-FROM dependencies AS web-build
-COPY webui/ webui/
-COPY contracts/ contracts/
-COPY tsconfig.base.json ./
+COPY gooseberry/webui/ webui/
+COPY gooseberry/contracts/ contracts/
+COPY gooseberry/tsconfig.base.json ./
 RUN bun run build:web \
     && mkdir -p /out/licenses/frontend \
     && find node_modules -type f \( -iname 'license*' -o -iname 'notice*' \) \
         -exec cp --parents '{}' /out/licenses/frontend/ \;
 
-FROM ${GO_IMAGE} AS go-build
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-build
 WORKDIR /work
-COPY go.mod go.sum ./
+COPY gooseberry/go.mod gooseberry/go.sum ./
 RUN go mod download
-COPY main.go ./
-COPY controller/ controller/
-COPY browser/ browser/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/gooseberry . \
+COPY gooseberry/main.go ./
+COPY gooseberry/controller/ controller/
+COPY gooseberry/browser/ browser/
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/gooseberry . \
     && mkdir -p /out/licenses/go \
     && cp /usr/local/go/LICENSE /out/licenses/go/LICENSE \
     && go list -m all > /out/licenses/modules.txt \
@@ -76,9 +73,8 @@ RUN apt-get update \
         > /usr/local/bin/agent-browser \
     && chmod 0755 /usr/local/bin/agent-browser \
     && apt-get purge -y --auto-remove curl \
-    && rm -rf /var/lib/apt/lists/* /root/.cache
-
-RUN mkdir -p /app /var/lib/gooseberry /var/lib/gooseberry-browser/artifacts /var/lib/gooseberry-browser/state /home/goose \
+    && rm -rf /var/lib/apt/lists/* /root/.cache \
+    && mkdir -p /app /var/lib/gooseberry /var/lib/gooseberry-browser/artifacts /var/lib/gooseberry-browser/state /home/goose \
     && chown -R 1000:1000 /app /var/lib/gooseberry /var/lib/gooseberry-browser /home/goose
 ENV HOME=/home/goose GOOSEBERRY_BROWSER_AUTH=false GOGC=200
 WORKDIR /app
@@ -86,7 +82,7 @@ COPY --from=go-build /out/gooseberry /app/gooseberry
 COPY --from=go-build /out/licenses /app/licenses
 COPY --from=web-build /work/webui/dist /app/web
 COPY --from=web-build /out/licenses /app/licenses
-COPY browser/config.json /app/config.json
+COPY gooseberry/browser/config.json /app/config.json
 COPY LICENSE NOTICE.md /app/legal/
 RUN test -x /app/gooseberry \
     && test -f /app/web/index.html \

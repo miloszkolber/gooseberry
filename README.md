@@ -1,42 +1,44 @@
 # Gooseberry
 
-A focused, self-hosted workspace for [Goose](https://github.com/aaif-goose/goose): keep projects, conversations and agent work together without turning your browser into another IDE.
+A self-hosted Web UI for [Goose](https://github.com/aaif-goose/goose). Keep conversations, files and agent work together by project, without moving your development workflow into a browser IDE.
 
-Gooseberry gives Goose a persistent Web UI. Projects can span several directories and repositories. Conversations stay with their project, while Goose keeps control of the actual sessions, models, tools and permissions. Use Goose directly whenever you want; Gooseberry does not replace its runtime or maintain a competing provider registry.
+Goose handles the sessions, models, tools and permissions. Gooseberry adds a place to manage the work: a project can span several directories and repositories, with multiple conversations running alongside one another. You can still use Goose directly.
 
-## What it does
+## Features
 
-- Work across persistent, concurrent chats with streaming replies, multi-image prompts, steering, follow-up queues, history search and native session forks.
-- Keep a goal and ordered tasks beside each conversation. Summon focused agents and answer permission requests or supporting questions in context.
-- Browse files, source previews, Git status and readable diffs without exposing an editor, terminal or a second Git workflow.
-- Configure Goose providers and authentication, choose models, manage agents and extensions, and use Goose recipes and schedules.
-- Give agents bounded browser automation for inspecting pages and capturing screenshots.
+- Persistent chats with streaming replies, images, steering, follow-up queues, search and conversation forks.
+- Goals and tasks beside each chat, with custom agents, permission prompts and supporting questions.
+- Read-only file and image previews, Git status and diffs.
+- Goose provider setup, model choices, agent and extension management, recipes and schedules.
+- Browser automation for inspecting pages, interacting with them and taking screenshots.
 
-The application is one Go executable and a React frontend in **one `gooseberry` container**. Goose runs separately as a native Linux user service, with upstream Rust code unchanged and an explicit [distribution build policy](docs/goose.md). There is no JavaScript backend or runtime Node/Bun installation. The production frontend enforces a 500,000-byte initial JavaScript budget and loads larger surfaces on demand.
+One `gooseberry` container runs a Go service and serves the React frontend. Goose runs on the host as a Linux user service. Node and Bun are not runtime dependencies. The frontend loads larger views on demand and enforces a 500,000-byte initial JavaScript budget.
 
-## Get started
+The Goose distribution keeps upstream Rust code unchanged. Its build choices and one checked lockfile correction are described in the [distribution guide](docs/goose.md).
 
-The supported deployment uses Linux on x86-64 or arm64, Docker Engine with Compose, and a non-root user with a systemd user service. You need access to this repository and its release assets; private GitHub resources require authentication.
+## Setup
+
+You need Linux x86-64 or arm64, Docker Engine with Compose, and a non-root user with systemd user services. Private repository, release and container downloads require the appropriate GitHub access.
 
 1. Clone the repository and install its pinned Goose distribution.
-2. Copy `.gooseberry.example` to `.gooseberry`, choose a dedicated state directory and set a random Goose secret.
-3. Run `./scripts/setup-deployment.sh` as the non-root user. Add read-only, same-path project mounts to `compose.yaml`.
-4. Start the Goose user service, then the Gooseberry container. Open `http://127.0.0.1:7312`, configure a provider and create a project.
+2. Copy `.gooseberry.example` to `.gooseberry`. Set a dedicated data directory and a random Goose secret.
+3. Add read-only project mounts to `docker-compose.yaml`, keeping each directory at the same host and container path. Run `./scripts/setup-deployment.sh` as your Linux user.
+4. Start the Goose user service and Gooseberry container. Open `http://127.0.0.1:7312`, configure a provider and create a project.
 
-Follow the [complete setup guide](docs/deployment.md) for authenticated downloads, exact commands, filesystem ownership, remote access and updates. Use a local image build if you do not have access to the published GHCR package.
+The [setup guide](docs/deployment.md) has the commands, private-download instructions, user permissions and update procedure. You can build the image locally without access to the published GHCR package.
 
-## A deliberate boundary
+## Security
 
-Gooseberry is a trusted single-user development appliance, not a multi-tenant sandbox. Its file and Git views are read-only, but Goose tools act with the host user's permissions. Chromium shares the container filesystem, including project and Goose configuration mounts; API restrictions and a minimal subprocess environment are not filesystem isolation. Both HTTP listeners bind to loopback by default. Read the [security model](docs/security.md) before exposing either service or browsing untrusted content.
+Gooseberry is for a trusted single user. Goose tools run with that user's host permissions. Chromium shares the container filesystem with the application, including mounted project files and application data; a read-only mount does not prevent reading or sending files elsewhere. Both HTTP listeners bind to loopback by default.
 
-Follow-up queues survive a browser reconnect, not a controller restart. Browser automation is an HTTP API; session objectives use a separate authenticated MCP endpoint. These distinctions are intentional and documented in the [architecture](docs/architecture.md).
+Read the [security guide](docs/security.md) before exposing either listener or using browser automation with untrusted content.
 
 ## Documentation
 
-- [Deployment](docs/deployment.md): installation, operations and external service access.
-- [Architecture](docs/architecture.md): ownership, state and source layout.
-- [Development](docs/development.md): focused checks, performance gates and contribution boundaries.
-- [Goose integration](docs/goose.md) and [ACP coverage](docs/acp.md): distribution policy and projected capabilities.
-- [Product baseline](docs/baseline.md) and [roadmap](docs/roadmap.md): what belongs in Gooseberry and what remains open.
+- [Deployment](docs/deployment.md) — setup, access, backups and updates.
+- [Architecture](docs/architecture.md) — services, state and source layout.
+- [Development](docs/development.md) — checks and performance requirements.
+- [Goose distribution](docs/goose.md) and [ACP coverage](docs/acp.md) — builds and integration.
+- [Product baseline](docs/baseline.md) and [roadmap](docs/roadmap.md) — current features and planned work.
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for attribution.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

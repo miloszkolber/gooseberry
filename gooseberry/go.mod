@@ -1,6 +1,6 @@
 module github.com/miloszkolber/gooseberry
 
-go 1.25
+go 1.27.0
 
 require (
 	github.com/coder/acp-go-sdk v0.13.5

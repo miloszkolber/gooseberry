@@ -164,7 +164,7 @@ jobs:
           mkdir package
           install -m755 "upstream/target/${{ matrix.target }}/release/goose" package/goose
           tar -czf "gooseberry-goose-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C package goose
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: goose-${{ matrix.arch }}
           path: gooseberry-goose-*.tar.gz
@@ -183,7 +183,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: goose-*
           merge-multiple: true

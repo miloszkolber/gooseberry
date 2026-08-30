@@ -1,0 +1,23 @@
+services:
+    gooseberry:
+        build:
+            context: .
+            dockerfile: gooseberry/Dockerfile
+        image: ghcr.io/miloszkolber/gooseberry:latest
+        container_name: gooseberry
+        restart: unless-stopped
+        network_mode: host
+        user: "1000:1000"
+        read_only: true
+        env_file:
+            - .gooseberry
+        volumes:
+            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app:/var/lib/gooseberry"
+            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser:/var/lib/gooseberry-browser"
+            # Grant each project root explicitly. The container path must match the host path.
+            # - /absolute/path/to/project:/absolute/path/to/project:ro
+        tmpfs:
+            - /tmp:size=128m,mode=1777,uid=1000,gid=1000
+            - /run:size=16m,mode=700,uid=1000,gid=1000
+            - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000
+        stop_grace_period: 20s
