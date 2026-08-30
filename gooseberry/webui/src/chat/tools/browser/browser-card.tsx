@@ -29,13 +29,53 @@ export interface BrowserDetails {
 
 function contentOf(result: unknown): unknown[] {
 	if (!result || typeof result !== "object") return [];
-	const content = Reflect.get(result, "content");
-	return Array.isArray(content) ? content : [];
+	const content = Array.isArray(result) ? result : Reflect.get(result, "content");
+	if (!Array.isArray(content)) return [];
+	return content.map((block: unknown) =>
+		block && typeof block === "object" && Reflect.get(block, "type") === "content"
+			? Reflect.get(block, "content")
+			: block,
+	);
+}
+
+function browserResponse(result: unknown): Record<string, unknown> | undefined {
+	const response = (value: unknown): Record<string, unknown> | undefined => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		const outcome = Reflect.get(value, "outcome");
+		return outcome === "completed" || outcome === "failed" || outcome === "rejected"
+			? (value as Record<string, unknown>)
+			: undefined;
+	};
+	const direct = response(result);
+	if (direct) return direct;
+	if (result && typeof result === "object") {
+		const structured = response(Reflect.get(result, "structuredContent"));
+		if (structured) return structured;
+	}
+	// Goose may retain MCP's text fallback instead of its structured payload.
+	const texts = typeof result === "string" ? [result] : contentOf(result);
+	for (const block of texts) {
+		const text =
+			typeof block === "string"
+				? block
+				: block && typeof block === "object" && Reflect.get(block, "type") === "text"
+					? Reflect.get(block, "text")
+					: undefined;
+		if (typeof text !== "string" || text.length > 1024 * 1024) continue;
+		try {
+			const parsed = response(JSON.parse(text));
+			if (parsed) return parsed;
+		} catch {
+			// Ordinary browser output remains plain text.
+		}
+	}
+	return undefined;
 }
 
 export function browserDetails(result: unknown): BrowserDetails {
-	if (!result || typeof result !== "object") return {};
-	const raw = Reflect.get(result, "details");
+	const raw =
+		(result && typeof result === "object" ? Reflect.get(result, "details") : undefined) ??
+		browserResponse(result);
 	if (!raw || typeof raw !== "object") return {};
 	const session = Reflect.get(raw, "session");
 	const command = Reflect.get(raw, "command");
@@ -100,10 +140,24 @@ function BrowserImage({ image, command }: { image: BrowserImageBlock; command: s
 }
 
 export function BrowserCard({ args, result, status }: ToolRenderProps) {
-	const details = browserDetails(result);
+	const response = browserResponse(result);
+	const details = browserDetails(response ?? result);
 	const command = details.command || strArg(args, "command") || "browser";
 	const session = details.session ?? strArg(args, "session");
-	const output = resultText(result);
+	const output = response
+		? [
+				response.stdout,
+				response.stderr,
+				response.message,
+				response.hint,
+				...(Array.isArray(response.warnings) ? response.warnings : []),
+				...(Array.isArray(response.hints) ? response.hints : []),
+			]
+				.filter((value): value is string => typeof value === "string" && value.length > 0)
+				.join("\n")
+		: resultText(result);
+	const failed =
+		status === "error" || response?.outcome === "failed" || response?.outcome === "rejected";
 	const images = browserImages(result);
 	const artifact = details.artifact;
 	const artifactHref = browserArtifactUrl(artifact?.url);
@@ -117,9 +171,9 @@ export function BrowserCard({ args, result, status }: ToolRenderProps) {
 			</div>
 			{status === "running" ? (
 				<span className="text-text-muted tr-text-metadata">Running browser command…</span>
-			) : status === "error" ? (
+			) : failed ? (
 				<pre className="overflow-auto px-sm py-xs text-feedback-error tr-code-text">
-					{output || "Browser command failed."}
+					{output || (typeof details.code === "string" ? details.code : "Browser command failed.")}
 				</pre>
 			) : output ? (
 				<Collapsible lines={countLines(output)}>
@@ -162,7 +216,7 @@ export function BrowserCard({ args, result, status }: ToolRenderProps) {
 					})()}
 				</div>
 			) : null}
-			{status === "done" && !output && !artifact && images.length === 0 ? (
+			{status === "done" && !failed && !output && !artifact && images.length === 0 ? (
 				<span className="text-text-muted tr-text-metadata italic">No browser output.</span>
 			) : null}
 		</div>

@@ -32,6 +32,13 @@ interface ToolRegistration extends ToolRegistrationOptions {
 
 const registry = new Map<string, ToolRegistration>();
 
+function registration(toolName: string): ToolRegistration | undefined {
+	return (
+		registry.get(toolName) ??
+		(toolName.endsWith("__browser_command") ? registry.get("browser_command") : undefined)
+	);
+}
+
 export function registerToolRenderer(
 	toolName: string,
 	renderer: ToolRenderer,
@@ -41,15 +48,15 @@ export function registerToolRenderer(
 }
 
 export function getToolRenderer(toolName: string): ToolRenderer {
-	return registry.get(toolName)?.renderer ?? DefaultToolRenderer;
+	return registration(toolName)?.renderer ?? DefaultToolRenderer;
 }
 
 export function getToolSummary(toolName: string, props: ToolRenderProps): string {
-	return registry.get(toolName)?.summary?.(props) ?? "";
+	return registration(toolName)?.summary?.(props) ?? "";
 }
 
 export function getToolChrome(toolName: string): ToolChrome {
-	return registry.get(toolName)?.chrome ?? "card";
+	return registration(toolName)?.chrome ?? "card";
 }
 
 export interface ResolvedProminence {
@@ -58,7 +65,7 @@ export interface ResolvedProminence {
 }
 
 export function resolveProminence(toolName: string): ResolvedProminence {
-	const reg = registry.get(toolName);
+	const reg = registration(toolName);
 	const prominence = reg?.chrome === "bare" ? "primary" : (reg?.prominence ?? "routine");
 	return { prominence, defaultExpanded: reg?.defaultExpanded ?? false };
 }

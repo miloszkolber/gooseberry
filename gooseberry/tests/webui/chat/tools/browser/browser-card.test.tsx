@@ -75,12 +75,55 @@ describe("browser renderer parsing", () => {
 		const markup = renderToStaticMarkup(<BrowserCard {...props(undefined, "running")} />);
 		expect(markup).toContain("Running browser command");
 	});
+
+	it("preserves MCP screenshot details through structured results and ACP text replay", () => {
+		const payload = {
+			outcome: "completed",
+			command: "screenshot",
+			session: "qa",
+			code: 0,
+			stdout: "Screenshot saved",
+			stderr: "",
+			artifact: { name: "screen.png", url: "/v1/artifacts/qa/screen.png" },
+		};
+		const text = { type: "text", text: JSON.stringify(payload) };
+		for (const result of [
+			{ structuredContent: payload, content: [text] },
+			{ content: [text] },
+			[{ type: "content", content: text }],
+		]) {
+			expect(browserDetails(result).artifact).toEqual(payload.artifact);
+			const markup = renderToStaticMarkup(<BrowserCard {...props(result)} />);
+			expect(markup).toContain('href="/v1/artifacts/qa/screen.png"');
+			expect(markup).toContain("Screenshot saved");
+			expect(markup).not.toContain("&quot;outcome&quot;");
+		}
+		const failed = renderToStaticMarkup(
+			<BrowserCard
+				{...props({
+					structuredContent: {
+						outcome: "rejected",
+						warnings: ["Invalid command"],
+						hints: ["Read browser guidance"],
+					},
+				})}
+			/>,
+		);
+		expect(failed).toContain("Invalid command");
+		expect(failed).toContain("Read browser guidance");
+		expect(failed).toContain("text-feedback-error");
+	});
 });
 
 describe("browser renderer registration", () => {
 	it("registers the browser tool with a compact command/session summary", () => {
 		expect(getToolRenderer("browser")).toBe(BrowserCard);
+		expect(getToolRenderer("gooseberry_browser__browser_command")).toBe(BrowserCard);
+		expect(getToolRenderer("private_browser__browser_command")).toBe(BrowserCard);
 		expect(browserSummary({ command: "open", session: "qa" })).toBe("open in qa");
 		expect(getToolSummary("browser", props(undefined))).toBe("snapshot in qa");
+		expect(getToolSummary("private_browser__browser_command", props(undefined))).toBe(
+			"snapshot in qa",
+		);
 	});
 });
