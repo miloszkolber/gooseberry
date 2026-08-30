@@ -50,12 +50,12 @@ const (
 var temporaryArtifactPrefix = ".gooseberry-screenshot-"
 
 type config struct {
-	Host, Token, ArtifactRoot, StateRoot, AgentBrowser, BrowserConfig string
-	Port                                                              int
-	Authentication                                                    bool
-	CommandTimeout, RequestTimeout, HeadersTimeout, KeepAlive         time.Duration
-	MaxArtifactBytes, MaxTotalArtifactBytes, MaxStateBytes            int64
-	MaxSessions, MaxStateEntries                                      int
+	Host, Token, PublicOrigin, ArtifactRoot, StateRoot, AgentBrowser, BrowserConfig string
+	Port                                                                            int
+	Authentication                                                                  bool
+	CommandTimeout, RequestTimeout, HeadersTimeout, KeepAlive                       time.Duration
+	MaxArtifactBytes, MaxTotalArtifactBytes, MaxStateBytes                          int64
+	MaxSessions, MaxStateEntries                                                    int
 }
 
 func positiveEnvironmentInteger(value string, fallback int) (int, error) {
@@ -98,12 +98,13 @@ func configFromEnvironment(lookup func(string) (string, bool)) (config, error) {
 		host = fixedHost
 	}
 	token, _ := lookup("GOOSEBERRY_BROWSER_TOKEN")
-	return config{
-		Host: host, Port: port, Authentication: auth, Token: token,
+	publicOrigin, _ := lookup("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN")
+	return validateNetworkConfig(config{
+		Host: host, Port: port, Authentication: auth, Token: token, PublicOrigin: publicOrigin,
 		ArtifactRoot: defaultArtifactRoot, StateRoot: defaultStateRoot, AgentBrowser: defaultAgentBrowser, BrowserConfig: defaultBrowserConfig,
 		CommandTimeout: defaultCommandTimeout, RequestTimeout: defaultRequestTimeout, HeadersTimeout: defaultHeadersTimeout, KeepAlive: defaultKeepAlive,
 		MaxArtifactBytes: defaultArtifactLimit, MaxTotalArtifactBytes: defaultTotalArtifact, MaxStateBytes: defaultStateLimit, MaxSessions: defaultSessionLimit, MaxStateEntries: defaultStateEntries,
-	}, nil
+	})
 }
 
 type serviceError struct {
@@ -133,9 +134,15 @@ type app struct {
 	active         map[uint64]context.CancelFunc
 	nextActiveID   uint64
 	shuttingDown   bool
+	mcpHandler     http.Handler
 }
 
 func newApp(config config) (*app, error) {
+	var err error
+	config, err = validateNetworkConfig(config)
+	if err != nil {
+		return nil, err
+	}
 	if config.Authentication {
 		if err := assertStrongToken(config.Token); err != nil {
 			return nil, err
@@ -155,6 +162,7 @@ func newApp(config config) (*app, error) {
 	if err := app.initializeStorage(); err != nil {
 		return nil, err
 	}
+	app.mcpHandler = app.newMCPHandler()
 	return app, nil
 }
 
@@ -596,6 +604,24 @@ func cleanupCode(err error) bool {
 }
 
 func (a *app) runBrowser(ctx context.Context, request browserRequest) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.config.RequestTimeout)
+	a.activeMu.Lock()
+	if a.shuttingDown {
+		a.activeMu.Unlock()
+		cancel()
+		return nil, serviceFailure("shutting_down", "the browser service is shutting down", "", http.StatusServiceUnavailable, nil)
+	}
+	a.nextActiveID++
+	activeID := a.nextActiveID
+	a.active[activeID] = cancel
+	a.activeMu.Unlock()
+	defer func() {
+		a.activeMu.Lock()
+		delete(a.active, activeID)
+		a.activeMu.Unlock()
+		cancel()
+	}()
+
 	artifactDir, stateDir, err := a.prepareSession(request.Session)
 	if err != nil {
 		return nil, err
@@ -871,6 +897,9 @@ func (a *app) authorized(request *http.Request) bool {
 		return true
 	}
 	provided := ""
+	if len(request.Header.Values("Authorization")) != 1 {
+		return false
+	}
 	if value := request.Header.Get("Authorization"); strings.HasPrefix(value, "Bearer ") {
 		provided = strings.TrimPrefix(value, "Bearer ")
 	}
@@ -936,10 +965,14 @@ func parseRequestURL(request *http.Request) (*url.URL, error) {
 }
 
 func respondError(response http.ResponseWriter, err error) {
+	status, body := browserErrorResult(err)
+	writeJSON(response, status, body, nil)
+}
+
+func browserErrorResult(err error) (int, map[string]any) {
 	var policy *policyError
 	if errors.As(err, &policy) {
-		writeJSON(response, 400, map[string]any{"outcome": "rejected", "code": policy.code, "warnings": []string{policy.message}, "hints": []string{policy.hint}}, nil)
-		return
+		return 400, map[string]any{"outcome": "rejected", "code": policy.code, "warnings": []string{policy.message}, "hints": []string{policy.hint}}
 	}
 	var service *serviceError
 	if errors.As(err, &service) {
@@ -947,11 +980,10 @@ func respondError(response http.ResponseWriter, err error) {
 		if service.hint != "" {
 			hints = append(hints, service.hint)
 		}
-		writeJSON(response, service.status, map[string]any{"outcome": "rejected", "code": service.code, "warnings": []string{service.message}, "hints": hints}, nil)
-		return
+		return service.status, map[string]any{"outcome": "rejected", "code": service.code, "warnings": []string{service.message}, "hints": hints}
 	}
 	log.Printf("[gooseberry-browser] request error: %v", err)
-	writeJSON(response, http.StatusInternalServerError, map[string]any{"outcome": "failed", "code": "internal_error"}, nil)
+	return http.StatusInternalServerError, map[string]any{"outcome": "failed", "code": "internal_error"}
 }
 
 func (a *app) serveArtifact(response http.ResponseWriter, request *http.Request, path string) {
@@ -1027,6 +1059,10 @@ func (a *app) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	path := parsed.EscapedPath()
+	if path == "/mcp" {
+		a.serveMCP(response, request)
+		return
+	}
 	if path == "/health" {
 		if request.Method != http.MethodGet {
 			rejectMethod(response, request, http.MethodGet)
@@ -1075,14 +1111,7 @@ func (a *app) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		respondError(response, err)
 		return
 	}
-	ctx, cancel := context.WithCancel(request.Context())
-	a.activeMu.Lock()
-	a.nextActiveID++
-	activeID := a.nextActiveID
-	a.active[activeID] = cancel
-	a.activeMu.Unlock()
-	defer func() { a.activeMu.Lock(); delete(a.active, activeID); a.activeMu.Unlock(); cancel() }()
-	result, err := a.runBrowser(ctx, browserRequest)
+	result, err := a.runBrowser(request.Context(), browserRequest)
 	if err != nil {
 		respondError(response, err)
 		return
