@@ -17,6 +17,8 @@ export interface TransportOptions {
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 let clientId: string | undefined;
+// Authentication resets replace the transport, not the page's replay namespace.
+let requestSequence = 0;
 
 function pageClientId(): string {
 	if (clientId === undefined) clientId = randomId("client");
@@ -46,7 +48,6 @@ export class WsTransport {
 	private readonly isAuthenticated: (() => Promise<boolean>) | undefined;
 	private stopped = false;
 	private hasOpened = false;
-	private seq = 0;
 	private readonly pending = new Map<
 		string,
 		{
@@ -134,7 +135,7 @@ export class WsTransport {
 		options: RequestOptions = {},
 	): Promise<WsResult<M>> {
 		const { sessionId, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
-		const id = `trpi_${++this.seq}`;
+		const id = `trpi_${++requestSequence}`;
 		const frame = JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) });
 		return new Promise<WsResult<M>>((resolve, reject) => {
 			const timer = setTimeout(() => {
