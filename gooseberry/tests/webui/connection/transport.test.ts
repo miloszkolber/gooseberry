@@ -115,11 +115,13 @@ describe("WsTransport reconnect delivery", () => {
 				settled = true;
 			});
 			// A retained old result must not resolve the new, identical mutation.
-			newSocket?.message(JSON.stringify({ id: oldId, ok: true, result: { sessionId: "old" } }));
+			const oldResult = { sessionId: "old", model: null, thinkingLevel: "off" };
+			const newResult = { sessionId: "new", model: null, thinkingLevel: "off" };
+			newSocket?.message(JSON.stringify({ id: oldId, ok: true, result: oldResult }));
 			await tick(0);
 			expect(settled).toBe(false);
-			newSocket?.message(JSON.stringify({ id: newId, ok: true, result: { sessionId: "new" } }));
-			expect(await created).toEqual({ sessionId: "new" });
+			newSocket?.message(JSON.stringify({ id: newId, ok: true, result: newResult }));
+			expect(await created).toEqual(newResult);
 		} finally {
 			replacement.stop();
 		}
