@@ -133,7 +133,7 @@ function PromptRow({
 					<Highlight text={firstLine} query={query} />
 				</span>
 				{showChip ? (
-					<span className="shrink-0 rounded-full border border-border-default bg-container-projectArea-bg px-xs text-text-muted tr-text-metadata">
+					<span className="shrink-0 rounded-full border border-border-default bg-container-project-bg px-xs text-text-muted tr-text-metadata">
 						{projectAreaName ?? "projectArea"}
 					</span>
 				) : null}
@@ -487,7 +487,7 @@ export function HistoryOverlay({
 					<DropdownMenuTrigger
 						data-testid="history-scope"
 						data-scope={scope.kind}
-						className="flex shrink-0 items-center gap-xs rounded-full border border-border-default bg-container-projectArea-bg px-sm py-0.5 text-text-muted tr-text-metadata outline-none hover:bg-control-bg-hovered"
+						className="flex shrink-0 items-center gap-xs rounded-full border border-border-default bg-container-project-bg px-sm py-0.5 text-text-muted tr-text-metadata outline-none hover:bg-control-bg-hovered"
 					>
 						<span>{SCOPE_LABELS[scope.kind]}</span>
 						<span className="text-text-muted">⌃R</span>

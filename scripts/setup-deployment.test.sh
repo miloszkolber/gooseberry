@@ -5,6 +5,10 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/gooseberry-setup.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
+mode_of() {
+	stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"
+}
+
 make_fixture() {
 	root=$1
 	mkdir -p "$root/scripts"
@@ -54,13 +58,13 @@ before=$(sha256sum "$tmp/ok/.gooseberry")
 run_setup "$tmp/ok" >/dev/null
 after=$(sha256sum "$tmp/ok/.gooseberry")
 [ "$before" = "$after" ]
-[ "$(stat -c %a "$tmp/ok/.gooseberry")" = 600 ]
+[ "$(mode_of "$tmp/ok/.gooseberry")" = 600 ]
 [ -d "$tmp/ok-state/app" ]
 [ -d "$tmp/ok-state/browser/artifacts" ]
 [ -d "$tmp/ok-state/browser/state" ]
 [ ! -e "$tmp/ok-state/gooseberry" ]
-[ "$(stat -c %a "$tmp/ok/home/.config/goose")" = 700 ]
-[ "$(stat -c %a "$tmp/ok/home/.config/goose/gooseberry.env")" = 600 ]
+[ "$(mode_of "$tmp/ok/home/.config/goose")" = 700 ]
+[ "$(mode_of "$tmp/ok/home/.config/goose/gooseberry.env")" = 600 ]
 [ ! -e "$tmp/ok/non-default-config/goose/gooseberry.env" ]
 grep -Fx 'GOOSEBERRY_BROWSER_AUTH=false' "$tmp/ok/home/.config/goose/gooseberry.env" >/dev/null
 grep -Fx 'GOOSEBERRY_BROWSER_TOKEN=' "$tmp/ok/home/.config/goose/gooseberry.env" >/dev/null
@@ -82,7 +86,9 @@ if run_setup "$tmp/browser-auth" >"$tmp/browser-auth.out" 2>&1; then
 	exit 1
 fi
 grep -F 'at most one GOOSEBERRY_AUTH_ENABLED' "$tmp/browser-auth.out" >/dev/null
-sed -i '/^GOOSEBERRY_AUTH_ENABLED=false$/d; /^GOOSEBERRY_BROWSER_AUTH=false$/d' "$tmp/browser-auth/.gooseberry"
+sed '/^GOOSEBERRY_AUTH_ENABLED=false$/d; /^GOOSEBERRY_BROWSER_AUTH=false$/d' \
+	"$tmp/browser-auth/.gooseberry" > "$tmp/browser-auth/.gooseberry.next"
+mv "$tmp/browser-auth/.gooseberry.next" "$tmp/browser-auth/.gooseberry"
 run_setup "$tmp/browser-auth" >/dev/null
 grep -Fx 'GOOSEBERRY_BROWSER_AUTH=true' "$tmp/browser-auth/home/.config/goose/gooseberry.env" >/dev/null
 grep -Fx 'GOOSEBERRY_BROWSER_TOKEN=operator-browser-token-0123456789abcdef0123456789' "$tmp/browser-auth/home/.config/goose/gooseberry.env" >/dev/null
@@ -104,6 +110,17 @@ if run_setup "$tmp/unsupported-key" >"$tmp/unsupported-key.out" 2>&1; then
 fi
 grep -F 'unsupported key: GOOSEBERRY_PORT' "$tmp/unsupported-key.out" >/dev/null
 
+# Remote controller exposure requires authentication or an explicit unsafe acknowledgement.
+make_configured_fixture remote-without-protection
+printf 'GOOSEBERRY_CONTROLLER_HOST=0.0.0.0\n' >> "$tmp/remote-without-protection/.gooseberry"
+if run_setup "$tmp/remote-without-protection" >"$tmp/remote-without-protection.out" 2>&1; then
+	echo "setup unexpectedly accepted an unprotected remote controller" >&2
+	exit 1
+fi
+grep -F 'remote controller binding requires authentication' "$tmp/remote-without-protection.out" >/dev/null
+printf 'GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true\n' >> "$tmp/remote-without-protection/.gooseberry"
+run_setup "$tmp/remote-without-protection" >/dev/null
+
 # Existing historical layouts are refused rather than overwritten.
 make_configured_fixture legacy-nested-layout
 mkdir -p "$tmp/legacy-nested-layout/state/gooseberry/app"
@@ -120,13 +137,16 @@ if run_setup "$tmp/legacy-pixie-layout" >"$tmp/legacy-pixie-layout.out" 2>&1; th
 fi
 grep -F 'flat layout' "$tmp/legacy-pixie-layout.out" >/dev/null
 
-# Compose uses fixed, editable numeric ownership, flat state mounts, and an isolated browser environment.
+# Compose uses one container, fixed numeric ownership and both flat state mounts.
+grep -Fx 'ExecStart=/usr/local/bin/goose serve --host 127.0.0.1 --port 3284 --enable-scheduler' "$repo_root/goose/systemd/goose.service" >/dev/null
 grep -F '${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app:/var/lib/gooseberry' "$repo_root/compose.yaml" >/dev/null
 grep -F '${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser:/var/lib/gooseberry-browser' "$repo_root/compose.yaml" >/dev/null
 grep -F '${HOME:?run Docker Compose as the technical host user}/.config/goose:/home/goose/.config/goose:ro' "$repo_root/compose.yaml" >/dev/null
-for key in GOOSEBERRY_BROWSER_HOST GOOSEBERRY_BROWSER_PORT GOOSEBERRY_BROWSER_AUTH GOOSEBERRY_BROWSER_TOKEN; do
-	grep -F "            $key:" "$repo_root/compose.yaml" >/dev/null
-done
+if grep -Eq '^    gooseberry-browser:' "$repo_root/compose.yaml"; then
+	echo "compose retains a separate browser container" >&2
+	exit 1
+fi
+grep -F '            target: runtime' "$repo_root/compose.yaml" >/dev/null
 if grep -Eq 'GOOSEBERRY_(UID|GID|PROJECT_PATH|MOUNT_ROOTS|AUTH_MAX_AGE_DAYS|GOOSE_URL|BROWSER_URL)' "$repo_root/compose.yaml"; then
 	echo "compose retains deprecated deployment configuration" >&2
 	exit 1

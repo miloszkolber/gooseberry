@@ -23,6 +23,65 @@ test("a project area can select any admitted project root for new chats", () => 
 	expect(projectArea(multiRoot, "/tmp/missing").root).toBe("/tmp/project");
 });
 
+test("content identity keeps same-path files and diffs isolated by their owning root", () => {
+	const state = useAppStore.getState();
+	state.openTab(
+		{
+			kind: "file",
+			id: "file-a",
+			projectAreaId: "p1",
+			root: "/tmp/project",
+			name: "README.md",
+			path: "README.md",
+			content: "first",
+		},
+		"keep",
+	);
+	state.openTab(
+		{
+			kind: "file",
+			id: "file-b",
+			projectAreaId: "p1",
+			root: "/tmp/other",
+			name: "README.md",
+			path: "README.md",
+			content: "second",
+		},
+		"keep",
+	);
+	state.openTab(
+		{
+			kind: "diff",
+			id: "diff-a",
+			projectAreaId: "p1",
+			repository: "/tmp/project/repo",
+			name: "file.ts",
+			path: "src/file.ts",
+			scope: { kind: "commit", sha: "aaaa" },
+			loadedTarget: "aaaa",
+			original: "before-a",
+			modified: "after-a",
+		},
+		"keep",
+	);
+	state.openTab(
+		{
+			kind: "diff",
+			id: "diff-b",
+			projectAreaId: "p1",
+			repository: "/tmp/other/repo",
+			name: "file.ts",
+			path: "src/file.ts",
+			scope: { kind: "commit", sha: "bbbb" },
+			loadedTarget: "bbbb",
+			original: "before-b",
+			modified: "after-b",
+		},
+		"keep",
+	);
+	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(4);
+});
+
 beforeEach(() => {
 	useAppStore.setState({
 		projects: [project],
@@ -104,6 +163,14 @@ test("live text preserves thinking and parallel tool calls after terminal tool u
 test("live assistant content only merges adjacent compatible blocks", () => {
 	let runtime = reduceSessionEvent(EMPTY_RUNTIME, { type: "text", text: "first" });
 	runtime = reduceSessionEvent(runtime, { type: "thinking", text: "plan" });
+	const beforeThinkingChunk = runtime;
+	runtime = reduceSessionEvent(runtime, { type: "thinking", text: "ning" });
+	const priorAssistant = beforeThinkingChunk.turns.find((turn) => turn.kind === "assistant");
+	expect(priorAssistant?.kind === "assistant" ? priorAssistant.message.content : []).toEqual([
+		{ type: "text", text: "first" },
+		{ type: "thinking", thinking: "plan" },
+	]);
+	expect(runtime.currentAssistantId).toBe(beforeThinkingChunk.currentAssistantId);
 	runtime = reduceSessionEvent(runtime, {
 		type: "tool-start",
 		toolCallId: "read",
@@ -114,7 +181,7 @@ test("live assistant content only merges adjacent compatible blocks", () => {
 	const assistant = runtime.turns.find((turn) => turn.kind === "assistant");
 	expect(assistant?.kind === "assistant" ? assistant.message.content : []).toEqual([
 		{ type: "text", text: "first" },
-		{ type: "thinking", thinking: "plan" },
+		{ type: "thinking", thinking: "planning" },
 		{ type: "toolCall", id: "read", toolName: "read", name: "read", arguments: {} },
 		{ type: "thinking", thinking: "check" },
 		{ type: "text", text: "last" },
@@ -182,10 +249,22 @@ test("closing a chat moves it to local history", () => {
 	const state = useAppStore.getState();
 	expect(state.tabsByProjectArea.p1).toEqual([]);
 	expect(state.closedChatsByProjectArea.p1?.[0]?.sessionId).toBe("s1");
+	expect(state.sessions.s1).toBeUndefined();
+});
+
+test("closing a running chat retains its live runtime", () => {
+	useAppStore.getState().openChatSession("p1", "running", null, "medium");
+	useAppStore.getState().handleAgentEvent({ type: "agent_start" }, "running");
+	useAppStore.getState().closeChatToHistory("running", "p1", false);
+	expect(useAppStore.getState().sessions.running?.isStreaming).toBe(true);
 });
 
 test("Goose session lifecycle pushes rename and archive local presentation without deleting", () => {
 	useAppStore.getState().openChatSession("p1", "s1", null, "medium");
+	useAppStore
+		.getState()
+		.applySessionLifecycle({ projectId: "p1", sessionId: "s1", operation: "created" });
+	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(1);
 	useAppStore.getState().applySessionLifecycle({
 		projectId: "p1",
 		sessionId: "s1",
@@ -202,9 +281,9 @@ test("Goose session lifecycle pushes rename and archive local presentation witho
 	expect(archived.tabsByProjectArea.p1).toEqual([]);
 	expect(archived.sessions.s1).toBeUndefined();
 	expect(archived.deletedSessionsByProjectArea.p1?.s1).toBeUndefined();
-	expect(archived.sessionCatalogVersionByProjectArea.p1).toBe(2);
+	expect(archived.sessionCatalogVersionByProjectArea.p1).toBe(3);
 	archived.applySessionLifecycle({ projectId: "p1", sessionId: "s1", operation: "unarchived" });
-	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(3);
+	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(4);
 });
 
 test("authoritative session reconciliation repairs missed chat title pushes", () => {
@@ -336,13 +415,24 @@ test("session hydration restores controller queues and question replies", () => 
 			live: true,
 			archived: false,
 			parentSessionId: "parent-session",
-			queue: { steering: [], followUp: ["continue after refresh"] },
+			queue: { revision: "loaded", steering: [], followUp: ["continue after refresh"] },
 		},
 		{ turns: [], toolResults: {}, askAnswers: {} },
 	);
 	const result = { answers: [], cancelled: true };
 	useAppStore.getState().setAskAnswer("s1", "question-1", result);
 	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual(["continue after refresh"]);
+	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("loaded");
+	useAppStore.getState().handleAgentEvent(
+		{
+			type: "queue_update",
+			revision: "changed",
+			steering: [],
+			followUp: ["continue after refresh"],
+		},
+		"s1",
+	);
+	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("changed");
 	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
 	expect(useAppStore.getState().sessions.s1?.askAnswers["question-1"]).toEqual(result);
 	useAppStore.getState().reconcileProjectAreaSessions(
@@ -353,10 +443,11 @@ test("session hydration restores controller queues and question replies", () => 
 				sessionId: "s1",
 				title: "Queued chat",
 				archived: false,
-				queue: { steering: [], followUp: [] },
+				queue: { revision: "reconciled", steering: [], followUp: [] },
 			},
 		],
 	);
 	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual([]);
+	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("reconciled");
 	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
 });

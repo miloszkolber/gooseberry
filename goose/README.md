@@ -1,5 +1,9 @@
-# Gooseberry Goose distribution
+# Goose distribution
 
-`version` and `source-commit` pin the unchanged upstream `aaif-goose/goose` release and source commit. The release workflow verifies the source and publishes `GOOSE-PROVENANCE` with the Linux archives and checksums. Run `sudo ./goose/install-goose.sh` to install `/usr/local/bin/goose`, the Gooseberry agents, and the browser skill. Set `GOOSE_HOME` when installing for another technical user. `GOOSE_REPOSITORY` overrides the distribution repository when needed.
+`version` and `source-commit` are the authoritative upstream release and source pins. The distribution builds [Goose](https://github.com/aaif-goose/goose) with unchanged Rust code and an explicit upstream feature set. Only the narrowly checked generated-lockfile correction documented in the [build policy](../docs/goose.md) is allowed; provenance records whether it applies.
 
-Create `.gooseberry`, then run `./scripts/setup-deployment.sh` as the non-root technical user. Setup synchronizes `~/.config/goose/gooseberry.env` with mode `0600`. Install `goose/systemd/goose.service`, then start it with `systemctl --user daemon-reload && systemctl --user enable --now goose.service`. Rerun setup after changing the Goose secret or browser authentication.
+The installer verifies checksums, provenance and the executable version before replacing `/usr/local/bin/goose`. It also installs `config/agents/` and the lazy browser skill in the technical user's standard Goose configuration directory. Run setup as that non-root user before starting `systemd/goose.service`.
+
+Private release downloads require authentication. The [deployment guide](../docs/deployment.md) uses `gh release download` as the ordinary user, then passes a local bundle through `GOOSE_RELEASE_BASE=file://...` to the installer. A GitHub token does not need to enter the privileged process.
+
+See [Goose integration and releases](../docs/goose.md) for the selected build features, scheduled update policy, provenance and operator-controlled deployment.

@@ -5,10 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/goose serve --enable-scheduler
+ExecStart=/usr/local/bin/goose serve --host 127.0.0.1 --port 3284 --enable-scheduler
 # Keep this static: systemd expands %h but does not inherit an interactive shell's XDG_CONFIG_HOME.
 EnvironmentFile=%h/.config/goose/gooseberry.env
-Environment=GOOSE_SERVER__HOST=127.0.0.1
 Environment=HOME=%h
 WorkingDirectory=%h
 Restart=on-failure

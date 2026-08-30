@@ -1,9 +1,23 @@
 # Models and providers
 
-Goose is the source of truth for providers, models, credentials, authentication, availability, and catalog metadata. Gooseberry displays sanitized Goose data and stores only model visibility.
+Goose is authoritative for provider configuration, credentials, authentication, model availability and catalog metadata. Gooseberry displays a sanitized projection and stores only model visibility.
 
-The UI may show provider/model identifiers, display names, availability, context and output limits, modalities, reasoning support, and pricing when Goose reports those fields. For inventory models, Gooseberry re-queries `_goose/unstable/providers/canonical-model-info` under a shared bounded concurrency limit and a projection deadline. Concurrent projections coalesce current lookups without retaining a metadata cache. It only fills missing context and reasoning data, plus output limits and pricing. Existing inventory values win. Prices are the reported currency's values per 1M tokens, are shown only when finite nonnegative input and output rates are present, and use zero for absent cache rates. A failed or missing canonical lookup leaves the base Goose catalog intact. Gooseberry forwards API-key fields and native OAuth/device-code flows through ACP. Goose validates and stores credentials. Gooseberry does not retain credentials or implement provider runtimes.
+## Catalog and metadata
 
-Users can hide individual models from Gooseberry's catalog and selection surfaces. Per-session model and thinking controls use Goose selections. Settings can read, save, and clear Goose's persisted global provider/model default after validating that the provider is configured and available. Goose accepts null and custom model IDs, so Gooseberry does not reject them. New sessions continue to use Goose's persisted default. Agent sources can carry the upstream bounded `model` model-ID preference. It is not provider-bound in Gooseberry, and agents inherit their runtime provider because pinned Goose has no per-agent provider property. Visibility never modifies Goose's catalog, defaults, or credentials. Existing sessions retain their Goose model references.
+The UI shows identifiers, names, availability, context/output limits, modalities, reasoning support and prices when Goose reports them. Canonical metadata lookup fills missing context/reasoning data and adds output limits and pricing; existing inventory values win. Missing or failed lookup leaves the base catalog usable.
 
-Provider and model views refresh from Goose. ACP readiness is available only for inventory entries Goose marks as ACP-capable. Its browser result contains only provider identity plus `ready` and `hasIssue` booleans. Secret values are masked when read, are sent only when the user submits provider setup, and are never persisted in Gooseberry state or returned to the browser.
+Current lookups share a bounded concurrency limit and a projection deadline. Concurrent requests share in-flight work, not a persistent metadata cache. Prices are shown per million tokens in the reported currency only when input/output rates are finite and nonnegative. Absent cache rates are displayed as zero.
+
+Hiding a model affects Gooseberry selection surfaces, not Goose's catalog, existing sessions or credentials.
+
+## Selection and defaults
+
+Per-session model and thinking controls use Goose configuration options. Settings can read, save or clear Goose's global provider/model default. A saved provider must be configured and available, but model IDs may be custom or null as allowed by Goose. New sessions use Goose's persisted default.
+
+Agent sources expose the bounded upstream `model` model-ID preference, not a separate Gooseberry provider binding. Gooseberry does not introduce per-agent provider routing.
+
+## Authentication and readiness
+
+API-key setup and native OAuth/device-code flows are forwarded through authenticated ACP. Goose validates and persists credentials. Gooseberry masks secret fields on reads and forwards values only on explicit submission; it does not store or return provider secrets.
+
+The focused readiness action is available only for inventory entries marked ACP-capable. Its browser response contains provider identity and `ready`/`hasIssue` booleans, not raw diagnostics. Provider and model views refresh from Goose; they are not an independently managed registry.

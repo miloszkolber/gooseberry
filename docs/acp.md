@@ -1,65 +1,44 @@
 # ACP coverage
 
-Gooseberry connects to the unchanged Goose v1.48.0 ACP service and projects a focused subset of its capabilities. Goose owns the underlying session, provider, model, extension, tool, permission, compaction, recipe, and scheduler state. Gooseberry adds browser-facing authorization, project association, presentation, and controls.
+Gooseberry projects a focused subset of the Goose ACP service. The authoritative release/source pins are [`goose/version`](../goose/version) and [`goose/source-commit`](../goose/source-commit). Goose owns underlying state; the controller adds project authorization, bounded inputs, sanitized results and presentation.
 
-## Projected session protocol
+## Session protocol
 
-The controller uses ACP `initialize`, `session/new`, `session/load`, `session/list`, `session/delete`, `session/fork`, `session/prompt`, `session/cancel`, and `session/set_config_option`. It consumes `session/update`, permission requests, and Goose extension notifications. The Web UI provides persistent session creation and loading, streaming turns, cancellation, model and thinking controls, usage and context, permission responses, rename, reversible archive, native fork, history, and slash commands.
+The controller uses ACP `initialize`, `session/new`, `session/load`, `session/list`, `session/delete`, `session/fork`, `session/prompt`, `session/cancel` and `session/set_config_option`. It consumes `session/update`, permission requests and Goose extension notifications.
 
-Forked sessions remain ordinary Goose sessions. Gooseberry records only their project, working directory, and immediate parent session identifier. Goose remains authoritative for the copied conversation and subsequent session state.
+The Coder SDK handles standard typed methods and request ordering. A small transport adapter supplies Goose's WebSocket framing. Underscore-prefixed Goose methods use extension dispatch, not a separate JSON-RPC implementation. Session projections preserve streamed text/images, tool output, usage, model/thinking choices and persistent history.
 
-Goose also implements ACP authentication, session close, and mode selection. Gooseberry does not expose separate controls for them because the controller authenticates its ACP connection, persistent chats are loaded on demand rather than explicitly closed, and the product uses Goose configuration options for the retained model and thinking controls.
+Gooseberry does not expose separate ACP authenticate, session-close or mode-selection controls: the controller authenticates its own connection, persistent sessions load on demand and model/thinking controls use configuration options.
 
-## Projected Goose extensions
+## Projected capabilities
 
-Gooseberry uses Goose custom ACP methods for:
+| Surface | Web UI behavior and boundary |
+| --- | --- |
+| Session lifecycle | Native fork with immediate-parent lineage, rename, reversible archive/restore and history search. Goose owns transcripts and lifecycle state. |
+| Steering and completions | Native steering, Goose slash commands and authorized session-scoped agent mentions. Mention text is forwarded exactly; the UI does not invent source paths or infer mentions from source lists. |
+| Providers | Inventory, explicit credential setup, native authentication, refresh, logout and a sanitized ACP-readiness check. No credential registry. |
+| Models | Catalog visibility and per-session choices; canonical metadata supplements missing fields. Lookup failure preserves the inventory result. |
+| Preferences and defaults | Only `autoCompactThreshold` and `gooseThinkingEffort`, plus Goose's global provider/model defaults. |
+| Agent sources | Bounded plain-text global/admitted-project agent editing using opaque IDs and a fresh writability check. Check definitions, arbitrary properties and supporting files are not exposed. |
+| Extensions | Sanitized global configured/available inventory, add/remove/enable/disable, and active-session inventory/add/remove. |
+| Tools and permissions | Active-chat tool inventory and Goose's global per-tool permission values. No generic tool-call endpoint in the Web UI. |
+| Recipes | List, parse, save and delete, retaining Goose's recipe security scan. |
+| Schedules | List, create, update, pause, resume, delete, run immediately, inspect/terminate runs and view recent sessions. |
 
-- session steering, information, rename, archive, and restore
-- provider inventory, configuration, authentication, refresh, and logout
-- model catalog projection, canonical metadata lookup, and per-session model and thinking selection
-- ACP-capable provider readiness checks
-- session-scoped agent mention discovery
-- allowlisted preference read, save, and remove
-- global provider/model default read, save, and clear
-- global and authorized project-agent source list, create, update, and delete
-- recipe list, parse, save, and delete
-- schedule list, create, update, pause, resume, delete, immediate run, session history, inspection, and termination
-- slash-command discovery
-- global configured and available extension inventory, add, remove, and enable or disable
-- active-session extension inventory, add, and remove
-- active-session tool inventory and global tool-permission changes
+Canonical model requests share a global four-request cap, coalesce current work and stop waiting at a projection deadline. No completed metadata cache is retained. Prices require valid finite nonnegative values. See [models](models.md).
 
-Provider secrets pass from the browser to Goose only during an explicit setup request. Gooseberry never stores or returns secret values. Canonical model lookups share a global four-request cap, coalesce concurrent current requests, and let projections stop waiting at a deadline. They only fill missing inventory context and reasoning fields, plus output limits and valid per-1M-token pricing. Agent mention projection is authorized for a recorded project session and returns only bounded name, description, source type, and exact mention text. The composer accepts every official source type, but Goose v1.48.0 currently discovers only agent, recipe, and subrecipe through this endpoint. Provider readiness accepts only current inventory entries marked ACP-capable and returns only `providerId`, `ready`, and `hasIssue`. Preferences expose only `autoCompactThreshold` and `gooseThinkingEffort`. Agent source CRUD uses controller-generated opaque IDs, re-resolves a fresh authorized source inside a serialized controller mutation, excludes `properties.kind=check`, and requires both the admitted project ID and explicitly selected root for project scope. It exposes only bounded plain-text content plus name, description, scope, writable state, and optional `model` model-ID preference. Recipe, scheduler, extension, tool, and permission records also remain Goose-owned. Extension and tool projections omit raw extension objects, commands, arguments, URLs, headers, environment data, client-secret keys, input and output schemas, and warning text. Source paths, supporting files, arbitrary properties, raw mention objects, and readiness error text remain controller-side.
+Agent CRUD re-resolves an opaque ID from a fresh authorized source list inside a serialized mutation. Project scope requires both a project ID and an explicitly selected admitted root. The editor exposes only bounded instructions, name, description, scope, writability and an optional model-ID preference.
 
-## Current ACP coverage matrix
+Extension and tool summaries omit commands, arguments, URLs, headers, environment values, client-secret keys, schemas and raw warnings. Source paths, raw mentions and readiness diagnostics remain controller-side. Provider secrets are passed only for an explicit setup request and are neither replayed nor persisted in Gooseberry.
 
-| Surface | Coverage | Browser projection or boundary |
-| --- | --- | --- |
-| Sessions, prompts, streaming, configuration, lifecycle, history, slash commands | Projected | Focused session controls and read-only history projections. |
-| Provider inventory, setup, authentication, refresh, logout | Projected | Sanitized provider status and explicit credential handoff only. |
-| Canonical model metadata | Projected | Current context, reasoning, output limits, and prices only. Inventory values win and lookup failure falls back to inventory. |
-| Provider readiness | Projected | ACP-only provider check with `providerId`, `ready`, and `hasIssue` only. No diagnostics are exposed or stored. |
-| Agent mentions | Projected | Authorized session lookup with name, description, source type, and exact mention. The composer accepts all official source types for non-path queries. Pinned Goose currently discovers agent, recipe, and subrecipe only. |
-| Allowlisted preferences, global defaults, agent sources | Projected | Only two preference keys, persisted provider/model defaults, and a bounded opaque-ID agent editor. Paths and arbitrary properties remain controller-side. |
-| Extensions, tools, recipes, schedules, permissions | Projected | Retained focused controls with their existing sanitization boundaries. |
-| Conversation truncation | Deliberately omitted | Pinned ACP exposes timestamp-based `_goose/unstable/session/conversation/truncate`, but Gooseberry has no truncation control. |
-| Tools/call, arbitrary configuration or preferences, diagnostics reports, import/export/share, non-agent sources/apps mutation, local inference, dictation | Deliberately omitted | No generic Web UI surface. |
-| Manual compaction | Unavailable in pinned ACP | Goose v1.48.0 exposes no manual compaction method. Automatic compaction remains Goose-owned. |
-| Queue manipulation | Unavailable in pinned ACP | Gooseberry keeps bounded controller-memory follow-up queues. |
+## Deliberately outside the Web UI
 
-## Related Goose capabilities
+Gooseberry does not project conversation truncation, manual compaction, generic `tools/call`, arbitrary configuration/preferences, diagnostic reports, import/export/share, custom-provider administration, non-agent source/app mutation, local-inference management or dictation. Automatic compaction remains Goose-owned; the chat displays reported context and usage.
 
-The following Goose capabilities are retained in the runtime but do not currently have generic Gooseberry administration surfaces:
+The presence of a capability in Goose is not, by itself, a reason to add a generic administration surface. Add a projection only when it supports the [product baseline](baseline.md), has a checked upstream method and schema, preserves Goose's authority and has focused compatibility coverage.
 
-- **Compaction:** Goose owns automatic compaction. Gooseberry displays reported context and compaction-related usage. Goose v1.48.0 exposes timestamp-based conversation truncation, but no manual compaction method, and Gooseberry exposes neither a truncation nor a manual-compaction control.
-- **Extensions and plugins:** the distribution installs Gooseberry's custom agents and browser skill in standard Goose configuration. The focused settings surface manages catalogued global and active-session extensions by Goose identity, but it does not expose or edit raw extension configuration or credentials.
-- **Tools and agents:** the chat renders tool execution, permission requests, and summoned subagent progress. Settings show the active chat's tool inventory and edit Goose's global per-tool permissions. The focused agent catalog editor manages writable global and authorized project agent sources only.
-- **Export and import:** session, source, and application import/export methods are not projected.
-- **Advanced provider administration:** custom-provider CRUD, raw configuration, provider-secret inventory, readiness diagnostics, and catalog templates are not projected. The focused readiness check returns only booleans.
-- **Sources, prompts, preferences, defaults, dictation, and local-inference lifecycle:** Gooseberry exposes only its focused agent source catalog, two allowlisted preferences, and global provider/model defaults. It has no generic control surface for the remaining domains.
+## Gooseberry-owned behavior
 
-These omissions keep the Web UI focused and avoid creating parallel registries. Add a projection only when it supports retained product behavior, has an exact pinned Goose method and schema, preserves Goose authority, and includes a compatibility test.
+Projects, admitted roots, goals, tasks, supporting questions, bounded file/Git views and presentation metadata are Gooseberry features. Follow-up queues are bounded controller-memory state submitted through ordinary ACP prompts, not a persistent Goose queue registry. Objective/question MCP is session-scoped. Browser automation uses the separate browser HTTP API.
 
-## Gooseberry-owned controls
-
-Projects, admitted roots, goals, agent-owned tasks, supporting questions, Git and file projections, and presentation metadata are Gooseberry features rather than ACP registries. Follow-up queues are bounded controller-memory state because Goose v1.48.0 has no queue-manipulation ACP method. See [`integration.md`](integration.md) for the runtime boundary.
+See [integration](integration.md) for lifecycle and reconnect semantics and [security](security.md) for authority boundaries.

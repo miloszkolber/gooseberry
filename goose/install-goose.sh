@@ -1,17 +1,18 @@
 #!/bin/sh
 set -eu
 
-VERSION=${GOOSE_VERSION:-$(cat "$(dirname "$0")/version")}
-EXPECTED_VERSION=${VERSION#v}
+PINNED_VERSION=$(tr -d '[:space:]' < "$(dirname "$0")/version")
+VERSION=${GOOSE_VERSION:-$PINNED_VERSION}
 SOURCE_COMMIT=$(tr -d '[:space:]' < "$(dirname "$0")/source-commit")
+[ "$VERSION" = "$PINNED_VERSION" ] || { echo "Goose version must match this checkout's verified pin; update the checkout first" >&2; exit 1; }
 case "$VERSION" in
   v[0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "invalid Goose version pin: $VERSION" >&2; exit 1 ;;
 esac
 printf '%s\n' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "invalid Goose version pin: $VERSION" >&2; exit 1; }
 printf '%s\n' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || { echo "invalid Goose source commit pin" >&2; exit 1; }
-# The distribution is published from the current GitHub repository. Override this after a remote rename.
-REPOSITORY=${GOOSE_REPOSITORY:-miloszkolber/pixie}
+# The distribution is published from the current GitHub repository.
+REPOSITORY=${GOOSE_REPOSITORY:-miloszkolber/gooseberry}
 RELEASE_BASE=${GOOSE_RELEASE_BASE:-https://github.com/${REPOSITORY}/releases/download/${VERSION}}
 PREFIX=${GOOSE_PREFIX:-/usr/local/bin}
 TARGET=${GOOSE_TARGET:-${PREFIX}/goose}
@@ -29,10 +30,13 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${GOOSE_HOME:-}" ] && [ -d "$TARGET_HOME" ] && 
   CONFIG_GROUP=$(stat -c '%g' "$TARGET_HOME")
 fi
 
-case "$(uname -m)" in
+os=$(uname -s)
+[ "$os" = Linux ] || { echo "unsupported operating system: $os" >&2; exit 1; }
+architecture=$(uname -m)
+case "$architecture" in
   x86_64|amd64) asset="gooseberry-goose-${VERSION}-linux-x86_64.tar.gz" ;;
   aarch64|arm64) asset="gooseberry-goose-${VERSION}-linux-aarch64.tar.gz" ;;
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "unsupported architecture: $architecture" >&2; exit 1 ;;
 esac
 
 sync_config() {
@@ -53,7 +57,7 @@ if [ -n "$TARGET_HOME" ] && { [ -e "$legacy_skill" ] || [ -L "$legacy_skill" ]; 
   exit 1
 fi
 
-if [ "${GOOSE_ALLOW_EXISTING:-0}" = 1 ] && [ -x "$TARGET" ] && "$TARGET" --version 2>/dev/null | grep -F "${EXPECTED_VERSION}" >/dev/null; then
+if [ "${GOOSE_ALLOW_EXISTING:-0}" = 1 ] && [ -x "$TARGET" ] && sh "$(dirname "$0")/verify-version.sh" "$TARGET" "$VERSION" 2>/dev/null; then
   sync_config
   echo "goose ${VERSION} already installed at ${TARGET}"
   exit 0
@@ -67,7 +71,8 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 curl --fail --location --silent --show-error --retry 3 -o "$tmp/$asset" "$RELEASE_BASE/$asset"
 curl --fail --location --silent --show-error --retry 3 -o "$tmp/SHA256SUMS" "$RELEASE_BASE/SHA256SUMS"
-grep -F "  $asset" "$tmp/SHA256SUMS" | (cd "$tmp" && sha256sum -c -) >/dev/null
+curl --fail --location --silent --show-error --retry 3 -o "$tmp/GOOSE-PROVENANCE" "$RELEASE_BASE/GOOSE-PROVENANCE"
+sh "$(dirname "$0")/verify-release.sh" "$tmp" "$VERSION" "$SOURCE_COMMIT" "$asset"
 
 target_dir=$(dirname "$TARGET")
 mkdir -p "$target_dir" || { echo "cannot create target directory: $target_dir" >&2; exit 1; }
@@ -83,8 +88,7 @@ install_tmp=$(mktemp "$target_dir/.goose.new.XXXXXX")
 trap 'rm -rf "$tmp" "${install_tmp:-}"' EXIT HUP INT TERM
 cp "$binary" "$install_tmp"
 chmod 0755 "$install_tmp"
-version_output=$("$install_tmp" --version)
-printf '%s\n' "$version_output" | grep -F "$EXPECTED_VERSION" >/dev/null || { echo "installed goose version mismatch" >&2; exit 1; }
+sh "$(dirname "$0")/verify-version.sh" "$install_tmp" "$VERSION"
 mv -f "$install_tmp" "$TARGET"
 install_tmp=
 sync_config

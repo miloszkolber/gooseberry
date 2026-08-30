@@ -6,7 +6,7 @@ services:
         build:
             context: ./gooseberry
             dockerfile: Dockerfile
-            target: controller
+            target: runtime
         image: ghcr.io/miloszkolber/gooseberry:latest
         container_name: gooseberry
         restart: unless-stopped
@@ -20,32 +20,12 @@ services:
             - .gooseberry
         volumes:
             - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app:/var/lib/gooseberry"
+            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser:/var/lib/gooseberry-browser"
             - "${HOME:?run Docker Compose as the technical host user}/.config/goose:/home/goose/.config/goose:ro"
             # Grant each project root explicitly. The container path must match the host path.
             # - /absolute/path/to/project:/absolute/path/to/project:ro
         tmpfs:
-            - /tmp:size=64m,mode=1777,uid=1000,gid=1000
-            - /run:size=16m,mode=700,uid=1000,gid=1000
-
-    gooseberry-browser:
-        build:
-            context: ./gooseberry-browser
-            dockerfile: Dockerfile
-        image: ghcr.io/miloszkolber/gooseberry-browser:latest
-        container_name: gooseberry-browser
-        restart: unless-stopped
-        network_mode: host
-        # Change this default if the technical host user does not use UID/GID 1000.
-        user: "1000:1000"
-        read_only: true
-        environment:
-            GOOSEBERRY_BROWSER_HOST: "127.0.0.1"
-            GOOSEBERRY_BROWSER_PORT: "8787"
-            GOOSEBERRY_BROWSER_AUTH: "${GOOSEBERRY_BROWSER_AUTH:-false}"
-            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:-}"
-        volumes:
-            - "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser:/var/lib/gooseberry-browser"
-        tmpfs:
             - /tmp:size=128m,mode=1777,uid=1000,gid=1000
             - /run:size=16m,mode=700,uid=1000,gid=1000
             - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000
+        stop_grace_period: 20s

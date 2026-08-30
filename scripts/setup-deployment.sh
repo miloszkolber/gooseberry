@@ -37,6 +37,8 @@ validate_gooseberry_keys() {
 			sub(/=.*/, "", key)
 			if (key == "GOOSEBERRY_DATA_PATH" ||
 				key == "GOOSEBERRY_GOOSE_SECRET_KEY" ||
+				key == "GOOSEBERRY_CONTROLLER_HOST" ||
+				key == "GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE" ||
 				key == "GOOSEBERRY_AUTH_ENABLED" ||
 				key == "GOOSEBERRY_TOKEN" ||
 				key == "GOOSEBERRY_PUBLIC_ORIGIN" ||
@@ -259,6 +261,24 @@ if [ "$auth_enabled" = true ] && [ -z "$controller_token" ]; then
 	exit 1
 fi
 if [ -n "$controller_token" ]; then validate_token GOOSEBERRY_TOKEN "$controller_token"; fi
+controller_host=$(optional_env_value GOOSEBERRY_CONTROLLER_HOST "$gooseberry_env")
+[ -n "$controller_host" ] || controller_host=127.0.0.1
+case "$controller_host" in
+	127.0.0.1|::1|0.0.0.0|::) ;;
+	*) echo "GOOSEBERRY_CONTROLLER_HOST must be 127.0.0.1, ::1, 0.0.0.0, or ::" >&2; exit 1 ;;
+esac
+allow_unauthenticated_remote=$(optional_env_value GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE "$gooseberry_env")
+[ -n "$allow_unauthenticated_remote" ] || allow_unauthenticated_remote=false
+validate_boolean GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE "$allow_unauthenticated_remote"
+case "$controller_host" in
+	127.0.0.1|::1) ;;
+	*)
+		if [ "$auth_enabled" = false ] && [ "$allow_unauthenticated_remote" = false ]; then
+			echo "remote controller binding requires authentication or GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true" >&2
+			exit 1
+		fi
+		;;
+esac
 # Read this optional value here to reject ambiguous entries before Compose consumes it.
 optional_env_value GOOSEBERRY_PUBLIC_ORIGIN "$gooseberry_env" >/dev/null
 
