@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 const maxPersistedJSONBytes = 16 * 1024 * 1024
@@ -41,7 +42,10 @@ func openRegularFile(path string, limit int64) (*os.File, os.FileInfo, error) {
 	if info.Size() > limit {
 		return nil, nil, fmt.Errorf("file exceeds the %d-byte limit", limit)
 	}
-	file, err := os.Open(path)
+	// A path can become a FIFO between Stat and Open. Nonblocking open lets
+	// the descriptor check below reject it without waiting for a writer. It
+	// also avoids Go toggling blocking mode twice for each regular-file open.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return nil, nil, err
 	}
