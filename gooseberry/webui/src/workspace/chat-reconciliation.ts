@@ -4,14 +4,19 @@ import { errorText, getTransport } from "../connection";
 import { tupleKey } from "../lib";
 import {
 	type ChatTab,
+	type ClosedChat,
 	chatTabId,
 	isConnectedGeneration,
+	selectProjectAreaById,
 	selectProjectAreaSessionIds,
 	toast,
 	useAppStore,
 } from "../store";
 
-const sessionHydration = new Map<string, Promise<boolean>>();
+const sessionHydration = new Map<
+	string,
+	{ promise: Promise<boolean>; closedChat: ClosedChat | undefined }
+>();
 const AUTO_OPEN_CHAT_LIMIT = 4;
 
 function chatTab(
@@ -26,24 +31,47 @@ function chatTab(
 
 export function hydrateChatResource(projectAreaId: string, sessionId: string): Promise<boolean> {
 	const state = useAppStore.getState();
+	const projectId = selectProjectAreaById(state, projectAreaId)?.projectId ?? projectAreaId;
 	if (
+		!state.projects.some((project) => project.id === projectId) ||
 		state.removedProjectAreaIds[projectAreaId] ||
 		state.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 	) {
 		return Promise.resolve(false);
 	}
-	if (state.sessions[sessionId] && chatTab(state, projectAreaId, sessionId))
+	const closedChat = state.closedChatsByProjectArea[projectAreaId]?.find(
+		(chat) => chat.sessionId === sessionId,
+	);
+	if (state.sessions[sessionId]) {
+		if (!chatTab(state, projectAreaId, sessionId)) {
+			state.openTab(
+				{
+					kind: "chat",
+					id: chatTabId(projectAreaId, sessionId),
+					projectAreaId,
+					name: closedChat?.title ?? "Chat",
+					sessionId,
+				},
+				"keep",
+				{ activate: false },
+			);
+		}
 		return Promise.resolve(true);
+	}
 	const generation = state.connectionGeneration;
 	const key = tupleKey("chat-hydration", projectAreaId, sessionId, String(generation));
 	const existing = sessionHydration.get(key);
-	if (existing) return existing;
+	if (existing && existing.closedChat === closedChat) return existing.promise;
 	const request = getTransport()
 		.request("session.getMessages", { projectId: projectAreaId, sessionId })
 		.then(({ summary, messages }) => {
 			const current = useAppStore.getState();
 			if (!isConnectedGeneration(current, generation)) return false;
 			if (
+				!current.projects.some((project) => project.id === projectId) ||
+				current.closedChatsByProjectArea[projectAreaId]?.find(
+					(chat) => chat.sessionId === sessionId,
+				) !== closedChat ||
 				current.removedProjectAreaIds[projectAreaId] ||
 				current.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 			) {
@@ -62,8 +90,10 @@ export function hydrateChatResource(projectAreaId: string, sessionId: string): P
 				chatTab(installed, projectAreaId, sessionId) !== undefined
 			);
 		})
-		.finally(() => sessionHydration.delete(key));
-	sessionHydration.set(key, request);
+		.finally(() => {
+			if (sessionHydration.get(key)?.promise === request) sessionHydration.delete(key);
+		});
+	sessionHydration.set(key, { promise: request, closedChat });
 	return request;
 }
 
@@ -108,19 +138,8 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 					if (targetTab) {
 						useAppStore.getState().setActiveTab(targetTab.id, "keep");
 					} else {
-						const loaded = await getTransport().request("session.getMessages", {
-							projectId: projectAreaId,
-							sessionId: routeTarget.sessionId,
-						});
+						await hydrateChatResource(projectAreaId, routeTarget.sessionId);
 						if (!live()) return;
-						const loadedState = useAppStore.getState();
-						loadedState.hydrateSession(
-							loaded.summary,
-							messagesToRuntime(loaded.messages, loaded.summary.lastSettlement),
-							false,
-							undefined,
-							{ activate: false },
-						);
 						const hydratedTab = chatTab(
 							useAppStore.getState(),
 							projectAreaId,
@@ -135,11 +154,17 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 				const openSessions = new Set(
 					openTabs.filter((tab) => tab.kind === "chat").map((tab) => tab.sessionId),
 				);
+				const closedSessions = new Set(
+					(useAppStore.getState().closedChatsByProjectArea[projectAreaId] ?? []).map(
+						(chat) => chat.sessionId,
+					),
+				);
 				const toOpen = summaries
 					.filter(
 						(summary) =>
 							summary.live &&
 							!openSessions.has(summary.sessionId) &&
+							!closedSessions.has(summary.sessionId) &&
 							summary.sessionId !== routeTarget?.sessionId,
 					)
 					.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -149,19 +174,19 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 				);
 				let activated = Boolean(routeTarget);
 				for (const summary of toOpen) {
-					const loaded = await getTransport().request("session.getMessages", {
-						projectId: projectAreaId,
-						sessionId: summary.sessionId,
-					});
+					// A retained projection can still be live after the user closes its tab.
+					// Catalog refresh must not turn that close into an automatic reopen.
+					if (
+						useAppStore
+							.getState()
+							.closedChatsByProjectArea[projectAreaId]?.some(
+								(chat) => chat.sessionId === summary.sessionId,
+							)
+					) {
+						continue;
+					}
+					await hydrateChatResource(projectAreaId, summary.sessionId);
 					if (!live()) return;
-					const state = useAppStore.getState();
-					state.hydrateSession(
-						loaded.summary,
-						messagesToRuntime(loaded.messages, loaded.summary.lastSettlement),
-						false,
-						undefined,
-						{ activate: false },
-					);
 					const tab = chatTab(useAppStore.getState(), projectAreaId, summary.sessionId);
 					if (tab && !activated) {
 						useAppStore.getState().setActiveTab(tab.id, "keep");

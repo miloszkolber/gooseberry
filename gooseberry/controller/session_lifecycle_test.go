@@ -100,7 +100,7 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "fixture", "test", manager)
 	defer client.Close()
 	manager.SetClient(client)
-	if _, err := manager.Create(ctx, project.ID, root, nil, ""); err != nil {
+	if _, err := manager.Create(ctx, project.ID, root, nil, "", "client"); err != nil {
 		t.Fatal(err)
 	}
 	select {

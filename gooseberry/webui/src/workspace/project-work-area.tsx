@@ -253,21 +253,6 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 											useAppStore
 												.getState()
 												.closeChatToHistory(tab.sessionId, projectAreaId, false);
-											const stillOpen = Object.values(
-												useAppStore.getState().tabsByProjectArea,
-											).some((tabs) =>
-												tabs.some(
-													(candidate) =>
-														candidate.kind === "chat" && candidate.sessionId === tab.sessionId,
-												),
-											);
-											if (!stillOpen)
-												void getTransport()
-													.request("session.release", {
-														projectId: projectAreaId,
-														sessionId: tab.sessionId,
-													})
-													.catch(() => {});
 										} else useAppStore.getState().closeTab(tab.id, false, projectAreaId);
 									}}
 								>

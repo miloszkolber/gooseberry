@@ -1,6 +1,6 @@
 import { messagesToRuntime } from "../chat/hydrate";
 import { errorText, getTransport } from "../connection";
-import { chatTabId, toast, useAppStore } from "../store";
+import { chatTabId, selectProjectAreaById, toast, useAppStore } from "../store";
 
 /** Open a session in the fixed editor strip. */
 export async function openChatInTab(
@@ -9,9 +9,14 @@ export async function openChatInTab(
 	background = false,
 ): Promise<void> {
 	const initial = useAppStore.getState();
+	const projectId = selectProjectAreaById(initial, projectAreaId)?.projectId ?? projectAreaId;
+	const closedChat = initial.closedChatsByProjectArea[projectAreaId]?.find(
+		(chat) => chat.sessionId === sessionId,
+	);
 	const requestConnectionGeneration =
 		initial.status === "connected" ? initial.connectionGeneration : null;
 	if (
+		!initial.projects.some((project) => project.id === projectId) ||
 		initial.removedProjectAreaIds[projectAreaId] ||
 		initial.deletedSessionsByProjectArea[projectAreaId]?.[sessionId]
 	) {
@@ -46,6 +51,14 @@ export async function openChatInTab(
 			projectId: projectAreaId,
 		});
 		const current = useAppStore.getState();
+		if (
+			!current.projects.some((project) => project.id === projectId) ||
+			current.closedChatsByProjectArea[projectAreaId]?.find(
+				(chat) => chat.sessionId === sessionId,
+			) !== closedChat
+		) {
+			return;
+		}
 		if (
 			requestConnectionGeneration !== null &&
 			current.connectionGeneration !== requestConnectionGeneration &&

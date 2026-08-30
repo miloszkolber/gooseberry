@@ -47,8 +47,8 @@ type sessionEntry struct {
 	attached          uint64
 	replay            *sessionEntry
 	promptGeneration  uint64
-	leased            bool
 	inactiveAt        time.Time
+	inactiveBytes     int // Encoded size under state; zero means a mutation needs recounting.
 	pendingEcho       *userEcho
 	consumedQuestions map[string]bool
 	drainScheduled    bool
@@ -73,6 +73,16 @@ type pendingQuestion struct {
 	result    chan map[string]any
 }
 
+type sessionLease struct {
+	ProjectID string `json:"projectId"`
+	SessionID string `json:"sessionId"`
+}
+
+type clientSessionLeases struct {
+	revision uint64
+	sessions map[string]string // Session ID to project ID; owned by SessionManager.mu.
+}
+
 type SessionManager struct {
 	mu           sync.Mutex
 	closed       bool
@@ -83,6 +93,7 @@ type SessionManager struct {
 	objectives   *Objectives
 	objectiveURL string
 	sessions     map[string]*sessionEntry
+	leases       map[string]*clientSessionLeases
 	lifecycle    map[string]bool
 	permissions  map[string]*pendingPermission
 	questions    map[string]*pendingQuestion
@@ -114,7 +125,7 @@ func (m *SessionManager) RecordedCWD(projectID, sessionID string) (string, error
 	return "", fmt.Errorf("unknown session: %s", sessionID)
 }
 
-func (m *SessionManager) Create(ctx context.Context, projectID, cwd string, model *WireModel, thinking string) (map[string]any, error) {
+func (m *SessionManager) Create(ctx context.Context, projectID, cwd string, model *WireModel, thinking, clientKey string) (map[string]any, error) {
 	if m.client == nil {
 		return nil, fmt.Errorf("Goose client is not configured")
 	}
@@ -145,7 +156,6 @@ func (m *SessionManager) Create(ctx context.Context, projectID, cwd string, mode
 	entry.thinkingLevel = thinkingFromOptions(entry.configOptions)
 	entry.model = modelFromSetup(entry.configOptions, response.Meta)
 	entry.attached = generation
-	entry.leased = true
 	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: sessionID, CWD: admitted}); err != nil {
 		return nil, err
 	}
@@ -155,7 +165,10 @@ func (m *SessionManager) Create(ctx context.Context, projectID, cwd string, mode
 		return nil, fmt.Errorf("session manager has been shut down")
 	}
 	m.sessions[sessionID] = entry
+	entry.refs++ // Configuration and the response must survive concurrent lease reconciliation.
+	m.retainSessionLocked(clientKey, sessionID, projectID)
 	m.mu.Unlock()
+	defer m.releaseEntry(entry)
 	m.emit("session.lifecycleChanged", map[string]any{"projectId": projectID, "sessionId": sessionID, "operation": "created"})
 	if model != nil {
 		if err := m.SetModel(ctx, sessionID, *model); err != nil {
@@ -281,7 +294,6 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	replay.thinkingLevel = thinkingFromOptions(replay.configOptions)
 	replay.attached = generation
 	replay.queue = entry.queue
-	replay.leased = entry.leased
 	replay.stats.TotalMessages = len(replay.messages)
 	entry.title = replay.title
 	entry.model = replay.model
@@ -378,15 +390,16 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 	return result, nil
 }
 
-func (m *SessionManager) Messages(ctx context.Context, sessionID, projectID, cwd string) (map[string]any, error) {
+func (m *SessionManager) Messages(ctx context.Context, sessionID, projectID, cwd, clientKey string) (map[string]any, error) {
 	entry, err := m.EnsureAttached(ctx, sessionID, projectID, cwd)
 	if err != nil {
 		return nil, err
 	}
 	defer m.releaseEntry(entry)
+	m.mu.Lock()
+	m.retainSessionLocked(clientKey, sessionID, projectID)
+	m.mu.Unlock()
 	entry.state.Lock()
-	entry.leased = true
-	entry.inactiveAt = time.Time{}
 	messages, encodeErr := json.Marshal(entry.messages)
 	entry.state.Unlock()
 	if encodeErr != nil {
@@ -484,23 +497,155 @@ func (m *SessionManager) entry(sessionID string) (*sessionEntry, error) {
 
 func (m *SessionManager) releaseEntry(entry *sessionEntry) {
 	m.mu.Lock()
+	entry.state.Lock()
+	entry.inactiveBytes = 0
+	entry.state.Unlock()
 	entry.refs--
 	m.evictLocked()
 	m.mu.Unlock()
 }
 
-func (m *SessionManager) Release(sessionID, projectID, cwd string) {
+func (m *SessionManager) retainSessionLocked(clientKey, sessionID, projectID string) {
+	if m.leases == nil {
+		m.leases = make(map[string]*clientSessionLeases)
+	}
+	leases := m.leases[clientKey]
+	if leases == nil {
+		leases = &clientSessionLeases{sessions: make(map[string]string)}
+		m.leases[clientKey] = leases
+	}
+	// Older browsers acquire implicitly. Once a browser declares its open tabs,
+	// a late create/load response must not resurrect a tab it already closed.
+	if leases.revision == 0 {
+		leases.sessions[sessionID] = projectID
+	}
+}
+
+func (m *SessionManager) SetLeases(clientKey string, revision uint64, requested []sessionLease) error {
+	if revision == 0 || revision > 1<<53-1 || len(requested) > 512 {
+		return fmt.Errorf("invalid session lease snapshot")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return fmt.Errorf("session manager has been shut down")
+	}
+	if previous := m.leases[clientKey]; previous != nil && revision <= previous.revision {
+		return nil
+	}
+	// Read after acquiring mu: a completed delete must not be resurrected from
+	// an association captured before its lifecycle operation finished.
+	records, err := m.records.List()
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]ProjectSessionRecord, len(records))
+	for _, record := range records {
+		byID[record.SessionID] = record
+	}
+	next := &clientSessionLeases{revision: revision, sessions: make(map[string]string, len(requested))}
+	projects := make(map[string]Project)
+	directories := make(map[string]string)
+	for _, lease := range requested {
+		if lease.ProjectID == "" || lease.SessionID == "" {
+			return fmt.Errorf("invalid session lease snapshot")
+		}
+		record, ok := byID[lease.SessionID]
+		if !ok {
+			// Another browser may have deleted this tab while we were offline.
+			// Ignore it without preventing the remaining tabs from reacquiring.
+			continue
+		}
+		if record.ProjectID != lease.ProjectID {
+			return fmt.Errorf("unknown session: %s", lease.SessionID)
+		}
+		project, found := projects[lease.ProjectID]
+		if !found {
+			project, err = m.projects.Get(lease.ProjectID)
+			if err != nil {
+				return err
+			}
+			projects[lease.ProjectID] = project
+		}
+		// Closing a project is global. Check under the same lock as ReleaseProject
+		// so an older in-flight snapshot cannot restore its abandoned leases.
+		if project.Closed {
+			continue
+		}
+		cwd, checked := directories[record.CWD]
+		if !checked {
+			cwd, err = m.policy.Directory(record.CWD, "Session directory")
+			if err != nil {
+				return err
+			}
+			directories[record.CWD] = cwd
+		}
+		admitted := false
+		for _, root := range project.Roots {
+			admitted = admitted || within(root, cwd)
+		}
+		if !admitted {
+			return fmt.Errorf("session directory is outside the project roots")
+		}
+		next.sessions[lease.SessionID] = lease.ProjectID
+	}
+	if m.leases == nil {
+		m.leases = make(map[string]*clientSessionLeases)
+	}
+	m.leases[clientKey] = next
+	for sessionID, projectID := range next.sessions {
+		if m.sessions[sessionID] == nil && !m.lifecycle[sessionID] {
+			record := byID[sessionID]
+			// A long disconnect may outlive eviction. Restore only the association;
+			// the next read/prompt loads the authoritative transcript from Goose.
+			m.sessions[sessionID] = newSessionEntry(sessionID, projectID, record.CWD, record.ParentSessionID, randomID())
+		}
+	}
+	m.evictLocked()
+	return nil
+}
+
+func (m *SessionManager) Release(sessionID, projectID, cwd, clientKey string) {
 	m.mu.Lock()
 	entry := m.sessions[sessionID]
-	if entry != nil {
-		entry.state.Lock()
+	leases := m.leases[clientKey]
+	if leases != nil && leases.sessions[sessionID] == projectID && (entry == nil || entry.projectID == projectID && entry.cwd == cwd) {
+		delete(leases.sessions, sessionID)
 	}
-	if entry != nil && entry.projectID == projectID && entry.cwd == cwd {
-		entry.leased = false
-		entry.inactiveAt = m.now()
+	m.evictLocked()
+	m.mu.Unlock()
+}
+
+func (m *SessionManager) isLeasedLocked(sessionID string) bool {
+	for _, client := range m.leases {
+		if _, found := client.sessions[sessionID]; found {
+			return true
+		}
 	}
-	if entry != nil {
-		entry.state.Unlock()
+	return false
+}
+
+func (m *SessionManager) ReleaseClient(clientKey string) {
+	m.mu.Lock()
+	delete(m.leases, clientKey)
+	m.evictLocked()
+	m.mu.Unlock()
+}
+
+func (m *SessionManager) ReleaseProject(projectID string) {
+	m.mu.Lock()
+	// Close publishes before this cleanup runs. Another browser can already have
+	// reopened the project and acquired a newer snapshot in that interval.
+	if project, err := m.projects.Get(projectID); err == nil && !project.Closed {
+		m.mu.Unlock()
+		return
+	}
+	for _, leases := range m.leases {
+		for sessionID, owner := range leases.sessions {
+			if owner == projectID {
+				delete(leases.sessions, sessionID)
+			}
+		}
 	}
 	m.evictLocked()
 	m.mu.Unlock()
@@ -521,12 +666,19 @@ func (m *SessionManager) evictLocked() {
 	}
 	var candidates []candidate
 	total := 0
+	leased := make(map[string]bool)
+	for _, client := range m.leases {
+		for sessionID := range client.sessions {
+			leased[sessionID] = true
+		}
+	}
 	for id, entry := range m.sessions {
 		if entry.refs > 0 {
 			continue
 		}
 		entry.state.Lock()
-		if entry.leased || entry.streaming || entry.runID != "" || len(entry.queue.Steering) > 0 || len(entry.queue.FollowUp) > 0 || entry.replay != nil {
+		if leased[id] || entry.streaming || entry.runID != "" || len(entry.queue.Steering) > 0 || len(entry.queue.FollowUp) > 0 || entry.replay != nil {
+			entry.inactiveAt = time.Time{}
 			entry.state.Unlock()
 			continue
 		}
@@ -535,9 +687,21 @@ func (m *SessionManager) evictLocked() {
 			entry.state.Unlock()
 			continue
 		}
-		encoded, _ := json.Marshal(entry.messages)
-		candidates = append(candidates, candidate{id: id, at: entry.inactiveAt, bytes: len(encoded)})
-		total += len(encoded)
+		if entry.inactiveAt.IsZero() {
+			entry.inactiveAt = m.now()
+		}
+		if entry.inactiveBytes == 0 {
+			encoded, err := json.Marshal(entry.messages)
+			if err != nil {
+				// A projection that cannot be measured must not bypass the budget.
+				delete(m.sessions, id)
+				entry.state.Unlock()
+				continue
+			}
+			entry.inactiveBytes = len(encoded)
+		}
+		candidates = append(candidates, candidate{id: id, at: entry.inactiveAt, bytes: entry.inactiveBytes})
+		total += entry.inactiveBytes
 		entry.state.Unlock()
 	}
 	for len(candidates) > inactiveProjectionMaxCount || total > inactiveProjectionMaxBytes {
