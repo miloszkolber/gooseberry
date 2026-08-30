@@ -35,7 +35,7 @@ func (h *HTTPHandler) serveBrowserArtifact(response http.ResponseWriter, request
 		http.NotFound(response, request)
 		return
 	}
-	upstream, err := http.NewRequestWithContext(request.Context(), http.MethodGet, "http://127.0.0.1:8787/v1/artifacts/"+url.PathEscape(session)+"/"+url.PathEscape(name), nil)
+	upstream, err := http.NewRequestWithContext(request.Context(), http.MethodGet, h.Auth.BrowserURL+"/v1/artifacts/"+url.PathEscape(session)+"/"+url.PathEscape(name), nil)
 	if err != nil {
 		http.Error(response, "browser artifact proxy unavailable", http.StatusBadGateway)
 		return

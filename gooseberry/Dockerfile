@@ -24,35 +24,51 @@ WORKDIR /work
 COPY gooseberry/go.mod gooseberry/go.sum ./
 RUN go mod download
 COPY gooseberry/main.go ./
+COPY gooseberry/cmd/ cmd/
 COPY gooseberry/controller/ controller/
 COPY gooseberry/browser/ browser/
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/gooseberry . \
-    && mkdir -p /out/licenses/go \
-    && cp /usr/local/go/LICENSE /out/licenses/go/LICENSE \
-    && go list -m all > /out/licenses/modules.txt \
-    && go list -m -f '{{if .Version}}{{.Path}}@{{.Version}} {{.Dir}}{{end}}' all \
-        | while read -r module directory; do \
+RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH; \
+    set -eu; \
+    for entry in gooseberry:. gooseberry-browser:./cmd/browser; do \
+        binary=${entry%%:*}; package=${entry#*:}; \
+        go build -trimpath -ldflags='-s -w' -o "/out/$binary" "$package"; \
+        mkdir -p "/out/licenses/$binary/go"; \
+        cp /usr/local/go/LICENSE "/out/licenses/$binary/go/LICENSE"; \
+        go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}}@{{.Version}} {{.Dir}}{{end}}{{end}}' "$package" \
+            > /tmp/modules.unsorted; \
+        sort -u /tmp/modules.unsorted > /tmp/modules; \
+        cut -d ' ' -f1 /tmp/modules > "/out/licenses/$binary/modules.txt"; \
+        while read -r module directory; do \
             test -n "$module" || continue; \
-            mkdir -p "/out/licenses/$module"; \
+            mkdir -p "/out/licenses/$binary/$module"; \
             find "$directory" -maxdepth 1 -type f \( -iname 'license*' -o -iname 'notice*' \) \
-                -exec cp '{}' "/out/licenses/$module/" \;; \
-          done
+                -exec cp '{}' "/out/licenses/$binary/$module/" \;; \
+        done < /tmp/modules; \
+    done
 
-FROM ${DEBIAN_IMAGE} AS runtime
+FROM ${DEBIAN_IMAGE} AS runtime-base
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app /home/goose \
+    && chown 1000:1000 /app /home/goose
+ENV HOME=/home/goose
+WORKDIR /app
+COPY LICENSE NOTICE.md /app/legal/
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
+
+FROM runtime-base AS browser-packages
 ARG AGENT_BROWSER_VERSION
 ARG TARGETARCH
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-        ca-certificates \
-        git \
         chromium \
         curl \
         fonts-liberation \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
-        tini \
     && case "${AGENT_BROWSER_VERSION}:${TARGETARCH}" in \
         0.34.0:amd64) agent_arch=x64; agent_sha256=69eadf5d8d6003a06a5cd2f914ebb261c7754fe1335a9190122c334e91909789 ;; \
         0.34.0:arm64) agent_arch=arm64; agent_sha256=ca70bf7c2d269a152b3824cbb65befb7b8258b8aa1cf34767c64ada2abc3d7c8 ;; \
@@ -65,6 +81,10 @@ RUN apt-get update \
         "https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/agent-browser-linux-${agent_arch}" \
     && printf '%s  %s\n' "${agent_sha256}" /usr/local/libexec/agent-browser | sha256sum --check --status - \
     && chmod 0755 /usr/local/libexec/agent-browser \
+    && mkdir -p /app/licenses/agent-browser \
+    && curl --fail --location --retry 3 \
+        --output /app/licenses/agent-browser/LICENSE \
+        "https://raw.githubusercontent.com/vercel-labs/agent-browser/v${AGENT_BROWSER_VERSION}/LICENSE" \
     && printf '%s\n' \
         '#!/bin/sh' \
         'export PATH=/usr/local/bin:/usr/bin:/bin' \
@@ -74,27 +94,43 @@ RUN apt-get update \
     && chmod 0755 /usr/local/bin/agent-browser \
     && apt-get purge -y --auto-remove curl \
     && rm -rf /var/lib/apt/lists/* /root/.cache \
-    && mkdir -p /app /var/lib/gooseberry /var/lib/gooseberry-browser/artifacts /var/lib/gooseberry-browser/state /home/goose \
-    && chown -R 1000:1000 /app /var/lib/gooseberry /var/lib/gooseberry-browser /home/goose
-ENV HOME=/home/goose GOOSEBERRY_BROWSER_AUTH=false GOGC=200
-WORKDIR /app
+    && mkdir -p /var/lib/gooseberry-browser/artifacts /var/lib/gooseberry-browser/state \
+    && chown -R 1000:1000 /var/lib/gooseberry-browser
+
+FROM browser-packages AS browser
+COPY --from=go-build /out/gooseberry-browser /app/gooseberry-browser
+COPY --from=go-build /out/licenses/gooseberry-browser /app/licenses
+COPY gooseberry/browser/config.json /app/config.json
+RUN test -x /app/gooseberry-browser \
+    && test -s /app/licenses/agent-browser/LICENSE \
+    && test ! -e /app/gooseberry && test ! -d /app/web \
+    && ! command -v git && ! command -v bun && ! command -v node && ! command -v go
+USER 1000:1000
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/app/gooseberry-browser", "healthcheck"]
+CMD ["/app/gooseberry-browser"]
+
+# Keep the application last: a build without --target produces only Gooseberry.
+FROM runtime-base AS gooseberry
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/gooseberry \
+    && chown 1000:1000 /var/lib/gooseberry
+ENV GOGC=200
 COPY --from=go-build /out/gooseberry /app/gooseberry
-COPY --from=go-build /out/licenses /app/licenses
+COPY --from=go-build /out/licenses/gooseberry /app/licenses
 COPY --from=web-build /work/webui/dist /app/web
 COPY --from=web-build /out/licenses /app/licenses
-COPY gooseberry/browser/config.json /app/config.json
-COPY LICENSE NOTICE.md /app/legal/
 RUN test -x /app/gooseberry \
     && test -f /app/web/index.html \
-    && test -f /app/licenses/github.com/coder/acp-go-sdk@v0.13.5/LICENSE \
-    && test -f /app/licenses/github.com/coder/websocket@v1.8.15/LICENSE.txt \
-    && test -f /app/licenses/github.com/fsnotify/fsnotify@v1.10.1/LICENSE \
-    && test -f /app/licenses/golang.org/x/sys@v0.13.0/LICENSE \
-    && test ! -e /app/gooseberry.js && test ! -d /app/node_modules \
+    && test ! -e /app/gooseberry-browser && test ! -e /app/config.json \
+    && test ! -d /var/lib/gooseberry-browser && test ! -d /app/node_modules \
+    && ! command -v chromium && ! command -v agent-browser \
     && ! command -v bun && ! command -v node && ! command -v go
 USER 1000:1000
-EXPOSE 7312 8787
+EXPOSE 7312
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/app/gooseberry", "healthcheck"]
-ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["/app/gooseberry"]

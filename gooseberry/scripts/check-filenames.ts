@@ -5,6 +5,7 @@ import { relative, resolve } from "node:path";
 const projectRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(projectRoot, "..");
 const roots = [
+	resolve(projectRoot, "cmd"),
 	resolve(projectRoot, "controller"),
 	resolve(projectRoot, "contracts"),
 	resolve(projectRoot, "scripts"),

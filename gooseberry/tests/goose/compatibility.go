@@ -1,5 +1,5 @@
-// Run from gooseberry/: go run ../goose/tests/compatibility.go -source /path/to/upstream
-// The optional URL exercises the production ACP adapter against an isolated Goose service.
+// Run from gooseberry/: go run ./tests/goose -url ws://127.0.0.1:3284/acp
+// Optional -source checks required registrations in a matching upstream checkout.
 package main
 
 import (
@@ -21,13 +21,19 @@ import (
 )
 
 func main() {
-	source := flag.String("source", "", "unchanged upstream Goose source directory")
+	source := flag.String("source", "", "optional upstream Goose source directory")
 	controllerDir := flag.String("controller", "controller", "Gooseberry controller source directory")
 	url := flag.String("url", "", "isolated Goose ACP WebSocket URL")
 	flag.Parse()
-	if err := checkMethods(*source, *controllerDir); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if *source == "" && *url == "" {
+		fmt.Fprintln(os.Stderr, "provide -url for runtime verification or -source for registration verification")
+		os.Exit(2)
+	}
+	if *source != "" {
+		if err := checkMethods(*source, *controllerDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	if *url != "" {
 		if err := checkRuntime(*url); err != nil {

@@ -84,6 +84,7 @@ type AuthConfig struct {
 	BrowserEnabled     bool
 	ControllerToken    string
 	BrowserToken       string
+	BrowserURL         string
 	ControllerHost     string
 	PublicOrigin       string
 	AllowRemoteWithout bool
@@ -133,7 +134,19 @@ func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
 			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_PUBLIC_ORIGIN must be an absolute http(s) origin without a path")
 		}
 	}
-	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil
+	browserURL := strings.TrimSpace(getenv("GOOSEBERRY_BROWSER_URL"))
+	if browserURL == "" {
+		browserURL = "http://127.0.0.1:8787"
+	}
+	browserURL, err = normalizeOrigin(browserURL)
+	if err != nil {
+		return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_URL must be an absolute http(s) origin without credentials or a path")
+	}
+	parsedBrowser, _ := url.Parse(browserURL)
+	if !browserEnabled && parsedBrowser.Hostname() != "localhost" && !net.ParseIP(parsedBrowser.Hostname()).IsLoopback() {
+		return AuthConfig{}, fmt.Errorf("a non-loopback GOOSEBERRY_BROWSER_URL requires browser authentication")
+	}
+	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, BrowserURL: browserURL, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil
 }
 
 func (c AuthConfig) ExpectedOrigin(request *http.Request) (string, error) {

@@ -2,11 +2,9 @@ package controller
 
 import (
 	"bytes"
-	"context"
 	"image"
 	"image/color"
 	"image/png"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -138,12 +136,7 @@ func TestProjectImagesAndBrowserArtifactsPreserveBytesAndAuthority(t *testing.T)
 		_, _ = w.Write(original.Bytes())
 	}))
 	defer upstream.Close()
-	handler.browserClient.Transport = &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != "127.0.0.1:8787" {
-			t.Errorf("unexpected proxy destination: %s", address)
-		}
-		return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
-	}}
+	handler.Auth.BrowserURL = upstream.URL
 	defer handler.browserClient.CloseIdleConnections()
 	artifact := "/v1/artifacts/fixture/screenshot.png"
 	if response := read(artifact, false); response.Code != http.StatusUnauthorized {

@@ -9,6 +9,8 @@
 !gooseberry/go.mod
 !gooseberry/go.sum
 !gooseberry/main.go
+!gooseberry/cmd/
+!gooseberry/cmd/**
 !gooseberry/controller/
 !gooseberry/controller/**
 !gooseberry/browser/

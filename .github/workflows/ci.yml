@@ -1,6 +1,6 @@
 name: CI
 
-# Fast structural gates for pull requests. Feature changes run focused tests chosen for their behavior.
+# Source, service-isolation and official Goose compatibility gates.
 on:
   pull_request:
     branches: [main]
@@ -13,8 +13,6 @@ on:
       - ".dockerignore"
       - ".gooseberry.example"
       - "docs/**"
-      - "scripts/setup-deployment.sh"
-      - "goose/**"
       - "gooseberry/**"
   push:
     branches: [main]
@@ -28,8 +26,6 @@ on:
       - ".dockerignore"
       - ".gooseberry.example"
       - "docs/**"
-      - "scripts/setup-deployment.sh"
-      - "goose/**"
       - "gooseberry/**"
   workflow_call:
     inputs:
@@ -82,40 +78,9 @@ jobs:
         working-directory: gooseberry
       - run: bun run build
         working-directory: gooseberry
-      - name: Validate Compose configuration
-        env:
-          GOOSEBERRY_TOKEN: ci-controller-token-0123456789abcdef0123456789
-          GOOSEBERRY_BROWSER_TOKEN: ci-browser-token-0123456789abcdef0123456789
-          GOOSEBERRY_GOOSE_SECRET_KEY: ci-goose-secret-0123456789abcdef0123456789
-        run: |
-          sh -n scripts/setup-deployment.sh
-          sh gooseberry/tests/deployment/setup-deployment.test.sh
-          sh -n goose/install-goose.sh
-          sh -n goose/source-policy.sh goose/verify-release.sh goose/verify-version.sh goose/tests/source-policy.test.sh
-          sh goose/tests/install-goose.test.sh
-          cat > .gooseberry <<EOF
-          GOOSEBERRY_DATA_PATH=${RUNNER_TEMP}/gooseberry-data
-          GOOSEBERRY_AUTH_ENABLED=false
-          GOOSEBERRY_TOKEN=$GOOSEBERRY_TOKEN
-          GOOSEBERRY_BROWSER_AUTH=true
-          GOOSEBERRY_BROWSER_TOKEN=$GOOSEBERRY_BROWSER_TOKEN
-          GOOSEBERRY_GOOSE_SECRET_KEY=$GOOSEBERRY_GOOSE_SECRET_KEY
-          EOF
-          ./scripts/setup-deployment.sh
-          docker compose --env-file .gooseberry -f docker-compose.yaml config --quiet
-          docker compose --env-file .gooseberry -f docker-compose.yaml config --format json > "${RUNNER_TEMP}/gooseberry-compose.json"
-          jq -e --arg data "${RUNNER_TEMP}/gooseberry-data" '
-            ((.services | keys) == ["gooseberry"]) and
-            (.services.gooseberry.user == "1000:1000") and
-            (.services.gooseberry.read_only == true) and
-            (.services.gooseberry.network_mode == "host") and
-            (.services.gooseberry.build.context == env.GITHUB_WORKSPACE) and
-            (.services.gooseberry.build.dockerfile == "gooseberry/Dockerfile") and
-            (.services.gooseberry.volumes | length == 2) and
-            ([.services.gooseberry.volumes[] | select(.source == ($data + "/app") and .target == "/var/lib/gooseberry")] | length == 1) and
-            ([.services.gooseberry.volumes[] | select(.source == ($data + "/browser") and .target == "/var/lib/gooseberry-browser")] | length == 1)
-          ' "${RUNNER_TEMP}/gooseberry-compose.json" > /dev/null
-      - run: gofmt -d main.go controller browser | tee /tmp/gooseberry-gofmt.diff && test ! -s /tmp/gooseberry-gofmt.diff
+      - name: Validate Compose service isolation
+        run: sh gooseberry/tests/deployment/compose.test.sh
+      - run: gofmt -d main.go cmd controller browser tests/goose | tee /tmp/gooseberry-gofmt.diff && test ! -s /tmp/gooseberry-gofmt.diff
         working-directory: gooseberry
       - run: go test -race -count=1 ./...
         env:
@@ -125,8 +90,61 @@ jobs:
         env:
           CGO_ENABLED: "0"
         working-directory: gooseberry
-      - name: Verify distribution compatibility guard
-        run: |
-          go test ../goose/tests/compatibility.go ../goose/tests/compatibility_test.go
-          go build -o "$RUNNER_TEMP/goose-acp-smoke" ../goose/tests/compatibility.go
+  goose:
+    name: Official Goose compatibility (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: gooseberry/go.mod
+          cache-dependency-path: gooseberry/go.sum
+      - name: Verify the pinned official GNU Linux executable
+        env:
+          ARCH: ${{ matrix.arch }}
+          GOOSE_SERVER__SECRET_KEY: gooseberry-isolated-compatibility-check
+          GOOSE_TELEMETRY_OFF: "true"
+          GOOSE_TELEMETRY_ENABLED: "false"
+          OTEL_SDK_DISABLED: "true"
         working-directory: gooseberry
+        shell: bash
+        run: |
+          metadata=tests/goose/upstream.json
+          repository=$(jq -er .repository "$metadata")
+          version=$(jq -er .version "$metadata")
+          asset=$(jq -er --arg arch "$ARCH" '.artifacts[$arch].name' "$metadata")
+          checksum=$(jq -er --arg arch "$ARCH" '.artifacts[$arch].sha256' "$metadata")
+          [[ "$repository" = aaif-goose/goose && "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$asset" =~ ^goose-(aarch64|x86_64)-unknown-linux-gnu\.tar\.gz$ && "$checksum" =~ ^[0-9a-f]{64}$ ]]
+          smoke=$(mktemp -d)
+          curl --fail --location --retry 3 --output "$smoke/goose.tar.gz" "https://github.com/$repository/releases/download/$version/$asset"
+          printf '%s  %s\n' "$checksum" "$smoke/goose.tar.gz" | sha256sum --check --status -
+          tar -xzf "$smoke/goose.tar.gz" -C "$smoke" ./goose
+          actual=$("$smoke/goose" --version)
+          actual=$(printf '%s' "$actual" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+          [[ "$actual" = "${version#v}" || "$actual" = "goose ${version#v}" ]]
+          go build -trimpath -o "$smoke/acp-smoke" ./tests/goose
+          mkdir "$smoke/home"
+          env -u LANGFUSE_PUBLIC_KEY -u LANGFUSE_SECRET_KEY \
+            HOME="$smoke/home" GOOSE_PATH_ROOT="$smoke/home" XDG_CONFIG_HOME="$smoke/home/.config" XDG_DATA_HOME="$smoke/home/.local/share" \
+            "$smoke/goose" serve --host 127.0.0.1 --port 3284 --enable-scheduler > "$smoke/server.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || :; wait "$pid" 2>/dev/null || :; cat "$smoke/server.log"' EXIT
+          for _ in $(seq 1 30); do
+            kill -0 "$pid"
+            if curl -fsS http://127.0.0.1:3284/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3284/health >/dev/null
+          "$smoke/acp-smoke" -url ws://127.0.0.1:3284/acp

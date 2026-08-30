@@ -32,3 +32,35 @@ func TestAuthCookieAndOriginRemainCompatible(t *testing.T) {
 		t.Fatal("cross origin request was accepted")
 	}
 }
+
+func TestBrowserProxyConfigurationKeepsCredentialsAtTrustedOrigin(t *testing.T) {
+	for _, test := range []struct {
+		endpoint    string
+		auth, valid bool
+	}{
+		{"", false, true},
+		{"http://[::1]:8787", false, true},
+		{"http://browser:8787", false, false},
+		{"http://browser:8787/", true, true},
+		{"https://browser.example", true, true},
+		{"http://user:secret@browser:8787", true, false},
+		{"http://browser:8787/mcp", true, false},
+		{"http://browser:8787?token=secret", true, false},
+		{"file:///tmp/browser", true, false},
+	} {
+		t.Run(test.endpoint, func(t *testing.T) {
+			values := map[string]string{"GOOSEBERRY_BROWSER_URL": test.endpoint}
+			if test.auth {
+				values["GOOSEBERRY_BROWSER_AUTH"] = "true"
+				values["GOOSEBERRY_BROWSER_TOKEN"] = "browser-token-0123456789abcdef0123456789"
+			}
+			config, err := ReadAuthConfig(func(key string) string { return values[key] })
+			if (err == nil) != test.valid {
+				t.Fatalf("configuration: %#v, %v", config, err)
+			}
+			if test.valid && (config.BrowserURL == "" || config.BrowserURL[len(config.BrowserURL)-1] == '/') {
+				t.Fatalf("browser URL is not normalized: %q", config.BrowserURL)
+			}
+		})
+	}
+}
