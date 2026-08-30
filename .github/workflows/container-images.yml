@@ -1,6 +1,15 @@
 name: Container images
 
 on:
+  schedule:
+    - cron: "37 4 * * 0"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      revision:
+        description: Validated source commit to build after a Goose pin update
+        required: true
+        type: string
   pull_request:
     branches: [main]
     paths:
@@ -8,7 +17,6 @@ on:
       - "compose.yaml"
       - ".gooseberry.example"
       - "gooseberry/**"
-      - "gooseberry-browser/**"
   push:
     branches: [main]
     tags: ["v*"]
@@ -17,10 +25,9 @@ on:
       - "compose.yaml"
       - ".gooseberry.example"
       - "gooseberry/**"
-      - "gooseberry-browser/**"
 
 concurrency:
-  group: container-images-${{ github.ref }}
+  group: container-images-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -31,31 +38,29 @@ jobs:
   validate:
     name: Source validation
     uses: ./.github/workflows/ci.yml
+    with:
+      revision: ${{ inputs.revision || github.sha }}
     permissions:
       contents: read
 
   build:
-    name: Build ${{ matrix.image }} image
+    name: Build Gooseberry image
     needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: gooseberry
-            image_name: gooseberry
-            context: ./gooseberry
-            file: ./gooseberry/Dockerfile
-          - image: gooseberry-browser
-            image_name: gooseberry-browser
-            context: ./gooseberry-browser
-            file: ./gooseberry-browser/Dockerfile
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+
+      - name: Record exact source revision
+        id: source
+        run: |
+          echo "short=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -75,20 +80,38 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+          images: ghcr.io/${{ github.repository_owner }}/gooseberry
+          flavor: latest=false
+          labels: |
+            org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
-            type=sha
+            type=raw,value=sha-${{ steps.source.outputs.short }}
 
       - name: Build container image
+        id: image
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
+          context: ./gooseberry
+          file: ./gooseberry/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=gooseberry
+          cache-to: type=gha,mode=max,scope=gooseberry
+          no-cache-filters: ${{ github.event_name == 'schedule' && 'runtime' || '' }}
+
+      - name: Promote current default-branch image
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/gooseberry
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          current=$(git ls-remote origin "refs/heads/$DEFAULT_BRANCH" | cut -f1)
+          if [ "$current" = "$(git rev-parse HEAD)" ]; then
+            docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
+          else
+            echo 'Default branch advanced during this build; immutable image retained without changing latest.' >> "$GITHUB_STEP_SUMMARY"
+          fi

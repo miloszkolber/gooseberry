@@ -14,6 +14,7 @@ export function themeColorKeys(): string[] {
 		"accentHover",
 		"accentSolid",
 		"onAccent",
+		"onDanger",
 		"bubbleAccent",
 		"background",
 		"header",

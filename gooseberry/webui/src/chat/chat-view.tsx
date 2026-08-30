@@ -1,9 +1,18 @@
-import type { AskUserQuestionResult, PromptHit } from "@gooseberry/contracts";
+import type { AskUserQuestionResult, PromptHit, QueueLane } from "@gooseberry/contracts";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { EMPTY_RUNTIME, selectProjectAreaById, toast, useAppStore } from "@/store";
-import { errorText, getTransport } from "@/transport";
+import { errorText, getTransport } from "../connection";
 import {
 	agentMentionIdentity,
 	fileMentionCandidateIdentity,
@@ -158,6 +167,17 @@ export default function ChatView({
 	const permission = useAppStore(
 		(state) => Object.values(state.pendingPermissions[sessionId] ?? {})[0] ?? null,
 	);
+	const [queueEdit, setQueueEdit] = useState<{
+		lane: QueueLane;
+		index: number;
+		original: string;
+		text: string;
+		revision: string;
+		saving: boolean;
+		error: string | null;
+	} | null>(null);
+	const queueEditStale =
+		queueEdit !== null && !queueEdit.saving && queueEdit.revision !== runtime.queue.revision;
 	const respondToPermission = useCallback(
 		(optionId?: string) => {
 			if (!permission) return;
@@ -252,6 +272,7 @@ export default function ChatView({
 		const timer = setTimeout(() => {
 			getTransport()
 				.request("fs.readDir", { projectId: projectAreaId, root: projectAreaRoot ?? "", path: dir })
+				.then((listing) => listing.nodes)
 				.then((nodes) => {
 					if (cancelled) return;
 					setLoadedFileMentionCandidates({
@@ -332,17 +353,49 @@ export default function ChatView({
 
 	const editQueuedMessage = (lane: "steering" | "followUp", index: number) => {
 		const current = runtime.queue[lane][index];
-		if (!current) return;
-		const text = window.prompt("Edit queued message", current);
-		if (text === null || text.trim() === current) return;
+		const revision = runtime.queue.revision;
+		if (!current || !revision) return;
+		setQueueEdit({
+			lane,
+			index,
+			original: current,
+			text: current,
+			revision,
+			saving: false,
+			error: null,
+		});
+	};
+
+	const saveQueuedMessage = () => {
+		if (!queueEdit || queueEdit.saving || queueEditStale) return;
+		const text = queueEdit.text.trim();
+		if (!text || text === queueEdit.original) {
+			setQueueEdit(null);
+			return;
+		}
+		const pending = { ...queueEdit, saving: true, error: null };
+		setQueueEdit(pending);
 		void getTransport()
-			.request("session.queueEdit", { sessionId, lane, index, text })
-			.catch((error) => toast.error(errorText(error), "Couldn't edit queued message"));
+			.request("session.queueEdit", {
+				sessionId,
+				lane: queueEdit.lane,
+				index: queueEdit.index,
+				text,
+				revision: queueEdit.revision,
+			})
+			.then(() => setQueueEdit((current) => (current === pending ? null : current)))
+			.catch((error) =>
+				setQueueEdit((current) =>
+					current === pending ? { ...current, saving: false, error: errorText(error) } : current,
+				),
+			);
 	};
 
 	const removeQueuedMessage = (lane: "steering" | "followUp", index: number) => {
+		const revision = runtime.queue.revision;
+		if (!revision) return;
 		void getTransport()
-			.request("session.queueRemove", { sessionId, lane, index })
+			.request("session.queueRemove", { sessionId, lane, index, revision })
 			.catch((error) => toast.error(errorText(error), "Couldn't remove queued message"));
 	};
 
@@ -475,7 +528,7 @@ export default function ChatView({
 	return (
 		<ChatActionsContext.Provider value={chatActions}>
 			<AskStatesContext.Provider value={askContext}>
-				<div className="flex h-full min-h-0 flex-col bg-container-projectArea-bg">
+				<div className="flex h-full min-h-0 flex-col bg-container-project-bg">
 					<div className="shrink-0">
 						<ChatHeader
 							stats={stats}
@@ -492,34 +545,33 @@ export default function ChatView({
 							}
 						/>
 					</div>
-					{permission ? (
-						<div
-							role="alertdialog"
-							aria-label="Tool permission"
-							className="mx-md mt-sm rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg p-sm shadow-[var(--shadow-md)]"
-						>
-							<div className="mb-xs text-text-default tr-text-body">Allow {permission.title}?</div>
-							<div className="flex flex-wrap gap-xs">
-								{permission.options.map((option) => (
-									<button
-										type="button"
-										key={option.optionId}
-										onClick={() => respondToPermission(option.optionId)}
-										className="rounded border border-border-default px-sm py-xs text-text-default tr-text-metadata hover:bg-control-bg-hovered"
-									>
-										{option.name} ({option.kind})
-									</button>
-								))}
-								<button
-									type="button"
-									onClick={() => respondToPermission()}
-									className="rounded border border-border-default px-sm py-xs text-text-muted tr-text-metadata hover:bg-control-bg-hovered"
-								>
-									Cancel
-								</button>
-							</div>
-						</div>
-					) : null}
+					<Dialog
+						open={permission !== null}
+						onOpenChange={(open) => !open && respondToPermission()}
+					>
+						{permission ? (
+							<DialogContent role="alertdialog" aria-label="Tool permission">
+								<DialogHeader>
+									<DialogTitle>Allow {permission.title}?</DialogTitle>
+									<DialogDescription>
+										Choose how Goose may continue with this tool request.
+									</DialogDescription>
+								</DialogHeader>
+								<div className="flex flex-wrap gap-xs">
+									{permission.options.map((option) => (
+										<button
+											type="button"
+											key={option.optionId}
+											onClick={() => respondToPermission(option.optionId)}
+											className="rounded border border-border-default px-sm py-xs text-text-default tr-text-metadata hover:bg-control-bg-hovered"
+										>
+											{option.name} ({option.kind})
+										</button>
+									))}
+								</div>
+							</DialogContent>
+						) : null}
+					</Dialog>
 					<div
 						data-testid="chat-scroll"
 						className="relative flex min-h-0 flex-1 flex-col"
@@ -580,6 +632,48 @@ export default function ChatView({
 							onEdit={editQueuedMessage}
 							onRemove={removeQueuedMessage}
 						/>
+						<Dialog open={queueEdit !== null} onOpenChange={(open) => !open && setQueueEdit(null)}>
+							{queueEdit ? (
+								<DialogContent>
+									<DialogHeader>
+										<DialogTitle>Edit queued message</DialogTitle>
+										<DialogDescription>
+											Update the text that Goose will receive later.
+										</DialogDescription>
+									</DialogHeader>
+									<textarea
+										autoFocus
+										aria-label="Queued message"
+										value={queueEdit.text}
+										disabled={queueEdit.saving}
+										onChange={(event) =>
+											setQueueEdit((current) =>
+												current ? { ...current, text: event.target.value } : current,
+											)
+										}
+										className="min-h-28 w-full resize-y rounded-[var(--radius-sm)] border border-control-border-default bg-control-bg p-sm tr-text-ui text-text-default outline-none focus-visible:ring-2 focus-visible:ring-primary"
+									/>
+									{queueEditStale || queueEdit.error ? (
+										<p role="alert" className="tr-text-ui text-feedback-warning">
+											{queueEditStale
+												? "The queue changed while you were editing. Copy your draft, then reopen the message to edit its current version."
+												: `${queueEdit.error} Your draft is still here.`}
+										</p>
+									) : null}
+									<DialogFooter>
+										<Button variant="ghost" onClick={() => setQueueEdit(null)}>
+											Cancel
+										</Button>
+										<Button
+											disabled={!queueEdit.text.trim() || queueEdit.saving || queueEditStale}
+											onClick={saveQueuedMessage}
+										>
+											{queueEdit.saving ? "Saving…" : "Save"}
+										</Button>
+									</DialogFooter>
+								</DialogContent>
+							) : null}
+						</Dialog>
 						<Composer
 							ref={composerRef}
 							value={draft}

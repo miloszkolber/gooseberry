@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/complexity/noImportantStyles: Reduced-motion preferences must override component animation utilities. */
 * {
 	box-sizing: border-box;
 }
@@ -18,6 +19,17 @@ body {
 	   don't hack other platforms. */
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+	}
 }
 
 ::selection {

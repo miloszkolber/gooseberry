@@ -14,6 +14,9 @@ export default defineConfig({
 		port: 24269,
 		strictPort: true,
 		proxy: {
+			"/auth": "http://127.0.0.1:7312",
+			"/files": "http://127.0.0.1:7312",
+			"/v1/artifacts": "http://127.0.0.1:7312",
 			"/ws": {
 				target: "ws://127.0.0.1:7312",
 				ws: true,
@@ -22,5 +25,6 @@ export default defineConfig({
 	},
 	build: {
 		outDir: "dist",
+		manifest: true,
 	},
 });

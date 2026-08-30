@@ -1,16 +1,19 @@
 import "./index.css";
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ControllerAccess, logoutController } from "./auth";
 import { ErrorBoundary } from "./components/error-boundary";
-import { initNavigation } from "./navigation";
-import { initProjectExpansionPersistence } from "./panels/project-expansion";
-import { Shell } from "./shell/shell";
-import { initTransport, resetTransport } from "./transport";
+import { ControllerAccess, initTransport, resetTransport } from "./connection";
+import { useAppStore } from "./store";
+import { initNavigation } from "./workspace/navigation";
+import { initProjectExpansionPersistence } from "./workspace/project-expansion";
+import { Shell } from "./workspace/shell";
 
 function App() {
 	const [authenticated, setAuthenticated] = useState(false);
-	const authenticate = useCallback(() => setAuthenticated(true), []);
+	const authenticate = useCallback((authenticationEnabled: boolean) => {
+		useAppStore.getState().setAuthenticationEnabled(authenticationEnabled);
+		setAuthenticated(true);
+	}, []);
 	const signOut = useCallback(() => {
 		resetTransport();
 		setAuthenticated(false);
@@ -22,24 +25,15 @@ function App() {
 	useEffect(() => {
 		if (!authenticated) return;
 		initTransport();
-		initProjectExpansionPersistence();
-		initNavigation();
+		const stopExpansionPersistence = initProjectExpansionPersistence();
+		const stopNavigation = initNavigation();
+		return () => {
+			stopNavigation();
+			stopExpansionPersistence();
+		};
 	}, [authenticated]);
 	if (!authenticated) return <ControllerAccess onAuthenticated={authenticate} />;
-	return (
-		<>
-			<button
-				type="button"
-				onClick={() => {
-					void logoutController().finally(signOut);
-				}}
-				className="fixed right-md top-md z-50 border border-border-default bg-container-elevated-bg px-sm py-xs tr-text-metadata text-text-muted hover:text-text-default"
-			>
-				Sign out
-			</button>
-			<Shell />
-		</>
-	);
+	return <Shell />;
 }
 
 const root = document.getElementById("root");

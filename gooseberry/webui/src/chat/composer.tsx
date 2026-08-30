@@ -434,7 +434,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	};
 
 	return (
-		<div className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-projectArea-bg">
+		<div className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-project-bg">
 			{mentionOpen ? (
 				<div
 					id={mentionListboxId}

@@ -34,6 +34,10 @@
 			"from": "onAccent",
 			"publish": true
 		},
+		"text-on-danger": {
+			"from": "onDanger",
+			"publish": true
+		},
 		"text-link": {
 			"from": "info",
 			"publish": false,

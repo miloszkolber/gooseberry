@@ -1,5 +1,5 @@
 import { GitFork } from "lucide-react";
-import { openChatInTab } from "@/panels/open-chat";
+import { openChatInTab } from "../workspace/open-chat";
 
 export function SessionLineageControl({
 	projectAreaId,

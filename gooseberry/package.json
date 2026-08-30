@@ -4,8 +4,7 @@
 	"packageManager": "bun@1.3.14",
 	"workspaces": {
 		"packages": [
-			"apps/*",
-			"packages/*",
+			"contracts",
 			"webui"
 		],
 		"catalog": {
@@ -16,17 +15,16 @@
 	},
 	"type": "module",
 	"scripts": {
-		"build": "bun run build:controller && bun run build:web",
-		"build:controller": "bun --filter @gooseberry/controller build",
+		"build": "bun run build:go && bun run build:web",
+		"build:go": "go build -trimpath -o dist/gooseberry .",
 		"dev:web": "bun --filter @gooseberry/web dev",
 		"build:web": "bun --filter @gooseberry/web build",
-		"typecheck": "bun --filter @gooseberry/goose-client typecheck && bun --filter @gooseberry/contracts typecheck && bun --filter @gooseberry/shared typecheck && bun --filter @gooseberry/server typecheck && bun --filter @gooseberry/controller typecheck && bun --filter @gooseberry/web typecheck",
-		"test": "bun --filter @gooseberry/goose-client test && bun --filter @gooseberry/controller test && bun --filter @gooseberry/server test && bun --filter @gooseberry/web test",
+		"typecheck": "bun --filter @gooseberry/contracts typecheck && bun --filter @gooseberry/web typecheck",
+		"test": "bun --filter @gooseberry/contracts test && bun --filter @gooseberry/web test && go test ./...",
 		"check:filenames": "bun scripts/check-filenames.ts",
 		"lint": "bun run check:filenames && biome check .",
 		"format": "biome check --write .",
-		"check:deps": "bun scripts/check-catalog.ts",
-		"check:runtime": "bash scripts/check-controller-runtime.test.sh"
+		"check:deps": "bun scripts/check-catalog.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.0",
@@ -35,5 +33,9 @@
 	"trustedDependencies": [
 		"@biomejs/biome",
 		"esbuild"
-	]
+	],
+	"overrides": {
+		"nanoid": "3.3.18",
+		"postcss": "8.5.26"
+	}
 }

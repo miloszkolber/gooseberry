@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppStore } from "@/store";
-import { errorText, getTransport } from "@/transport";
+import { errorText, getTransport } from "../connection";
 
 export function SessionGoalControl({
 	projectAreaId,

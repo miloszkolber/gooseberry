@@ -5,13 +5,12 @@ import { relative, resolve } from "node:path";
 const projectRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(projectRoot, "..");
 const roots = [
-	resolve(projectRoot, "apps"),
-	resolve(projectRoot, "packages"),
+	resolve(projectRoot, "controller"),
+	resolve(projectRoot, "contracts"),
 	resolve(projectRoot, "scripts"),
 	resolve(projectRoot, "webui", "scripts"),
 	resolve(projectRoot, "webui", "src"),
-	resolve(repositoryRoot, "gooseberry-browser", "src"),
-	resolve(repositoryRoot, "gooseberry-browser", "test"),
+	resolve(projectRoot, "browser"),
 ];
 
 const ignoredDirectories = new Set(["coverage", "dist", "node_modules"]);
@@ -27,6 +26,12 @@ function checkDirectoryName(name: string, path: string, errors: string[]): void 
 function checkFileName(name: string, path: string, errors: string[]): void {
 	const parts = name.split(".");
 	const extension = parts.at(-1);
+	if (extension === "go") {
+		if (!/^[a-z0-9]+(?:[-_][a-z0-9]+)*\.go$/.test(name)) {
+			errors.push(`${path}: Go filenames must use lowercase words`);
+		}
+		return;
+	}
 	if (!extension || !checkedExtensions.has(extension)) return;
 
 	for (const part of parts.slice(0, -1)) {

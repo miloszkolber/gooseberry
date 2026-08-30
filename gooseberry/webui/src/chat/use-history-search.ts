@@ -6,7 +6,7 @@ import type {
 } from "@gooseberry/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ChatLocationRequest, projectArea, useAppStore } from "@/store";
-import { getTransport } from "@/transport";
+import { getTransport } from "../connection";
 
 export type { ChatLocationRequest };
 

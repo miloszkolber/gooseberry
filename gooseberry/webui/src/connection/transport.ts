@@ -1,0 +1,224 @@
+import type { WsMethodName, WsParams, WsResult, WsServerMessage } from "@gooseberry/contracts";
+import { isWsServerMessage } from "@gooseberry/contracts";
+import { randomId } from "../lib";
+import { RequestError } from "./request-error";
+
+export type ConnectionStatus = "connecting" | "connected" | "disconnected";
+type PushHandler = (data: unknown) => void;
+
+export interface TransportOptions {
+	url?: string;
+	onStatus?: (status: ConnectionStatus) => void;
+	onInitialConnectionFailure?: () => void;
+	onAuthenticationLoss?: () => void;
+	isAuthenticated?: () => Promise<boolean>;
+}
+
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+let clientId: string | undefined;
+
+function pageClientId(): string {
+	if (clientId === undefined) clientId = randomId("client");
+	return clientId;
+}
+
+function withClientId(url: string): string {
+	const u = new URL(url);
+	u.search = "";
+	u.searchParams.set("client", pageClientId());
+	// Authentication must never be copied into a WebSocket URL query or fragment.
+	u.hash = "";
+	return u.toString();
+}
+
+export interface RequestOptions {
+	sessionId?: string;
+	timeoutMs?: number;
+}
+
+export class WsTransport {
+	private ws: WebSocket | null = null;
+	private readonly url: string;
+	private readonly onStatus: ((status: ConnectionStatus) => void) | undefined;
+	private readonly onInitialConnectionFailure: (() => void) | undefined;
+	private readonly onAuthenticationLoss: (() => void) | undefined;
+	private readonly isAuthenticated: (() => Promise<boolean>) | undefined;
+	private stopped = false;
+	private hasOpened = false;
+	private seq = 0;
+	private readonly pending = new Map<
+		string,
+		{
+			frame: string;
+			resolve: (v: unknown) => void;
+			reject: (e: Error) => void;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>();
+	private readonly subscribers = new Map<string, Set<PushHandler>>();
+	private ackQueue: string[] = [];
+	private ackScheduled = false;
+	private backoff = 500;
+
+	constructor(opts: TransportOptions = {}) {
+		this.url = opts.url ?? inferUrl();
+		this.onStatus = opts.onStatus;
+		this.onInitialConnectionFailure = opts.onInitialConnectionFailure;
+		this.onAuthenticationLoss = opts.onAuthenticationLoss;
+		this.isAuthenticated = opts.isAuthenticated;
+	}
+
+	httpBase(): string {
+		const u = new URL(this.url);
+		u.protocol = u.protocol === "wss:" ? "https:" : "http:";
+		return u.origin;
+	}
+
+	connect(): void {
+		if (this.stopped) return;
+		this.onStatus?.("connecting");
+		const url = withClientId(this.url);
+		const ws = new WebSocket(url);
+		this.ws = ws;
+		ws.onopen = () => {
+			if (this.ws !== ws) {
+				ws.close();
+				return;
+			}
+			this.backoff = 500;
+			this.hasOpened = true;
+			this.onStatus?.("connected");
+			this.ackQueue = [];
+			this.sendFrame(JSON.stringify({ resume: [...this.pending.keys()] }));
+			for (const entry of this.pending.values()) this.sendFrame(entry.frame);
+		};
+		ws.onmessage = (ev) => this.handleMessage(ev.data);
+		ws.onclose = () => {
+			if (this.ws !== ws) return;
+			this.ws = null;
+			this.onStatus?.("disconnected");
+			if (!this.hasOpened && this.onInitialConnectionFailure) {
+				this.onInitialConnectionFailure();
+				return;
+			}
+			void this.reconnectAfterClose();
+		};
+		ws.onerror = () => ws.close();
+	}
+
+	stop(): void {
+		this.stopped = true;
+		this.ws?.close();
+		this.ws = null;
+		for (const entry of this.pending.values()) {
+			clearTimeout(entry.timer);
+			entry.reject(new Error("transport stopped"));
+		}
+		this.pending.clear();
+	}
+
+	private async reconnectAfterClose(): Promise<void> {
+		if (this.isAuthenticated && !(await this.isAuthenticated())) {
+			this.onAuthenticationLoss?.();
+			return;
+		}
+		if (this.stopped) return;
+		setTimeout(() => this.connect(), this.backoff);
+		this.backoff = Math.min(this.backoff * 2, 10_000);
+	}
+
+	request<M extends WsMethodName>(
+		method: M,
+		params: WsParams<M>,
+		options: RequestOptions = {},
+	): Promise<WsResult<M>> {
+		const { sessionId, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+		const id = `trpi_${++this.seq}`;
+		const frame = JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) });
+		return new Promise<WsResult<M>>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.pending.delete(id);
+				reject(new Error(`request "${method}" timed out`));
+			}, timeoutMs);
+			this.pending.set(id, {
+				frame,
+				resolve: resolve as (v: unknown) => void,
+				reject,
+				timer,
+			});
+			this.sendFrame(frame);
+		});
+	}
+
+	subscribe(channel: string, handler: PushHandler): () => void {
+		let set = this.subscribers.get(channel);
+		if (!set) {
+			set = new Set();
+			this.subscribers.set(channel, set);
+		}
+		set.add(handler);
+		return () => {
+			this.subscribers.get(channel)?.delete(handler);
+		};
+	}
+
+	private queueAck(id: string): void {
+		this.ackQueue.push(id);
+		if (this.ackScheduled) return;
+		this.ackScheduled = true;
+		queueMicrotask(() => {
+			this.ackScheduled = false;
+			this.flushAcks();
+		});
+	}
+
+	private flushAcks(): void {
+		if (this.ackQueue.length === 0 || this.ws?.readyState !== WebSocket.OPEN) return;
+		const ack = this.ackQueue;
+		this.ackQueue = [];
+		this.sendFrame(JSON.stringify({ ack }));
+	}
+
+	private sendFrame(frame: string): void {
+		if (this.ws?.readyState !== WebSocket.OPEN) return;
+		try {
+			this.ws.send(frame);
+		} catch {
+			this.ws.close();
+		}
+	}
+
+	private handleMessage(raw: unknown): void {
+		if (typeof raw !== "string") return;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			return;
+		}
+		if (!isWsServerMessage(parsed)) return;
+		const msg: WsServerMessage = parsed;
+		if ("channel" in msg) {
+			const set = this.subscribers.get(msg.channel);
+			if (set) for (const handler of set) handler(msg.data);
+			return;
+		}
+		this.queueAck(msg.id);
+		const entry = this.pending.get(msg.id);
+		if (!entry) return;
+		clearTimeout(entry.timer);
+		this.pending.delete(msg.id);
+		if (msg.ok) {
+			entry.resolve(msg.result);
+			return;
+		}
+		const message = msg.error ?? "request failed";
+		entry.reject(msg.errorCode ? new RequestError(msg.errorCode, message) : new Error(message));
+	}
+}
+
+export function inferUrl(): string {
+	const proto = location.protocol === "https:" ? "wss:" : "ws:";
+	return `${proto}//${location.host}/ws`;
+}
