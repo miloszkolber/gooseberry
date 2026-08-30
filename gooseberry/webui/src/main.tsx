@@ -6,6 +6,7 @@ import { ControllerAccess, initTransport, resetTransport } from "./connection";
 import { useAppStore } from "./store";
 import { initNavigation } from "./workspace/navigation";
 import { initProjectExpansionPersistence } from "./workspace/project-expansion";
+import { initSessionLeases } from "./workspace/session-leases";
 import { Shell } from "./workspace/shell";
 
 function App() {
@@ -27,7 +28,9 @@ function App() {
 		initTransport();
 		const stopExpansionPersistence = initProjectExpansionPersistence();
 		const stopNavigation = initNavigation();
+		const stopSessionLeases = initSessionLeases();
 		return () => {
+			stopSessionLeases();
 			stopNavigation();
 			stopExpansionPersistence();
 		};

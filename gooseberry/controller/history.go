@@ -256,7 +256,7 @@ func (h *HistoryIndex) index(ctx context.Context, record ProjectSessionRecord, s
 	defer m.releaseEntry(entry)
 	m.mu.Lock()
 	entry.state.Lock()
-	if !entry.leased {
+	if !m.isLeasedLocked(record.SessionID) {
 		entry.ephemeral = true
 	}
 	m.mu.Unlock()

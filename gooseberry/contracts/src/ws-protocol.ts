@@ -113,6 +113,7 @@ export const WS_METHODS = {
 	sessionQuestionReply: "session.questionReply",
 	sessionList: "session.list",
 	sessionGetMessages: "session.getMessages",
+	sessionSetLeases: "session.setLeases",
 	sessionRelease: "session.release",
 	modelList: "model.list",
 	modelRefresh: "model.refresh",
@@ -297,6 +298,11 @@ export interface WsMethodMap {
 		result: { summary: SessionSummary; messages: TranscriptMessage[] };
 	};
 	"session.release": { params: { sessionId: string; projectId: string }; result: Ack };
+	/** Complete open-tab snapshot for this browser; older revisions are ignored. */
+	"session.setLeases": {
+		params: { revision: number; sessions: { projectId: string; sessionId: string }[] };
+		result: Ack;
+	};
 	"model.list": { params: Record<string, never>; result: WireModel[] };
 	"model.clampThinking": {
 		params: { sessionId: string; level: ThinkingLevel };

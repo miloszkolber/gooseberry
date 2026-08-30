@@ -29,15 +29,20 @@ type WebSocketServer struct {
 	Handler       Handler
 	Welcome       Welcome
 	LoginSnapshot func(string) any
-	Auth          AuthConfig
-	auth          *Auth
-	replay        *ReplayCache
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mu            sync.Mutex
-	sockets       map[string]browserSocket
-	reapTimers    map[string]*time.Timer
-	inflight      chan struct{}
+	// Called after disconnected requests settle, before a replacement is admitted.
+	ClientReaped func(string)
+	Auth         AuthConfig
+	auth         *Auth
+	replay       *ReplayCache
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	// Cleanup may take session locks. Keep it outside mu (session events publish
+	// through mu), while serializing retirement with replacement connections.
+	clientLifecycle sync.Mutex
+	sockets         map[string]browserSocket
+	reapTimers      map[string]*time.Timer
+	inflight        chan struct{}
 }
 
 type browserSocket struct {
@@ -252,6 +257,8 @@ func writeJSON(ctx context.Context, connection *websocket.Conn, value any) error
 }
 
 func (s *WebSocketServer) replace(clientKey string, socket browserSocket) bool {
+	s.clientLifecycle.Lock()
+	defer s.clientLifecycle.Unlock()
 	s.mu.Lock()
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
@@ -283,17 +290,35 @@ func (s *WebSocketServer) remove(clientKey string, connection *websocket.Conn) {
 }
 
 func (s *WebSocketServer) armReapLocked(clientKey string) {
-	s.reapTimers[clientKey] = time.AfterFunc(time.Minute, func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		delete(s.reapTimers, clientKey)
-		if s.sockets[clientKey].connection != nil || s.ctx.Err() != nil {
-			return
-		}
-		if !s.replay.ClearClient(clientKey) {
-			s.armReapLocked(clientKey)
-		}
-	})
+	var timer *time.Timer
+	timer = time.AfterFunc(time.Minute, func() { s.reapClient(clientKey, timer) })
+	s.reapTimers[clientKey] = timer
+}
+
+func (s *WebSocketServer) reapClient(clientKey string, timer *time.Timer) {
+	s.clientLifecycle.Lock()
+	defer s.clientLifecycle.Unlock()
+	s.mu.Lock()
+	// A stopped callback may already be waiting for mu while a newer connection
+	// disconnects. It must not consume that connection's grace period.
+	if s.reapTimers[clientKey] != timer {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.reapTimers, clientKey)
+	if s.sockets[clientKey].connection != nil || s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
+	if !s.replay.ClearClient(clientKey) {
+		s.armReapLocked(clientKey)
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	if s.ClientReaped != nil {
+		s.ClientReaped(clientKey)
+	}
 }
 
 func (s *WebSocketServer) Publish(ctx context.Context, channel string, data any) error {

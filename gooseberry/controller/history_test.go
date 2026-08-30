@@ -152,7 +152,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.Release("busy", project.ID, root)
+	manager.Release("busy", project.ID, root, "client")
 	manager.mu.Lock()
 	exists := manager.sessions["busy"] == busy
 	manager.mu.Unlock()
@@ -198,7 +198,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 		t.Fatalf("fork lost selected model: %#v", child.Model)
 	}
 	beforeChildLoad := loads.Load()
-	transcript, err := manager.Messages(ctx, child.SessionID, project.ID, project.Roots[0])
+	transcript, err := manager.Messages(ctx, child.SessionID, project.ID, project.Roots[0], "client")
 	if err != nil || loads.Load() != beforeChildLoad+1 || !strings.Contains(string(transcript["messages"].(json.RawMessage)), "Needle answer") {
 		t.Fatalf("forked chat did not load its inherited Goose transcript: %#v, %v", transcript, err)
 	}

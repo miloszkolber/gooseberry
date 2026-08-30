@@ -108,6 +108,9 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if _, err := h.Projects.Close(request.ID); err != nil {
 			return nil, err
 		}
+		if h.Sessions != nil {
+			h.Sessions.ReleaseProject(request.ID)
+		}
 		return map[string]bool{"ok": true}, nil
 	case "project.watchReady":
 		var request struct {
@@ -215,7 +218,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.ProjectID == "" {
 			return nil, fmt.Errorf("malformed session request")
 		}
-		return h.Sessions.Create(ctx, request.ProjectID, request.CWD, request.Model, request.ThinkingLevel)
+		return h.Sessions.Create(ctx, request.ProjectID, request.CWD, request.Model, request.ThinkingLevel, clientKey)
 	case "session.fork":
 		var request sessionOwnerRequest
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {
@@ -307,7 +310,16 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err != nil {
 			return nil, err
 		}
-		return h.Sessions.Messages(ctx, request.SessionID, request.ProjectID, cwd)
+		return h.Sessions.Messages(ctx, request.SessionID, request.ProjectID, cwd, clientKey)
+	case "session.setLeases":
+		var request struct {
+			Revision uint64         `json:"revision"`
+			Sessions []sessionLease `json:"sessions"`
+		}
+		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.Sessions == nil {
+			return nil, fmt.Errorf("malformed session lease snapshot")
+		}
+		return ack(h.Sessions.SetLeases(clientKey, request.Revision, request.Sessions))
 	case "session.release":
 		var request sessionOwnerRequest
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {
@@ -317,7 +329,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err != nil {
 			return nil, err
 		}
-		h.Sessions.Release(request.SessionID, request.ProjectID, cwd)
+		h.Sessions.Release(request.SessionID, request.ProjectID, cwd, clientKey)
 		return map[string]bool{"ok": true}, nil
 	case "session.rename", "session.archive", "session.delete":
 		var request struct {

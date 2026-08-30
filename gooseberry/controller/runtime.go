@@ -95,20 +95,22 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	git := NewGit(projects, config.Policy)
 	watches := NewProjectWatches(projects, git, publish)
 	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Settings: settings, Admin: admin, Git: git, Watches: watches}
-	welcome := func(context.Context) (any, error) {
-		open, err := projects.List(false)
-		if err != nil {
-			return nil, err
-		}
+	welcome := func(ctx context.Context) (any, error) {
 		recent, err := projects.List(true)
 		if err != nil {
 			return nil, err
+		}
+		open := make([]Project, 0, len(recent))
+		for _, project := range recent {
+			if !project.Closed {
+				open = append(open, project)
+			}
 		}
 		appConfig, err := settings.Get()
 		if err != nil {
 			return nil, err
 		}
-		result := map[string]any{"protocolVersion": BrowserProtocolVersion, "projects": open, "recentProjects": recent, "config": appConfig, "gooseStatus": runtimeGooseStatus(context.Background(), client), "pendingPermissions": sessions.PendingPermissions()}
+		result := map[string]any{"protocolVersion": BrowserProtocolVersion, "projects": open, "recentProjects": recent, "config": appConfig, "gooseStatus": runtimeGooseStatus(ctx, client), "pendingPermissions": sessions.PendingPermissions()}
 		if config.AppVersion != "" {
 			result["appVersion"] = config.AppVersion
 		}
@@ -119,6 +121,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 		return nil, err
 	}
 	socket.LoginSnapshot = admin.logins.Snapshot
+	socket.ClientReaped = sessions.ReleaseClient
 	ready := func(response http.ResponseWriter, request *http.Request) {
 		status := runtimeGooseStatus(request.Context(), client)
 		code := http.StatusOK

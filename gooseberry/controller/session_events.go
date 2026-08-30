@@ -175,6 +175,8 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 }
 
 func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any, gooseOnly bool) []map[string]any {
+	// Notifications can change a closed chat without holding an operation ref.
+	entry.inactiveBytes = 0
 	if gooseOnly {
 		return applyGooseOnlyUpdate(entry, kind, update)
 	}
