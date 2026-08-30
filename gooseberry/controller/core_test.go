@@ -6,9 +6,36 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestRegularFileOpenKeepsNonblockingSafety(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preview")
+	if err := os.WriteFile(path, []byte("safe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := openRegularFile(path, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, file.Fd(), syscall.F_GETFL, 0)
+	if errno != 0 || flags&syscall.O_NONBLOCK == 0 {
+		t.Fatalf("open could block if the checked path became a FIFO: flags=%d, %v", flags, errno)
+	}
+	if _, _, err := readBoundedFile(path, 3); err == nil {
+		t.Fatal("accepted an oversized regular file")
+	}
+	pipe := filepath.Join(filepath.Dir(path), "pipe")
+	if err := syscall.Mkfifo(pipe, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readBoundedFile(pipe, 4); err == nil {
+		t.Fatal("accepted a named pipe")
+	}
+}
 
 func TestCorePreservesStateAndPathBoundaries(t *testing.T) {
 	mount := t.TempDir()
