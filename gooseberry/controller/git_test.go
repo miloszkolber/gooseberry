@@ -39,6 +39,74 @@ func gitFixture(t *testing.T) (*Git, Project, string, func(...string)) {
 	return service, project, repository, git
 }
 
+func TestGitLinkedWorktreeDiscoveryAndScopedPreviews(t *testing.T) {
+	_, _, repository, git := gitFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	const name = "shared.txt"
+	const before, committed, working = "original\n", "committed in linked worktree\n", "linked working tree\n"
+	if err := os.WriteFile(filepath.Join(repository, name), []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", name)
+	git("commit", "-m", "initial")
+	base := resolveCommit(ctx, repository, "HEAD")
+	worktree := t.TempDir()
+	git("worktree", "add", "-b", "linked", worktree)
+	indirection, err := os.ReadFile(filepath.Join(worktree, ".git"))
+	if err != nil || !strings.HasPrefix(string(indirection), "gitdir: ") {
+		t.Fatalf("expected a linked-worktree .git file: %q, %v", indirection, err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, name), []byte(committed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("-C", worktree, "add", name)
+	git("-C", worktree, "commit", "-m", "linked change")
+	commit := resolveCommit(ctx, worktree, "HEAD")
+	if err := os.WriteFile(filepath.Join(worktree, name), []byte(working), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Both directories are admitted mounts, but this project owns only the
+	// linked worktree. Shared Git metadata must not admit the primary checkout.
+	policy, err := NewPathPolicy([]string{repository, worktree}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := NewProjects(Store{Dir: t.TempDir()}, policy)
+	project, err := projects.Open(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewGit(projects, policy)
+	list, err := service.ListRepositories(ctx, project.ID)
+	if err != nil || !list.Complete || len(list.Warnings) != 0 || len(list.Repositories) != 1 {
+		t.Fatalf("linked discovery: %#v, %v", list, err)
+	}
+	discovered := list.Repositories[0]
+	if discovered.Root != project.Roots[0] || discovered.Head.Kind != "branch" || discovered.Head.Name != "linked" || discovered.Clean {
+		t.Fatalf("linked repository identity/status: %#v", discovered)
+	}
+	for _, check := range []struct {
+		scope    GitDiffScope
+		modified string
+	}{
+		{GitDiffScope{Kind: "commit", SHA: commit}, committed},
+		{GitDiffScope{Kind: "pinned", BaseRef: base}, working},
+	} {
+		status, err := service.Status(ctx, project.ID, worktree, check.scope)
+		if err != nil || len(status.Changes) != 1 || status.Changes[0].Path != name {
+			t.Fatalf("linked %s status: %#v, %v", check.scope.Kind, status, err)
+		}
+		preview, err := service.DiffFile(ctx, project.ID, worktree, name, check.scope)
+		if err != nil || preview.Unavailable || preview.Original != before || preview.Modified != check.modified {
+			t.Fatalf("linked %s preview: %#v, %v", check.scope.Kind, preview, err)
+		}
+	}
+	if _, err := service.DiffFile(ctx, project.ID, repository, name, GitDiffScope{}); err == nil {
+		t.Fatal("linked-worktree project exposed the primary checkout")
+	}
+}
+
 func TestGitPreservesOddPathsAndBoundsDiffPreviews(t *testing.T) {
 	service, project, repository, git := gitFixture(t)
 	name := "odd\tname\nline.txt"
