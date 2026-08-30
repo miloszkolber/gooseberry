@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { toText } from "./tools/tool-helpers";
+import { ToolOutput } from "./tools/tool-output";
 import type { ToolStatus } from "./types";
 
 export interface ToolRenderProps {
@@ -70,26 +72,24 @@ export function resolveProminence(toolName: string): ResolvedProminence {
 	return { prominence, defaultExpanded: reg?.defaultExpanded ?? false };
 }
 
-export function toText(value: unknown): string {
-	if (value == null) return "";
-	if (typeof value === "string") return value;
-	try {
-		return JSON.stringify(value, null, 2);
-	} catch {
-		return String(value);
-	}
-}
-
-export function DefaultToolRenderer({ args, result, status }: ToolRenderProps): ReactNode {
+export function DefaultToolRenderer({
+	args,
+	result,
+	status,
+	toolName,
+}: ToolRenderProps): ReactNode {
 	const argsText = toText(args);
-	const resultText = toText(result);
 	return (
 		<div className="flex flex-col gap-xs">
 			{argsText && argsText !== "{}" ? (
 				<pre className="overflow-auto tr-code-text text-text-muted">{argsText}</pre>
 			) : null}
-			{status !== "running" && resultText ? (
-				<pre className="overflow-auto tr-code-text text-text-default">{resultText}</pre>
+			<ToolOutput result={result} error={status === "error"} />
+			{status === "done" &&
+			(toolName === "apps__create_app" || toolName === "apps__iterate_app") ? (
+				<p className="text-text-muted tr-text-metadata">
+					App saved in Goose. Interactive app windows are not supported here yet.
+				</p>
 			) : null}
 		</div>
 	);

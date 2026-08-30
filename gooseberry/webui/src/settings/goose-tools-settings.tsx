@@ -41,9 +41,11 @@ export function GooseToolsSettings() {
 		const target = activeTarget;
 		setLoading(true);
 		setError(null);
+		setLoadedSessionTarget(null);
 		try {
 			const nextCatalog = await getTransport().request("goose.extensionList", {});
 			if (sequence !== loadSequence.current || target !== activeTargetRef.current) return;
+			setCatalog(nextCatalog);
 			if (activeProjectId && activeSessionId) {
 				const [nextExtensions, nextTools] = await Promise.all([
 					getTransport().request("session.extensionList", {
@@ -56,12 +58,10 @@ export function GooseToolsSettings() {
 					}),
 				]);
 				if (sequence !== loadSequence.current || target !== activeTargetRef.current) return;
-				setCatalog(nextCatalog);
 				setExtensions(nextExtensions);
 				setTools(nextTools);
 				setLoadedSessionTarget(target);
 			} else {
-				setCatalog(nextCatalog);
 				setExtensions([]);
 				setTools([]);
 				setLoadedSessionTarget(null);
@@ -75,6 +75,8 @@ export function GooseToolsSettings() {
 			}
 		}
 	}, [activeProjectId, activeSessionId, activeTarget]);
+	const loadRef = useRef(load);
+	loadRef.current = load;
 
 	useEffect(() => {
 		void load();
@@ -86,7 +88,7 @@ export function GooseToolsSettings() {
 		setError(null);
 		try {
 			await action();
-			if (target === activeTargetRef.current) await load();
+			await loadRef.current();
 		} catch (cause) {
 			if (target === activeTargetRef.current) setError(errorText(cause));
 		} finally {
@@ -173,7 +175,7 @@ export function GooseToolsSettings() {
 							<Button
 								size="sm"
 								variant="outline"
-								disabled={!extension.configKey || busy !== null}
+								disabled={!extension.configKey || loading || busy !== null}
 								aria-label={`${extension.enabled ? "Disable" : "Enable"} ${extension.displayName ?? extension.name}`}
 								onClick={() =>
 									void mutate(`enable:${extension.configKey}`, () =>
@@ -189,7 +191,7 @@ export function GooseToolsSettings() {
 							<Button
 								size="sm"
 								variant="ghost"
-								disabled={!extension.configKey || busy !== null}
+								disabled={!extension.configKey || loading || busy !== null}
 								aria-label={`Remove ${extension.displayName ?? extension.name}`}
 								onClick={() =>
 									void mutate(`remove:${extension.configKey}`, () =>
@@ -218,7 +220,7 @@ export function GooseToolsSettings() {
 							<ExtensionLabel extension={extension} />
 							<Button
 								size="sm"
-								disabled={busy !== null}
+								disabled={loading || busy !== null}
 								aria-label={`Add ${extension.displayName ?? extension.name}`}
 								onClick={() =>
 									void mutate(`add:${extension.name}`, () =>
@@ -244,7 +246,9 @@ export function GooseToolsSettings() {
 					</p>
 				) : !sessionInventoryCurrent ? (
 					<p role="status" className="text-text-muted tr-text-metadata">
-						Loading active chat extensions and tools…
+						{loading
+							? "Loading active chat extensions and tools…"
+							: "Active chat tools are unavailable. Refresh to try again."}
 					</p>
 				) : (
 					<>

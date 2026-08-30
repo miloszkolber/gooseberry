@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 )
@@ -231,6 +232,7 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			toolName = "ask_user_question"
 		}
 		toolID := textValue(update["toolCallId"])
+		delete(entry.pendingToolOutputs, toolID)
 		input := update["rawInput"]
 		if input == nil {
 			input = map[string]any{}
@@ -242,13 +244,7 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		toolID := textValue(update["toolCallId"])
 		status := textValue(update["status"])
 		finished := status == "completed" || status == "error" || status == "failed"
-		result := update["rawOutput"]
-		if result == nil {
-			result = update["content"]
-		}
-		if result == nil {
-			result = update["error"]
-		}
+		result := projectToolOutput(entry, toolID, update, finished)
 		if finished {
 			message := map[string]any{"role": "toolResult", "toolCallId": toolID, "content": result, "details": update}
 			if status == "error" || status == "failed" {
@@ -274,6 +270,75 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			entry.runID = textValue(value)
 		}
 		return []map[string]any{{"type": "session-info", "title": entry.title}}
+	}
+	return nil
+}
+
+// ACP updates replace only the supplied fields. Keep unfinished output by call
+// ID so interleaved tools and status-only completion cannot erase it.
+type toolOutput struct {
+	Raw       any
+	Content   any
+	LiveText  string
+	Sequence  float64
+	Truncated bool
+}
+
+func projectToolOutput(entry *sessionEntry, id string, update map[string]any, finished bool) any {
+	output := entry.pendingToolOutputs[id]
+	if raw := update["rawOutput"]; raw != nil {
+		output.Raw = raw
+	} else if failure := update["error"]; failure != nil {
+		output.Raw = failure
+	}
+	if content := update["content"]; content != nil {
+		output.Content = content
+	}
+	// Goose shell output arrives as ordered deltas, not a final result snapshot.
+	notification := mapValue(mapValue(update["_meta"])["toolNotification"])
+	if notification["type"] == "live_output" {
+		params := mapValue(notification["params"])
+		sequence, _ := params["sequence"].(float64)
+		if sequence > output.Sequence {
+			output.Sequence = sequence
+			output.Truncated = output.Truncated || params["truncated"] == true
+			const maxLiveOutput = 256 * 1024
+			for _, chunk := range arrayValue(params["chunks"]) {
+				text := textValue(mapValue(chunk)["output"])
+				remaining := maxLiveOutput - len(output.LiveText)
+				if len(text) > remaining {
+					output.Truncated = true
+					for remaining > 0 && !utf8.RuneStart(text[remaining]) {
+						remaining--
+					}
+					text = text[:remaining]
+				}
+				output.LiveText += text
+			}
+		}
+	}
+	if finished {
+		delete(entry.pendingToolOutputs, id)
+	} else {
+		if entry.pendingToolOutputs == nil {
+			entry.pendingToolOutputs = make(map[string]toolOutput)
+		}
+		entry.pendingToolOutputs[id] = output
+	}
+	if output.Raw != nil && len(arrayValue(output.Content)) > 0 {
+		return map[string]any{"structuredContent": output.Raw, "content": output.Content}
+	}
+	if output.Raw != nil {
+		return output.Raw
+	}
+	if output.Content != nil {
+		return output.Content
+	}
+	if output.Truncated {
+		return output.LiveText + "\n[Live output truncated]"
+	}
+	if output.LiveText != "" {
+		return output.LiveText
 	}
 	return nil
 }

@@ -22,7 +22,7 @@ function providerOf(result: unknown): string {
 export function WebSearchCard({ args, result, status }: ToolRenderProps) {
 	const query = firstQuery(args);
 	const provider = providerOf(result);
-	const output = resultText(result);
+	const output = resultText(result, status === "error");
 
 	return (
 		<div data-testid="tool-web_search" className="flex flex-col gap-xs">

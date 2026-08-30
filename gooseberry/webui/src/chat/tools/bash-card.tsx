@@ -3,8 +3,8 @@ import { resultText, strArg } from "./tool-helpers";
 
 export function BashCard({ args, result, status }: ToolRenderProps) {
 	const command = strArg(args, "command");
-	const output = resultText(result);
 	const isError = status === "error";
+	const output = resultText(result, isError);
 
 	return (
 		<div

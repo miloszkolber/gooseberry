@@ -4,13 +4,14 @@ import type { ToolRenderProps } from "../tool-registry";
 import { CodeBlock } from "./code-block";
 import { Collapsible, countLines } from "./collapsible";
 import { languageFromPath, resultText, strArg } from "./tool-helpers";
+import { ToolOutput } from "./tool-output";
 
 export function WriteCard({ args, result, status, projectAreaRoot }: ToolRenderProps) {
 	const path = strArg(args, "path");
 	const displayPath = projectRelativePath(path, projectAreaRoot);
 	const content = strArg(args, "content");
 	const lang = languageFromPath(path);
-	const message = resultText(result);
+	const message = resultText(result, status === "error");
 
 	return (
 		<div data-testid="tool-write" className="flex flex-col gap-xs">
@@ -19,7 +20,9 @@ export function WriteCard({ args, result, status, projectAreaRoot }: ToolRenderP
 				<span className="truncate text-text-default" title={path}>
 					{displayPath}
 				</span>
-				<span className="shrink-0 text-text-muted">written</span>
+				<span className="shrink-0 text-text-muted">
+					{status === "running" ? "writing…" : status === "error" ? "write failed" : "written"}
+				</span>
 			</div>
 			{status === "error" ? (
 				<pre className="overflow-auto px-sm py-xs text-feedback-error tr-code-text">{message}</pre>
@@ -30,6 +33,7 @@ export function WriteCard({ args, result, status, projectAreaRoot }: ToolRenderP
 			) : (
 				<span className="text-text-muted tr-text-metadata italic">(empty file)</span>
 			)}
+			{status !== "error" ? <ToolOutput result={result} /> : null}
 		</div>
 	);
 }

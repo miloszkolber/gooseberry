@@ -30,28 +30,29 @@ type sessionEntry struct {
 	refs      int
 	ephemeral bool
 
-	projectID         string
-	cwd               string
-	parentSessionID   string
-	title             string
-	model             *WireModel
-	thinkingLevel     string
-	configOptions     []any
-	messages          []any
-	streaming         bool
-	settlement        *SessionSettlement
-	stats             SessionStats
-	queue             SessionQueue
-	runID             string
-	objectiveToken    string
-	attached          uint64
-	replay            *sessionEntry
-	promptGeneration  uint64
-	inactiveAt        time.Time
-	inactiveBytes     int // Encoded size under state; zero means a mutation needs recounting.
-	pendingEcho       *userEcho
-	consumedQuestions map[string]bool
-	drainScheduled    bool
+	projectID          string
+	cwd                string
+	parentSessionID    string
+	title              string
+	model              *WireModel
+	thinkingLevel      string
+	configOptions      []any
+	messages           []any
+	streaming          bool
+	settlement         *SessionSettlement
+	stats              SessionStats
+	queue              SessionQueue
+	runID              string
+	objectiveToken     string
+	attached           uint64
+	replay             *sessionEntry
+	promptGeneration   uint64
+	inactiveAt         time.Time
+	inactiveBytes      int // Encoded size under state; zero means a mutation needs recounting.
+	pendingEcho        *userEcho
+	pendingToolOutputs map[string]toolOutput
+	consumedQuestions  map[string]bool
+	drainScheduled     bool
 }
 
 type userEcho struct {
@@ -306,6 +307,7 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.queue = replay.queue
 	entry.runID = replay.runID
 	entry.pendingEcho = replay.pendingEcho
+	entry.pendingToolOutputs = replay.pendingToolOutputs
 	entry.attached = replay.attached
 	entry.replay = nil
 	entry.state.Unlock()
@@ -691,7 +693,7 @@ func (m *SessionManager) evictLocked() {
 			entry.inactiveAt = m.now()
 		}
 		if entry.inactiveBytes == 0 {
-			encoded, err := json.Marshal(entry.messages)
+			encoded, err := json.Marshal([]any{entry.messages, entry.pendingToolOutputs})
 			if err != nil {
 				// A projection that cannot be measured must not bypass the budget.
 				delete(m.sessions, id)

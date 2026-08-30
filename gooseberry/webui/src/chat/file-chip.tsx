@@ -1,5 +1,5 @@
 import { FileIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 const CHIP_BASE =
 	"flex max-w-full items-center gap-xs rounded-[var(--radius-sm)] border bg-clip-padding px-sm py-xs tr-text-metadata";
@@ -13,6 +13,7 @@ interface FileChipProps {
 	meta?: ReactNode;
 	trailing?: ReactNode;
 	onClick?: () => void;
+	ref?: Ref<HTMLButtonElement>;
 	tone?: keyof typeof CHIP_TONE;
 	icon?: boolean;
 	title?: string;
@@ -28,6 +29,7 @@ export function FileChip({
 	meta,
 	trailing,
 	onClick,
+	ref,
 	tone = "default",
 	icon = true,
 	...rest
@@ -44,6 +46,7 @@ export function FileChip({
 	if (onClick) {
 		return (
 			<button
+				ref={ref}
 				type="button"
 				onClick={onClick}
 				className={`${chip} transition-colors hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary`}

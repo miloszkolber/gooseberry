@@ -3,12 +3,81 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 )
+
+func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	image := []any{map[string]any{"type": "content", "content": map[string]any{"type": "image", "data": "AA==", "mimeType": "image/png"}}}
+	apply := func(id string, update map[string]any) any {
+		t.Helper()
+		update["toolCallId"] = id
+		return applySessionUpdate(entry, "tool_call_update", update, false)[0]["tool"]
+	}
+	apply("image", map[string]any{"status": "in_progress", "content": image})
+	apply("other", map[string]any{"status": "in_progress", "rawOutput": "previous"})
+	apply("image", map[string]any{"rawOutput": map[string]any{"width": 10}})
+	got := apply("image", map[string]any{"status": "completed"})
+	want := map[string]any{"structuredContent": map[string]any{"width": 10}, "content": image}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(mapValue(entry.messages[0])["content"], want) {
+		t.Fatalf("mixed image result was lost from live output or history: %#v", got)
+	}
+	for _, value := range []any{false, "", []any{}} {
+		apply("other", map[string]any{"rawOutput": value})
+		got = apply("other", map[string]any{"status": "failed"})
+		message := mapValue(entry.messages[len(entry.messages)-1])
+		if !reflect.DeepEqual(got, value) || !reflect.DeepEqual(message["content"], value) || message["isError"] != true {
+			t.Fatalf("explicit output or failure was overwritten: %#v", message)
+		}
+	}
+	if len(entry.pendingToolOutputs) != 0 {
+		t.Fatal("completed tools retained transient output")
+	}
+	entry.attached = 1
+	entry.replay = newSessionEntry("chat", "project", "/project", "", "")
+	entry.replay.attached = 2
+	manager := &SessionManager{sessions: map[string]*sessionEntry{"chat": entry}}
+	update := map[string]any{"sessionId": "chat", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "replayed", "rawOutput": "new output"}}
+	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(2)), update, false); err != nil {
+		t.Fatal(err)
+	}
+	mapValue(update["update"])["rawOutput"] = "stale output"
+	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(1)), update, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(entry.pendingToolOutputs) != 0 || entry.replay.pendingToolOutputs["replayed"].Raw != "new output" {
+		t.Fatal("old connection output entered a replacement replay")
+	}
+}
+
+func TestShellLiveOutputIsOrderedBoundedAndReplacedByFinalResult(t *testing.T) {
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	live := func(sequence float64, text string) any {
+		return projectToolOutput(entry, "shell", map[string]any{"_meta": map[string]any{"toolNotification": map[string]any{
+			"type": "live_output", "params": map[string]any{"sequence": sequence, "chunks": []any{map[string]any{"stream": "stdout", "output": text}}},
+		}}}, false)
+	}
+	if live(1, "first\n") != "first\n" || live(2, "second\n") != "first\nsecond\n" || live(1, "duplicate") != "first\nsecond\n" {
+		t.Fatal("live deltas were lost, reordered or duplicated")
+	}
+	bounded := textValue(live(3, strings.Repeat("界", 100*1024)))
+	if len(entry.pendingToolOutputs["shell"].LiveText) > 256*1024 || !utf8.ValidString(bounded) || !strings.HasSuffix(bounded, "[Live output truncated]") {
+		t.Fatal("live output bypassed its byte bound or silently truncated a character")
+	}
+	if got := projectToolOutput(entry, "shell", map[string]any{"rawOutput": "final"}, true); got != "final" || len(entry.pendingToolOutputs) != 0 {
+		t.Fatalf("final output did not replace the streaming preview: %#v", got)
+	}
+	live(1, "retained on completion")
+	if got := projectToolOutput(entry, "shell", map[string]any{}, true); got != "retained on completion" {
+		t.Fatalf("status-only completion erased the streaming preview: %#v", got)
+	}
+}
 
 func TestQueueRevisionRejectsStaleAndConcurrentMutations(t *testing.T) {
 	manager := &SessionManager{sessions: map[string]*sessionEntry{}, now: time.Now}

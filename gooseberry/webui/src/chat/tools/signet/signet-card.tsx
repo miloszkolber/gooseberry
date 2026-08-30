@@ -46,7 +46,7 @@ function runningLabel(toolName: string): string {
 export function SignetCard({ toolName, args, result, status }: ToolRenderProps) {
 	const details = signetDetails(result);
 	const query = strArg(args, "query") || strArg(args, "content");
-	const output = resultText(result);
+	const output = resultText(result, status === "error");
 	const offline = details.error === "daemon_offline";
 	const count =
 		details.memoriesFound ?? details.sourcesFound ?? details.sessionsFound ?? details.memoriesSaved;

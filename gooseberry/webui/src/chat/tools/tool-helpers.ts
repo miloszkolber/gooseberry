@@ -1,23 +1,45 @@
-export function resultText(result: unknown): string {
-	if (result == null) return "";
-	if (typeof result === "string") return result;
-	if (typeof result === "object" && "content" in result) {
-		const content = (result as { content: unknown }).content;
-		if (Array.isArray(content)) {
-			return content
-				.filter(
-					(c): c is { type: "text"; text: string } =>
-						typeof c === "object" && c !== null && (c as { type?: string }).type === "text",
-				)
-				.map((c) => c.text)
-				.join("");
+export function toText(value: unknown): string {
+	if (value == null) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
+}
+
+/** MCP result envelopes and ACP's wrapped content carry the same ordered blocks. */
+export function toolContent(result: unknown, includeStructured = false): unknown[] {
+	if (result == null) return [];
+	const content = typeof result === "object" ? Reflect.get(result, "content") : undefined;
+	let blocks: unknown[] = Array.isArray(result) ? result : [result];
+	if (Array.isArray(content)) {
+		const structured = Reflect.get(result as object, "structuredContent");
+		blocks = content.length > 0 || structured === undefined ? content : [structured];
+		// A final failure may supply only rawOutput while retaining earlier ACP content.
+		if (includeStructured && content.length > 0 && structured !== undefined) {
+			blocks = [...content, structured];
 		}
 	}
-	try {
-		return JSON.stringify(result, null, 2);
-	} catch {
-		return String(result);
-	}
+	return blocks.map((block: unknown) =>
+		block && typeof block === "object" && Reflect.get(block, "type") === "content"
+			? Reflect.get(block, "content")
+			: block,
+	);
+}
+
+export function resultText(result: unknown, error = false): string {
+	return toolContent(result, error)
+		.map((block) => {
+			if (block && typeof block === "object") {
+				if (Reflect.get(block, "type") === "text" && typeof Reflect.get(block, "text") === "string")
+					return Reflect.get(block, "text") as string;
+				if (Reflect.get(block, "type") === "image") return "";
+			}
+			return toText(block);
+		})
+		.filter(Boolean)
+		.join("\n");
 }
 
 export function strArg(args: Record<string, unknown>, key: string): string {

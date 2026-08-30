@@ -9,4 +9,4 @@ export function subagentSummary(args: Record<string, unknown>): string {
 
 registerToolRenderer("subagent", SubagentCard, { summary: ({ args }) => subagentSummary(args) });
 registerToolRenderer("delegate", SubagentCard, { summary: ({ args }) => subagentSummary(args) });
-registerToolRenderer("load", SubagentCard, { summary: ({ args }) => subagentSummary(args) });
+registerToolRenderer("load", SubagentCard, { summary: ({ args }) => strArg(args, "source") });

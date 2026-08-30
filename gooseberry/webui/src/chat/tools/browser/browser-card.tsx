@@ -1,7 +1,7 @@
 import { Camera, Globe } from "lucide-react";
 import type { ToolRenderProps } from "../../tool-registry";
 import { Collapsible, countLines } from "../collapsible";
-import { resultText, strArg } from "../tool-helpers";
+import { resultText, strArg, toolContent } from "../tool-helpers";
 
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -27,17 +27,6 @@ export interface BrowserDetails {
 	artifact?: BrowserArtifact;
 }
 
-function contentOf(result: unknown): unknown[] {
-	if (!result || typeof result !== "object") return [];
-	const content = Array.isArray(result) ? result : Reflect.get(result, "content");
-	if (!Array.isArray(content)) return [];
-	return content.map((block: unknown) =>
-		block && typeof block === "object" && Reflect.get(block, "type") === "content"
-			? Reflect.get(block, "content")
-			: block,
-	);
-}
-
 function browserResponse(result: unknown): Record<string, unknown> | undefined {
 	const response = (value: unknown): Record<string, unknown> | undefined => {
 		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -53,7 +42,7 @@ function browserResponse(result: unknown): Record<string, unknown> | undefined {
 		if (structured) return structured;
 	}
 	// Goose may retain MCP's text fallback instead of its structured payload.
-	const texts = typeof result === "string" ? [result] : contentOf(result);
+	const texts = toolContent(result);
 	for (const block of texts) {
 		const text =
 			typeof block === "string"
@@ -118,7 +107,7 @@ function isBrowserImageBlock(value: unknown): value is BrowserImageBlock {
 }
 
 export function browserImages(result: unknown): BrowserImageBlock[] {
-	return contentOf(result).filter(isBrowserImageBlock);
+	return toolContent(result).filter(isBrowserImageBlock);
 }
 
 export function browserArtifactUrl(url: string | undefined): string | undefined {
@@ -155,7 +144,7 @@ export function BrowserCard({ args, result, status }: ToolRenderProps) {
 			]
 				.filter((value): value is string => typeof value === "string" && value.length > 0)
 				.join("\n")
-		: resultText(result);
+		: resultText(result, status === "error");
 	const failed =
 		status === "error" || response?.outcome === "failed" || response?.outcome === "rejected";
 	const images = browserImages(result);

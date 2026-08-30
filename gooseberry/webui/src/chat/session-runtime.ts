@@ -239,7 +239,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				),
 				toolResults: {
 					...rt.toolResults,
-					[toolCallId]: { status: "running", raw: event.tool ?? { title: event.toolName } },
+					[toolCallId]: { status: "running", raw: undefined },
 				},
 			};
 		}
@@ -257,7 +257,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 										: event.type === "tool-end"
 											? "done"
 											: "running",
-								raw: event.tool ?? event.status,
+								raw: event.tool ?? rt.toolResults[event.toolCallId]?.raw ?? event.status,
 							},
 						},
 					}

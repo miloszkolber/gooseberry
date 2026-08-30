@@ -3,17 +3,26 @@ import { projectRelativePath } from "@/lib";
 import type { ToolRenderProps } from "../tool-registry";
 import { Collapsible } from "./collapsible";
 import { resultText, strArg } from "./tool-helpers";
+import { ToolOutput } from "./tool-output";
 
 export function EditCard({ args, result, status, projectAreaRoot }: ToolRenderProps) {
 	const path = strArg(args, "path");
-	const oldText = strArg(args, "oldText") || strArg(args, "old_string") || strArg(args, "old");
-	const newText = strArg(args, "newText") || strArg(args, "new_string") || strArg(args, "new");
-	const message = resultText(result);
+	const oldText =
+		strArg(args, "before") ||
+		strArg(args, "oldText") ||
+		strArg(args, "old_string") ||
+		strArg(args, "old");
+	const newText =
+		strArg(args, "after") ||
+		strArg(args, "newText") ||
+		strArg(args, "new_string") ||
+		strArg(args, "new");
+	const message = resultText(result, status === "error");
 
 	if (status === "error") {
 		return (
 			<div data-testid="tool-edit" className="flex flex-col gap-xs">
-				<EditHeader path={path} projectAreaRoot={projectAreaRoot} />
+				<EditHeader path={path} projectAreaRoot={projectAreaRoot} status={status} />
 				<pre className="overflow-auto px-sm py-xs text-feedback-error tr-code-text">{message}</pre>
 			</div>
 		);
@@ -24,7 +33,7 @@ export function EditCard({ args, result, status, projectAreaRoot }: ToolRenderPr
 
 	return (
 		<div data-testid="tool-edit" className="flex flex-col gap-xs">
-			<EditHeader path={path} projectAreaRoot={projectAreaRoot} />
+			<EditHeader path={path} projectAreaRoot={projectAreaRoot} status={status} />
 			<Collapsible
 				lines={oldLines.length + newLines.length}
 				fadeClass="bg-[linear-gradient(to_top,var(--container-elevated-bg),transparent)]"
@@ -54,6 +63,7 @@ export function EditCard({ args, result, status, projectAreaRoot }: ToolRenderPr
 					})}
 				</div>
 			</Collapsible>
+			<ToolOutput result={result} />
 		</div>
 	);
 }
@@ -61,9 +71,11 @@ export function EditCard({ args, result, status, projectAreaRoot }: ToolRenderPr
 function EditHeader({
 	path,
 	projectAreaRoot,
+	status,
 }: {
 	path: string;
 	projectAreaRoot?: string | undefined;
+	status: ToolRenderProps["status"];
 }) {
 	const displayPath = projectRelativePath(path, projectAreaRoot);
 	return (
@@ -72,7 +84,9 @@ function EditHeader({
 			<span className="truncate text-text-default" title={path}>
 				{displayPath}
 			</span>
-			<span className="shrink-0 text-text-muted">edited</span>
+			<span className="shrink-0 text-text-muted">
+				{status === "running" ? "editing…" : status === "error" ? "edit failed" : "edited"}
+			</span>
 		</div>
 	);
 }
