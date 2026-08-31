@@ -4,7 +4,7 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Finish existing behavior
 
-- **Performance acceptance.** Repeat the unchanged 5% controller p95 gate on the deployment host with separate application/browser containers, concurrent clients and Chromium activity. Include reconnect-to-interactive time and long histories. Workstation results vary; [measurements](performance.md) are not deployment acceptance. Repeat browser checks on native x86-64.
+- **Performance acceptance.** Run the [comparison probe](performance.md#run-a-comparison) against the unchanged 5% controller p95 gate on the deployment host with separate application/browser containers, concurrent clients and Chromium activity. Include reconnect-to-interactive time and long histories. Workstation measurements are not deployment acceptance. Repeat browser checks on native x86-64.
 - **Interactive Apps.** Host Goose's `ui://` resources in a sandbox with explicit resource access, mediated tool calls and lifecycle handling. Preserve ordinary app-management results. Do not inject resource HTML into the main UI.
 - **Nested agents.** Show supported summon/orchestrator activity without creating another conversation store. Verify child cancellation, permissions and concurrent observation against upstream behavior; child approval forwarding is not complete in pinned Goose.
 - **Git branch comparison.** Compare against an explicit branch base. Keep linked-worktree, submodule, unusual-filename and unborn-branch coverage. Git views remain read-only.
