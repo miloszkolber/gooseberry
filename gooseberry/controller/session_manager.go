@@ -402,13 +402,12 @@ func (m *SessionManager) Messages(ctx context.Context, sessionID, projectID, cwd
 	m.retainSessionLocked(clientKey, sessionID, projectID)
 	m.mu.Unlock()
 	entry.state.Lock()
-	messages, encodeErr := json.Marshal(entry.messages)
+	// Detach mutable containers, sharing immutable text/image strings. The
+	// response encoder can serialize a long history without holding state.
+	messages := cloneJSON(entry.messages)
 	entry.state.Unlock()
-	if encodeErr != nil {
-		return nil, encodeErr
-	}
 	summary := m.summary(sessionID, entry)
-	return map[string]any{"summary": summary, "messages": json.RawMessage(messages)}, nil
+	return map[string]any{"summary": summary, "messages": messages}, nil
 }
 
 func (m *SessionManager) SetModel(ctx context.Context, sessionID string, model WireModel) error {

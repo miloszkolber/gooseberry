@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -199,7 +200,57 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 	}
 	beforeChildLoad := loads.Load()
 	transcript, err := manager.Messages(ctx, child.SessionID, project.ID, project.Roots[0], "client")
-	if err != nil || loads.Load() != beforeChildLoad+1 || !strings.Contains(string(transcript["messages"].(json.RawMessage)), "Needle answer") {
+	encoded, encodeErr := json.Marshal(transcript["messages"])
+	if err != nil || encodeErr != nil || loads.Load() != beforeChildLoad+1 || !strings.Contains(string(encoded), "Needle answer") {
 		t.Fatalf("forked chat did not load its inherited Goose transcript: %#v, %v", transcript, err)
 	}
+	t.Run("message snapshots preserve ownership and JSON shape", func(t *testing.T) {
+		entry, err := manager.entry(child.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer manager.releaseEntry(entry)
+		for _, messages := range [][]any{nil, {}, {
+			map[string]any{"role": "toolResult", "content": map[string]any{
+				"text": "original tool output", "nullArray": []any(nil), "nullObject": map[string]any(nil),
+			}},
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "image", "data": "original-image", "mimeType": "image/png"},
+				map[string]any{"type": "text", "text": "original text"},
+			}},
+		}} {
+			entry.state.Lock()
+			entry.messages = messages
+			expected, err := json.Marshal(entry.messages)
+			entry.state.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := manager.Messages(ctx, child.SessionID, project.ID, project.Roots[0], "client")
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for range 100 {
+					entry.state.Lock()
+					if len(messages) > 0 {
+						mapValue(mapValue(messages[0])["content"])["text"] = "changed tool output"
+						mapValue(arrayValue(mapValue(messages[1])["content"])[0])["data"] = "changed-image"
+					}
+					applySessionUpdate(entry, "agent_message_chunk", map[string]any{"content": map[string]any{"type": "text", "text": "later"}}, false)
+					entry.state.Unlock()
+				}
+			}()
+			for range 100 {
+				encoded, err := json.Marshal(snapshot["messages"])
+				if err != nil || !bytes.Equal(encoded, expected) {
+					<-done
+					t.Fatalf("snapshot changed during later updates: got %s, want %s, error %v", encoded, expected, err)
+				}
+			}
+			<-done
+		}
+	})
 }

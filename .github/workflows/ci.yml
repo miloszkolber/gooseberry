@@ -80,7 +80,7 @@ jobs:
         working-directory: gooseberry
       - name: Validate Compose service isolation
         run: sh gooseberry/tests/deployment/compose.test.sh
-      - run: gofmt -d main.go cmd controller browser tests/goose | tee /tmp/gooseberry-gofmt.diff && test ! -s /tmp/gooseberry-gofmt.diff
+      - run: gofmt -d main.go cmd controller browser tests | tee /tmp/gooseberry-gofmt.diff && test ! -s /tmp/gooseberry-gofmt.diff
         working-directory: gooseberry
       - run: go test -race -count=1 ./...
         env:
@@ -128,7 +128,8 @@ jobs:
           [[ "$repository" = aaif-goose/goose && "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$asset" =~ ^goose-(aarch64|x86_64)-unknown-linux-gnu\.tar\.gz$ && "$checksum" =~ ^[0-9a-f]{64}$ ]]
           smoke=$(mktemp -d)
-          curl --fail --location --retry 3 --output "$smoke/goose.tar.gz" "https://github.com/$repository/releases/download/$version/$asset"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 300 \
+            --connect-timeout 20 --max-time 120 --output "$smoke/goose.tar.gz" "https://github.com/$repository/releases/download/$version/$asset"
           printf '%s  %s\n' "$checksum" "$smoke/goose.tar.gz" | sha256sum --check --status -
           tar -xzf "$smoke/goose.tar.gz" -C "$smoke" ./goose
           actual=$("$smoke/goose" --version)
