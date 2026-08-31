@@ -452,12 +452,18 @@ func appendMessageBlock(entry *sessionEntry, role string, block map[string]any) 
 func cloneJSON(value any) any {
 	switch value := value.(type) {
 	case map[string]any:
+		if value == nil {
+			return value
+		}
 		clone := make(map[string]any, len(value))
 		for key, item := range value {
 			clone[key] = cloneJSON(item)
 		}
 		return clone
 	case []any:
+		if value == nil {
+			return value
+		}
 		clone := make([]any, len(value))
 		for index, item := range value {
 			clone[index] = cloneJSON(item)
