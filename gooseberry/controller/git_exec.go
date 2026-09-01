@@ -29,7 +29,7 @@ func runGit(parent context.Context, directory string, args []string, limit int) 
 		pathValue = "/usr/local/bin:/usr/bin:/bin"
 	}
 	temporary := os.TempDir()
-	command.Env = []string{"PATH=" + pathValue, "HOME=" + temporary, "TMPDIR=" + temporary, "LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_OPTIONAL_LOCKS=0", "GIT_PAGER=cat", "GIT_TERMINAL_PROMPT=0", "PAGER=cat"}
+	command.Env = []string{"PATH=" + pathValue, "HOME=" + temporary, "TMPDIR=" + temporary, "LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_PAGER=cat", "GIT_TERMINAL_PROMPT=0", "PAGER=cat"}
 	var overflow sync.Once
 	stop := func() { overflow.Do(cancel) }
 	stdout, stderr := &boundedGitOutput{limit: limit, stop: stop}, &boundedGitOutput{limit: 64 * 1024, stop: stop}

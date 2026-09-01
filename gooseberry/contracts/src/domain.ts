@@ -210,8 +210,13 @@ export interface GitRepositoryList {
 	warnings: string[];
 }
 
+export interface GitBranchRef {
+	ref: string;
+	name: string;
+}
+
 export type GitDiffScope =
-	| { kind: "branch" }
+	| { kind: "branch"; baseRef: string }
 	| { kind: "uncommitted" }
 	| { kind: "commit"; sha: string }
 	| { kind: "pinned"; baseRef: string };
