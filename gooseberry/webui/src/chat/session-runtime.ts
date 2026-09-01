@@ -30,6 +30,7 @@ export interface SessionRuntime {
 	thinkingLevel: ThinkingLevel;
 	stats: SessionStats | null;
 	commands: SlashCommandInfo[];
+	commandRevision: number;
 	draft: string;
 	pendingExtUi: ExtUiDialogRequest | null;
 	extUiQueue: ExtUiDialogRequest[];
@@ -65,6 +66,7 @@ export function createSessionRuntime(
 		thinkingLevel,
 		stats: null,
 		commands: [],
+		commandRevision: 0,
 		draft: "",
 		pendingExtUi: null,
 		extUiQueue: [],
@@ -326,6 +328,8 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			return rt;
 		case "agent_start":
 			return { ...rt, isStreaming: true, attemptAssistantId: null };
+		case "commands":
+			return { ...rt, commands: event.commands, commandRevision: rt.commandRevision + 1 };
 		case "queue_update":
 			return {
 				...rt,

@@ -151,9 +151,12 @@ export function SlashCommandMenu({
 						index === activeIndex ? "bg-control-bg-selected text-text-default" : "text-text-muted",
 					)}
 				>
-					<span className="tr-code-text text-text-default">/{command.name}</span>
+					<span className="min-w-0 truncate tr-code-text text-text-default">
+						/{command.name}
+						{command.inputHint ? ` ${command.inputHint}` : ""}
+					</span>
 					{command.description ? (
-						<span className="truncate tr-text-metadata">{command.description}</span>
+						<span className="min-w-0 truncate tr-text-metadata">{command.description}</span>
 					) : null}
 					<span className="ml-auto shrink-0 text-text-muted tr-text-metadata">
 						{command.source}/{command.sourceInfo.scope}

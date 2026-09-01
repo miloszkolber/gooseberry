@@ -57,6 +57,7 @@ func (a *GooseAdmin) handleAutomation(ctx context.Context, method string, reques
 		if err != nil {
 			return nil, err
 		}
+		a.publishCommandCatalogChanged()
 		result := map[string]any{}
 		for target, source := range map[string]string{"id": "id", "fileName": "file_name", "filePath": "file_path"} {
 			value, err := requiredIdentifier(saved[source], source)
@@ -71,7 +72,11 @@ func (a *GooseAdmin) handleAutomation(ctx context.Context, method string, reques
 		if err != nil {
 			return nil, err
 		}
-		return ack(a.call(ctx, "_goose/unstable/recipes/delete", map[string]any{"id": id}, nil))
+		if err := a.call(ctx, "_goose/unstable/recipes/delete", map[string]any{"id": id}, nil); err != nil {
+			return nil, err
+		}
+		a.publishCommandCatalogChanged()
+		return map[string]any{"ok": true}, nil
 	case "goose.recipeParse":
 		content, ok := request["content"].(string)
 		if !ok || len(content) > 1024*1024 {
@@ -167,6 +172,12 @@ func (a *GooseAdmin) handleAutomation(ctx context.Context, method string, reques
 		}
 	default:
 		return nil, fmt.Errorf("unknown method: %s", method)
+	}
+}
+
+func (a *GooseAdmin) publishCommandCatalogChanged() {
+	if a.publish != nil {
+		a.publish("goose.commandCatalogChanged", map[string]any{})
 	}
 }
 
