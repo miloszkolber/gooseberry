@@ -234,6 +234,7 @@ function ToolRow({
 			args: row.args,
 			result: row.tool?.raw,
 			app: row.tool?.app,
+			subagentActivity: row.tool?.subagentActivity,
 			status: row.tool?.status ?? (row.dead ? "error" : "running"),
 			projectAreaRoot,
 			streaming: row.streaming,

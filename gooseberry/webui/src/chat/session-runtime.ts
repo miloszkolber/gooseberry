@@ -248,6 +248,8 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			const toolCallId = event.toolCallId;
 			if (!toolCallId) return rt;
 			const app = event.app ?? rt.toolResults[toolCallId]?.app;
+			const subagentActivity =
+				event.subagentActivity ?? rt.toolResults[toolCallId]?.subagentActivity;
 			return toolCallId
 				? {
 						...rt,
@@ -262,6 +264,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 											: "running",
 								raw: event.tool ?? rt.toolResults[toolCallId]?.raw ?? event.status,
 								...(app ? { app } : {}),
+								...(subagentActivity ? { subagentActivity } : {}),
 							},
 						},
 					}

@@ -31,6 +31,7 @@ export function messagesToRuntime(
 				status: message.isError ? "error" : "done",
 				raw: message.content,
 				...(message.app ? { app: message.app } : {}),
+				...(message.subagentActivity ? { subagentActivity: message.subagentActivity } : {}),
 			};
 			turnIdByMessageIndex.push(null);
 		}

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { messagesToRuntime } from "@/chat/hydrate";
+import { deriveRows } from "@/chat/rows";
 import { createSessionRuntime, reduceSessionEvent } from "@/chat/session-runtime";
 import { DefaultToolRenderer, getToolRenderer, type ToolRenderProps } from "@/chat/tool-registry";
 import { McpAppSessionProvider } from "@/chat/tools/apps/mcp-app-context";
@@ -206,10 +207,33 @@ test("official developer and summon results use their real arguments and show re
 		expect(failed).toContain("Actual Goose failure");
 		expect(failed).toContain("text-feedback-error");
 	}
+	const replay = messagesToRuntime([
+		{
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "summon-call",
+					toolName: "summon__delegate",
+					name: "delegate",
+					arguments: {},
+				},
+			],
+		},
+	]);
+	const activity = deriveRows(replay.turns, replay.toolResults, false).find(
+		(row) => row.kind === "activity",
+	);
+	const projected = activity?.kind === "activity" ? activity.steps[0] : undefined;
+	expect(projected?.kind === "tool" ? projected.toolName : undefined).toBe("summon__delegate");
 });
 
 test("status-only tool completion retains the right streamed result and matches history hydration", () => {
 	const image = [{ type: "image", mimeType: "image/png", data: "YWJjZA==" }];
+	const subagentActivity = {
+		events: [{ childSessionId: "child-1", toolName: "shell" }],
+		truncated: true,
+	};
 	const app = {
 		toolName: "read_image",
 		extensionName: "images",
@@ -228,6 +252,7 @@ test("status-only tool completion retains the right streamed result and matches 
 		toolCallId: "image",
 		tool: image,
 		app,
+		subagentActivity,
 	});
 	runtime = reduceSessionEvent(runtime, {
 		type: "tool-update",
@@ -240,7 +265,7 @@ test("status-only tool completion retains the right streamed result and matches 
 		status: "completed",
 	});
 	const history = messagesToRuntime([
-		{ role: "toolResult", toolCallId: "image", content: image, app },
+		{ role: "toolResult", toolCallId: "image", content: image, app, subagentActivity },
 	]);
 	expect(runtime.toolResults.image).toEqual(history.toolResults.image);
 	expect(runtime.toolResults.other?.raw).toBe("other result");

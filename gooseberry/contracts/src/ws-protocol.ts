@@ -48,7 +48,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 70;
+export const PROTOCOL_VERSION = 71;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
