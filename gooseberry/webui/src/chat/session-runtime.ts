@@ -244,24 +244,29 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			};
 		}
 		case "tool-update":
-		case "tool-end":
-			return event.toolCallId
+		case "tool-end": {
+			const toolCallId = event.toolCallId;
+			if (!toolCallId) return rt;
+			const app = event.app ?? rt.toolResults[toolCallId]?.app;
+			return toolCallId
 				? {
 						...rt,
 						toolResults: {
 							...rt.toolResults,
-							[event.toolCallId]: {
+							[toolCallId]: {
 								status:
 									event.type === "tool-end" && /error|failed/i.test(event.status ?? "")
 										? "error"
 										: event.type === "tool-end"
 											? "done"
 											: "running",
-								raw: event.tool ?? rt.toolResults[event.toolCallId]?.raw ?? event.status,
+								raw: event.tool ?? rt.toolResults[toolCallId]?.raw ?? event.status,
+								...(app ? { app } : {}),
 							},
 						},
 					}
 				: rt;
+		}
 		case "usage":
 			return event.usage
 				? {

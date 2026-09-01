@@ -3,6 +3,7 @@ import { cn } from "@/lib";
 import { useFold } from "./fold-state";
 import type { ActivityStep } from "./rows";
 import { getToolRenderer, getToolSummary, type ToolRenderProps } from "./tool-registry";
+import { McpAppView } from "./tools/apps/mcp-app-view";
 import type { ToolStatus } from "./types";
 
 export function ActivityGroup({
@@ -96,6 +97,7 @@ function toolRenderProps(
 		toolName: step.toolName,
 		args: step.args,
 		result: step.tool?.raw,
+		app: step.tool?.app,
 		status: step.tool?.status ?? (step.dead ? "error" : "running"),
 		projectAreaRoot,
 		streaming: step.streaming,
@@ -168,8 +170,14 @@ function ActivityStepRow({
 				summary={getToolSummary(step.toolName, renderProps)}
 			/>
 			{expanded ? (
-				<div className={cn("px-sm pb-xs pl-lg", status === "error" && "text-feedback-error")}>
+				<div
+					className={cn(
+						"flex flex-col items-start gap-sm px-sm pb-xs pl-lg",
+						status === "error" && "text-feedback-error",
+					)}
+				>
 					<Renderer {...renderProps} />
+					<McpAppView {...renderProps} />
 				</div>
 			) : null}
 		</div>

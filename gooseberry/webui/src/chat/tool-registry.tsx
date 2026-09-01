@@ -1,3 +1,4 @@
+import type { McpAppAttachment } from "@gooseberry/contracts";
 import type { ReactNode } from "react";
 import { toText } from "./tools/tool-helpers";
 import { ToolOutput } from "./tools/tool-output";
@@ -8,6 +9,7 @@ export interface ToolRenderProps {
 	toolName: string;
 	args: Record<string, unknown>;
 	result: unknown;
+	app?: McpAppAttachment | undefined;
 	status: ToolStatus;
 	projectAreaRoot?: string | undefined;
 	streaming: boolean;
@@ -87,9 +89,7 @@ export function DefaultToolRenderer({
 			<ToolOutput result={result} error={status === "error"} />
 			{status === "done" &&
 			(toolName === "apps__create_app" || toolName === "apps__iterate_app") ? (
-				<p className="text-text-muted tr-text-metadata">
-					App saved in Goose. Interactive app windows are not supported here yet.
-				</p>
+				<p className="text-text-muted tr-text-metadata">App saved in Goose.</p>
 			) : null}
 		</div>
 	);
