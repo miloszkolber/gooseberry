@@ -4,7 +4,7 @@ Gooseberry connects to unmodified Goose over ACP. The supported release is recor
 
 ## Built-in extensions
 
-Extensions run in Goose. Settings lists the extensions Goose advertises, manages their configuration and shows active-chat tools and permissions. Tool results support text, images, structured data and escaped resource content, including replay of completed results.
+Extensions run in Goose. Settings lists the extensions Goose advertises, manages their configuration and shows active-chat tools and permissions. Tool results support text, images, structured data and escaped resource content. Completed results replay from Goose; unfinished tool previews and attached App or Summon activity survive a browser reload while the controller remains running.
 
 | Extension | Web UI support |
 | --- | --- |
@@ -26,7 +26,7 @@ These names and behaviors follow the [pinned Goose registry](https://github.com/
 
 Interactive Apps use trusted metadata projected by Goose. Gooseberry reads the attached `ui://` resource and mediates resource reads and tool calls through the same session and extension. Resource HTML runs only in the separate browser sandbox origin.
 
-Summon child activity is transient and best-effort. Gooseberry keeps the latest 32 reported tool requests on the outer call and sends the same projection to every connected browser. It does not infer completion, keep child transcripts or restore activity that Goose does not replay.
+Summon child activity is transient and best-effort. Gooseberry keeps the latest 32 reported tool requests on the outer call and includes them in live events and browser reload snapshots. It does not infer completion, keep child transcripts or reconstruct activity after controller state is lost.
 
 ## Session and settings controls
 
