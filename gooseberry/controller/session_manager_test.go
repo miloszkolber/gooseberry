@@ -79,6 +79,71 @@ func TestShellLiveOutputIsOrderedBoundedAndReplacedByFinalResult(t *testing.T) {
 	}
 }
 
+func TestMCPAppProjectionRequiresTrustedGooseAttachment(t *testing.T) {
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	base := map[string]any{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "app-call",
+		"status":        "in_progress",
+		"_meta": map[string]any{"goose": map[string]any{"mcpApp": map[string]any{
+			"toolName":         "apps__create_app",
+			"toolNameIsActual": false,
+			"extensionName":    "apps",
+			"resourceUri":      "ui://apps/fixture",
+		}}},
+	}
+	event := applySessionUpdate(entry, "tool_call_update", base, false)[0]
+	if event["app"] != nil || len(entry.appAttachments) != 0 {
+		t.Fatal("extension-shaped metadata was treated as a trusted App attachment")
+	}
+	app := mapValue(mapValue(mapValue(base["_meta"])["goose"])["mcpApp"])
+	app["toolNameIsActual"] = true
+	app["toolMeta"] = map[string]any{"ui": map[string]any{"prefersBorder": true}}
+	app["resourceResult"] = map[string]any{"contents": []any{map[string]any{
+		"uri":      "ui://apps/fixture",
+		"mimeType": "text/html;profile=mcp-app",
+		"text":     "<main>Fixture</main>",
+	}}}
+	event = applySessionUpdate(entry, "tool_call_update", base, false)[0]
+	projected := mapValue(event["app"])
+	if projected["extensionName"] != "apps" || projected["resourceUri"] != "ui://apps/fixture" {
+		t.Fatalf("trusted attachment projection: %#v", projected)
+	}
+	if len(projected) != 3 {
+		t.Fatalf("resource HTML or internal metadata escaped the narrow projection: %#v", projected)
+	}
+	retained := entry.appAttachments["app-call"]
+	if retained.attachment != (AppAttachment{
+		ToolName: "apps__create_app", ExtensionName: "apps", ResourceURI: "ui://apps/fixture",
+	}) {
+		t.Fatalf("App session state retained more than trusted authority: %#v", retained)
+	}
+	projected["toolName"] = "mutated"
+	finished := applySessionUpdate(entry, "tool_call_update", map[string]any{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "app-call",
+		"status":        "completed",
+	}, false)[0]
+	finalApp := mapValue(finished["app"])
+	messageApp := mapValue(mapValue(entry.messages[len(entry.messages)-1])["app"])
+	if finalApp["toolName"] != "apps__create_app" || !reflect.DeepEqual(finalApp, messageApp) {
+		t.Fatalf("status-only completion lost or shared mutable App metadata: event %#v, history %#v", finalApp, messageApp)
+	}
+	direct := cloneJSON(base).(map[string]any)
+	direct["toolCallId"] = "direct-app"
+	direct["status"] = "completed"
+	applySessionUpdate(entry, "tool_call_update", direct, false)
+	details := mapValue(mapValue(entry.messages[len(entry.messages)-1])["details"])
+	encodedDetails, _ := json.Marshal(details)
+	if strings.Contains(string(encodedDetails), "<main>Fixture</main>") || mapValue(mapValue(details["_meta"])["goose"])["mcpApp"] != nil {
+		t.Fatalf("resolved App resource escaped through raw transcript details: %#v", details)
+	}
+	applySessionUpdate(entry, "tool_call", map[string]any{"toolCallId": "app-call", "title": "replacement"}, false)
+	if _, retained := entry.appAttachments["app-call"]; retained {
+		t.Fatal("a reused tool call id retained the previous App authority")
+	}
+}
+
 func TestQueueRevisionRejectsStaleAndConcurrentMutations(t *testing.T) {
 	manager := &SessionManager{sessions: map[string]*sessionEntry{}, now: time.Now}
 	entry := newSessionEntry("session", "project", "/project", "", "token")

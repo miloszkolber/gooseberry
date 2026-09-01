@@ -18,7 +18,9 @@ import (
 const (
 	defaultGooseURL     = "ws://127.0.0.1:3284/acp"
 	defaultGooseTimeout = 30 * time.Second
-	gooseReadLimit      = 10 * 1024 * 1024
+	// Matches the Web UI socket ceiling and accommodates a maximally escaped
+	// App resource plus its bounded JSON-RPC envelope.
+	gooseReadLimit = 32 * 1024 * 1024
 )
 
 type GooseEvents interface {
@@ -174,7 +176,16 @@ func (c *GooseClient) initialize(ctx context.Context, connection *gooseConnectio
 		ProtocolVersion: acp.ProtocolVersion(acp.ProtocolVersionNumber),
 		ClientInfo:      &acp.Implementation{Name: "gooseberry", Version: version},
 		ClientCapabilities: acp.ClientCapabilities{
-			Meta: map[string]any{"goose": map[string]any{"customNotifications": true}},
+			Meta: map[string]any{"goose": map[string]any{
+				"customNotifications": true,
+				"mcpHostCapabilities": map[string]any{
+					"extensions": map[string]any{
+						"io.modelcontextprotocol/ui": map[string]any{
+							"mimeTypes": []string{"text/html;profile=mcp-app"},
+						},
+					},
+				},
+			}},
 		},
 	})
 	if err != nil {

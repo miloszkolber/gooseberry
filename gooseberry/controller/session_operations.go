@@ -3,9 +3,61 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 type connectionGenerationKey struct{}
+
+// sessionOperationGate keeps Goose calls serialized per session while allowing
+// a request that has not entered the session yet to stop waiting when canceled.
+// Its lazy initialization preserves the useful zero value of sessionEntry in
+// focused state tests.
+type sessionOperationGate struct {
+	once  sync.Once
+	token chan struct{}
+}
+
+func (g *sessionOperationGate) ready() chan struct{} {
+	g.once.Do(func() {
+		g.token = make(chan struct{}, 1)
+		g.token <- struct{}{}
+	})
+	return g.token
+}
+
+func (g *sessionOperationGate) Lock() {
+	<-g.ready()
+}
+
+func (g *sessionOperationGate) LockContext(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-g.ready():
+		if err := ctx.Err(); err != nil {
+			g.Unlock()
+			return err
+		}
+		return nil
+	}
+}
+
+func (g *sessionOperationGate) TryLock() bool {
+	select {
+	case <-g.ready():
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *sessionOperationGate) Unlock() {
+	select {
+	case g.ready() <- struct{}{}:
+	default:
+		panic("unlock of unlocked session operation gate")
+	}
+}
 
 func (entry *sessionEntry) context(ctx context.Context) context.Context {
 	entry.state.Lock()
@@ -16,7 +68,13 @@ func (entry *sessionEntry) context(ctx context.Context) context.Context {
 
 // Waiting for an operation does not grant authority over a replaced projection.
 func (m *SessionManager) lockEntry(sessionID string, entry *sessionEntry) error {
-	entry.op.Lock()
+	return m.lockEntryContext(context.Background(), sessionID, entry)
+}
+
+func (m *SessionManager) lockEntryContext(ctx context.Context, sessionID string, entry *sessionEntry) error {
+	if err := entry.op.LockContext(ctx); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	current := !m.closed && m.sessions[sessionID] == entry && !m.lifecycle[sessionID]
 	m.mu.Unlock()

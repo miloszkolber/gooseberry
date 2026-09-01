@@ -24,7 +24,7 @@ const (
 type SessionPublisher func(channel string, data any)
 
 type sessionEntry struct {
-	op    sync.Mutex
+	op    sessionOperationGate
 	state sync.Mutex
 	// Protected by SessionManager.mu, including while waiting for op.
 	refs      int
@@ -51,6 +51,7 @@ type sessionEntry struct {
 	inactiveBytes      int // Encoded size under state; zero means a mutation needs recounting.
 	pendingEcho        *userEcho
 	pendingToolOutputs map[string]toolOutput
+	appAttachments     map[string]appAttachmentState
 	consumedQuestions  map[string]bool
 	drainScheduled     bool
 }
@@ -230,7 +231,12 @@ func (m *SessionManager) EnsureAttached(ctx context.Context, sessionID, projectI
 		m.releaseEntry(entry)
 		return nil, fmt.Errorf("unknown session: %s", sessionID)
 	}
-	if err := m.lockEntry(sessionID, entry); err != nil {
+	if err := m.lockEntryContext(ctx, sessionID, entry); err != nil {
+		m.releaseEntry(entry)
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		entry.op.Unlock()
 		m.releaseEntry(entry)
 		return nil, err
 	}
@@ -308,6 +314,7 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.runID = replay.runID
 	entry.pendingEcho = replay.pendingEcho
 	entry.pendingToolOutputs = replay.pendingToolOutputs
+	entry.appAttachments = replay.appAttachments
 	entry.attached = replay.attached
 	entry.replay = nil
 	entry.state.Unlock()
@@ -692,7 +699,11 @@ func (m *SessionManager) evictLocked() {
 			entry.inactiveAt = m.now()
 		}
 		if entry.inactiveBytes == 0 {
-			encoded, err := json.Marshal([]any{entry.messages, entry.pendingToolOutputs})
+			attachments := make(map[string]AppAttachment, len(entry.appAttachments))
+			for toolCallID, state := range entry.appAttachments {
+				attachments[toolCallID] = state.attachment
+			}
+			encoded, err := json.Marshal([]any{entry.messages, entry.pendingToolOutputs, attachments})
 			if err != nil {
 				// A projection that cannot be measured must not bypass the budget.
 				delete(m.sessions, id)

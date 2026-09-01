@@ -145,7 +145,7 @@ func TestClientReaperHonorsReplacementAndInflightReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer server.Close()
+	defer server.Close(context.Background())
 	arm := func() *time.Timer {
 		server.mu.Lock()
 		defer server.mu.Unlock()
