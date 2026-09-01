@@ -149,7 +149,7 @@ func (g *Git) sharedStatus(ctx context.Context, project Project, repository stri
 	if err := ctx.Err(); err != nil {
 		return GitRepository{}, err
 	}
-	if scope.Kind == "" || scope.Kind == "branch" {
+	if scope.Kind == "" {
 		scope = GitDiffScope{Kind: "uncommitted"}
 	}
 	key := project.ID + "\x00" + repository + "\x00" + scope.Kind + "\x00" + scope.SHA + "\x00" + scope.BaseRef
@@ -343,9 +343,10 @@ func gitHead(ctx context.Context, repository string) GitHead {
 	if oid == "" {
 		return GitHead{Kind: "unborn"}
 	}
-	branch := runGit(ctx, repository, []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, gitOutputLimit)
-	if branch.ok && strings.TrimSpace(branch.out) != "" {
-		return GitHead{Kind: "branch", Name: strings.TrimSpace(branch.out)}
+	branch := runGit(ctx, repository, []string{"symbolic-ref", "--quiet", "HEAD"}, gitOutputLimit)
+	ref := strings.TrimSpace(branch.out)
+	if branch.ok && strings.HasPrefix(ref, "refs/heads/") && len(ref) > len("refs/heads/") {
+		return GitHead{Kind: "branch", Name: strings.TrimPrefix(ref, "refs/heads/")}
 	}
 	return GitHead{Kind: "detached", OID: oid}
 }
