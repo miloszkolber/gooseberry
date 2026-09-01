@@ -21,6 +21,12 @@ Browser tools are `browser_command` and `browser_guidance`; detailed instruction
 
 Authenticated HTTP commands at `/v1/browser` and artifacts at `/v1/artifacts/{session}/{name}` are also available to trusted services.
 
+## Interactive Apps
+
+Completed tool calls with trusted Goose App metadata can open their `ui://` resource in a dialog. The application reads resources and calls tools only through the attachment's project, session, tool call and extension. An App cannot use the view to reach another chat or extension.
+
+The browser service issues a short-lived view ticket and serves the sandbox proxy from its separate origin. Gooseberry sends resource HTML and declared policy into the sandbox, but no browser token, Goose secret or application credential. Closing the dialog revokes its ticket and tears down the App lifecycle; abandoned tickets expire.
+
 ## Settings
 
 Global extension changes affect Goose configuration; active-chat changes affect that session. The controller reloads Goose's result. Tool inventory requires an authorized chat; permission changes use Goose's `always_allow`, `ask_before` and `never_allow` values and require an idle chat.

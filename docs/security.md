@@ -10,6 +10,8 @@ Both containers run non-root with read-only filesystems and bounded writable tmp
 
 Chromium uses `--no-sandbox`: its internal sandbox is disabled. Container/mount isolation does not replace it. Host networking permits access to local services; private-network and cloud-metadata egress restrictions are the operator's responsibility. Treat page content as untrusted.
 
+Interactive App HTML runs inside a nested iframe served from the browser's separate origin. The browser service applies the resource's bounded CSP and permissions to a short-lived view ticket. Gooseberry sends no browser token, Goose secret or application credential into the sandbox; all tool and resource requests return to the application for same-session authorization.
+
 ## Credentials and access
 
 | Connection | Credential |
@@ -23,7 +25,7 @@ Use distinct tokens. Protect environment/configuration files with mode `0600`; k
 
 Remote controller access requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` explicitly overrides it. Use HTTPS, `GOOSEBERRY_PUBLIC_ORIGIN` and a WebSocket-capable proxy. Origin checks use the exact public origin; cookies last 90 days.
 
-Remote browser binding always requires authentication. Its MCP Host/Origin checks support `GOOSEBERRY_BROWSER_PUBLIC_ORIGIN` for a matching proxy. Standalone unauthenticated loopback is available for development.
+Remote browser binding always requires authentication. Its MCP Host/Origin checks and Interactive App URLs use `GOOSEBERRY_BROWSER_PUBLIC_ORIGIN` for a matching proxy origin, which must differ from the application origin. Standalone unauthenticated loopback is available for development.
 
 ## Data and operations
 

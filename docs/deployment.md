@@ -51,6 +51,7 @@ Set:
 | `GOOSEBERRY_GOOSE_SECRET_KEY` | Goose's `GOOSE_SERVER__SECRET_KEY`. |
 | `GOOSEBERRY_BROWSER_TOKEN` | Browser token from the Goose environment above. |
 | `GOOSEBERRY_AUTH_ENABLED`, `GOOSEBERRY_TOKEN` | Optional UI login; use a third token. Required for authenticated remote access. |
+| `GOOSEBERRY_BROWSER_PUBLIC_ORIGIN` | Exact external browser origin when reverse proxied. It must differ from the application origin. |
 
 Compose uses UID/GID `1000:1000`. Compare `id -u` and `id -g`; adjust `user` and every tmpfs `uid`/`gid` in both services if needed.
 
@@ -135,7 +136,7 @@ An SSH tunnel keeps the UI on loopback:
 ssh -N -L 7312:127.0.0.1:7312 user@host
 ```
 
-For remote access, configure authentication, HTTPS and the exact public origin as described in [security](security.md). Host networking is required for these loopback URLs; a bridge container's loopback points to itself.
+For remote access, configure authentication, HTTPS and exact application and browser origins as described in [security](security.md). Route the browser service through its own origin so Interactive Apps remain isolated from the Web UI. Host networking is required for the loopback URLs; a bridge container's loopback points to itself.
 
 Changing the browser port also requires matching `GOOSEBERRY_BROWSER_URL` and the private MCP URL. The application URL accepts an HTTP(S) origin without a path or credentials.
 

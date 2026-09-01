@@ -4,9 +4,9 @@
 | --- | --- | --- |
 | Goose, `:3284` | Host | Conversations, providers, tools and runtime configuration. |
 | Application, `:7312` | `gooseberry` container | Web UI, projects, files, Git and objective/question MCP. |
-| Browser, `:8787` | `gooseberry-browser` container | Browser MCP/HTTP, Chromium and artifacts. |
+| Browser, `:8787` | `gooseberry-browser` container | Browser MCP/HTTP, Chromium, artifacts and the Interactive Apps sandbox origin. |
 
-The application connects to Goose over ACP and proxies authenticated browser artifacts. Goose calls the two MCP endpoints. Both containers use host networking, with independent health checks and shutdown.
+The application connects to Goose over ACP and proxies authenticated browser artifacts. Goose calls the two MCP endpoints. Interactive Apps render on the browser service's separate origin while the application mediates their access to Goose. Both containers use host networking, with independent health checks and shutdown.
 
 ## Source layout
 
@@ -35,7 +35,7 @@ Connection generations, shared hydration, deletion markers, replay IDs and tab-c
 
 ## Frontend and images
 
-Frontend responsibilities live in `chat/`, `workspace/`, `files/`, `settings/` and `connection/`. One Zustand store composes their state. Navigation subscriptions survive reconnects; desktop and narrow layouts share one activity tree. Radix, Virtuoso and Shiki provide accessible controls, virtualization and lazy highlighting.
+Frontend responsibilities live in `chat/`, `workspace/`, `files/`, `settings/` and `connection/`. One Zustand store composes their state. Navigation subscriptions survive reconnects; desktop and narrow layouts share one activity tree. Radix, Virtuoso and Shiki provide accessible controls, virtualization and lazy highlighting. The MCP Apps bridge loads only when an interactive view opens.
 
 The application image contains its executable, static UI and Git. The browser image contains its executable, agent-browser, Chromium and fonts. Runtime images are non-root and read-only, with build tools excluded.
 
