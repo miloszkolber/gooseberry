@@ -64,7 +64,7 @@ export function hydrateChatResource(projectAreaId: string, sessionId: string): P
 	if (existing && existing.closedChat === closedChat) return existing.promise;
 	const request = getTransport()
 		.request("session.getMessages", { projectId: projectAreaId, sessionId })
-		.then(({ summary, messages }) => {
+		.then(({ summary, messages, pendingTools }) => {
 			const current = useAppStore.getState();
 			if (!isConnectedGeneration(current, generation)) return false;
 			if (
@@ -79,7 +79,7 @@ export function hydrateChatResource(projectAreaId: string, sessionId: string): P
 			}
 			current.hydrateSession(
 				summary,
-				messagesToRuntime(messages, summary.lastSettlement),
+				messagesToRuntime(messages, summary.lastSettlement, pendingTools),
 				false,
 				undefined,
 				{ activate: false },

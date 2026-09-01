@@ -239,6 +239,63 @@ test("status-only tool completion retains the right streamed result and matches 
 		extensionName: "images",
 		resourceUri: "ui://images/viewer",
 	};
+	const pending = messagesToRuntime([], null, [
+		{ toolCallId: "image", output: image, app, subagentActivity },
+	]);
+	expect(pending.toolResults.image).toEqual({
+		status: "running",
+		raw: image,
+		app,
+		subagentActivity,
+	});
+	const precedence = messagesToRuntime(
+		[
+			{ role: "toolResult", toolCallId: "image", content: "completed" },
+			{ role: "toolResult", toolCallId: "__proto__", content: "safe", isError: true },
+			{ role: "toolResult", toolCallId: "without-output", content: "old result" },
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "image", name: "image", arguments: {} },
+					{ type: "toolCall", id: "__proto__", name: "reserved", arguments: {} },
+					{ type: "toolCall", id: "without-output", name: "read", arguments: {} },
+				],
+			},
+		],
+		null,
+		[
+			{ toolCallId: "image", output: "current pending output" },
+			{ toolCallId: "__proto__", output: "current reserved output" },
+			{ toolCallId: "toString", output: "still running" },
+		],
+	);
+	expect(Object.getPrototypeOf(precedence.toolResults)).toBeNull();
+	expect(precedence.toolResults.image).toEqual({
+		status: "running",
+		raw: "current pending output",
+	});
+	expect(Reflect.get(precedence.toolResults, "__proto__")).toEqual({
+		status: "running",
+		raw: "current reserved output",
+	});
+	expect(Reflect.get(precedence.toolResults, "toString")).toEqual({
+		status: "running",
+		raw: "still running",
+	});
+	expect(Object.hasOwn(precedence.toolResults, "without-output")).toBe(false);
+	let reloaded = createSessionRuntime(null, "off");
+	reloaded = { ...reloaded, ...pending };
+	reloaded = reduceSessionEvent(reloaded, {
+		type: "tool-end",
+		toolCallId: "image",
+		status: "completed",
+	});
+	expect(reloaded.toolResults.image).toEqual({
+		status: "done",
+		raw: image,
+		app,
+		subagentActivity,
+	});
 	let runtime = createSessionRuntime(null, "off");
 	runtime = reduceSessionEvent(runtime, {
 		type: "tool-start",
