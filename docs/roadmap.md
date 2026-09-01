@@ -4,7 +4,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Finish existing behavior
 
-- **Nested agents.** Show supported summon/orchestrator activity without creating another conversation store. Verify child cancellation, permissions and concurrent observation against upstream behavior; child approval forwarding is not complete in pinned Goose.
 - **Git branch comparison.** Compare against an explicit branch base. Keep linked-worktree, submodule, unusual-filename and unborn-branch coverage. Git views remain read-only.
 - **UI acceptance.** Keep repeatable desktop/narrow-screen checks for commit selection, reconnects, tab closing, streaming, dialogs and file/image previews. Include keyboard use, overflow and interaction timing; state tests alone are insufficient.
 - **Dormant surfaces.** Connect retained `skill.list` and extension-dialog hooks where upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
@@ -26,4 +25,5 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Deferred
 
+- **Nested-agent upstream gaps.** Add durable child activity, child approvals, direct asynchronous-child cancellation and Orchestrator nested activity only when Goose exposes reliable methods or replayable events. Do not add a second conversation store.
 - **Deployment acceptance.** Run the [comparison probe](performance.md#run-a-comparison) on the deployment host before enforcing the unchanged 5% controller p95 gate. Include separate application/browser containers, concurrent clients, Chromium activity, reconnect-to-interactive time and long histories. Workstation measurements remain reference evidence. Repeat browser checks on native x86-64.
