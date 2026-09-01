@@ -32,6 +32,8 @@ Summon child activity is transient and best-effort. Gooseberry keeps the latest 
 
 Standard ACP covers session creation, loading, listing, deletion, forks, prompts, cancellation, configuration, updates and permissions. Goose-specific methods provide steering, rename/archive, search, provider login, model metadata, agents, recipes and schedules. `/compact` is available through Goose's slash commands; `summarize` is a separate file-summary tool.
 
+The composer receives each session's command catalog through standard ACP updates and refreshes it after reconnects, project `SKILL.md` changes and recipe saves or deletes. Other host-side command changes appear when the chat reconnects or is reopened.
+
 Goose owns conversations and runtime configuration. The browser receives selected fields, not raw credentials, extension commands, environments or upstream diagnostics. See [security](security.md) and [models](models.md).
 
 Initialization checks the protocol version. Capability-driven controls and compatibility with other ACP agents remain roadmap work.
@@ -40,6 +42,6 @@ Initialization checks the protocol version. Capability-driven controls and compa
 
 Projects, file/Git views, goals, tasks and follow-up queues belong to Gooseberry. Objectives and questions use session-scoped MCP; browser automation has its own [MCP endpoint](integration.md). Queues survive browser reconnects, not controller restarts.
 
-Git supports uncommitted changes, selected commits, pinned comparisons and comparisons from a selected local or remote-tracking branch merge base. Branch catalogs load on demand; Gooseberry neither fetches nor writes Git state. `skill.list` and extension-dialog components are retained but have no current UI caller or live transport producer, respectively.
+Git supports uncommitted changes, selected commits, pinned comparisons and comparisons from a selected local or remote-tracking branch merge base. Branch catalogs load on demand; Gooseberry neither fetches nor writes Git state. `skill.list` remains a compatibility endpoint; the Web UI uses session command catalogs instead. Extension-dialog components are retained but have no live transport producer.
 
 Import/export/share, arbitrary configuration and broader source/app administration are not exposed. See the [roadmap](roadmap.md) for remaining work.
