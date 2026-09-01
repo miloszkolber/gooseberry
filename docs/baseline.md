@@ -6,7 +6,7 @@ Gooseberry groups Goose conversations and agent work by project.
 
 A project has one or more admitted directory roots and may span several repositories. Roots are mounted read-only at their host paths.
 
-The UI provides file/image previews, source highlighting, branch information, uncommitted changes, selected commits and comparisons against a pinned commit. Renames retain both paths; binary, oversized and unavailable previews explain their limits. Files, links and updates retain root/repository identity. Goose tools perform mutations.
+The UI provides file/image previews, source highlighting, branch information, uncommitted changes, selected commits and comparisons from an explicit branch base or pinned commit. Renames retain both paths; binary, oversized and unavailable previews explain their limits. Files, links and updates retain root/repository identity. Goose tools perform mutations.
 
 Desktop uses project, content and activity panes; narrow screens switch between them.
 

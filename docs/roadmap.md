@@ -4,7 +4,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Finish existing behavior
 
-- **Git branch comparison.** Compare against an explicit branch base. Keep linked-worktree, submodule, unusual-filename and unborn-branch coverage. Git views remain read-only.
 - **UI acceptance.** Keep repeatable desktop/narrow-screen checks for commit selection, reconnects, tab closing, streaming, dialogs and file/image previews. Include keyboard use, overflow and interaction timing; state tests alone are insufficient.
 - **Dormant surfaces.** Connect retained `skill.list` and extension-dialog hooks where upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
 

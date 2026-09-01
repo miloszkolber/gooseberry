@@ -40,6 +40,6 @@ Initialization checks the protocol version. Capability-driven controls and compa
 
 Projects, file/Git views, goals, tasks and follow-up queues belong to Gooseberry. Objectives and questions use session-scoped MCP; browser automation has its own [MCP endpoint](integration.md). Queues survive browser reconnects, not controller restarts.
 
-Git supports uncommitted changes, selected commits and pinned comparisons. Branch-base comparison is unfinished. `skill.list` and extension-dialog components are retained but have no current UI caller or live transport producer, respectively.
+Git supports uncommitted changes, selected commits, pinned comparisons and comparisons from a selected local or remote-tracking branch merge base. Branch catalogs load on demand; Gooseberry neither fetches nor writes Git state. `skill.list` and extension-dialog components are retained but have no current UI caller or live transport producer, respectively.
 
 Import/export/share, arbitrary configuration and broader source/app administration are not exposed. See the [roadmap](roadmap.md) for remaining work.
