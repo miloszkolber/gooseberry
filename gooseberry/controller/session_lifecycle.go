@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -16,11 +17,14 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	entry, err := m.EnsureAttached(ctx, sessionID, projectID, admitted)
+	entry, err := m.queueEntry(sessionID)
 	if err != nil {
 		return SessionSummary{}, err
 	}
 	defer m.releaseEntry(entry)
+	if entry.projectID != projectID || entry.cwd != admitted {
+		return SessionSummary{}, fmt.Errorf("unknown session: %s", sessionID)
+	}
 	if err := m.lockEntry(sessionID, entry); err != nil {
 		return SessionSummary{}, err
 	}
@@ -30,6 +34,9 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 		return SessionSummary{}, err
 	}
 	defer finish()
+	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
+		return SessionSummary{}, err
+	}
 	ctx = entry.context(ctx)
 	token := randomID()
 	servers := make([]acp.UnstableMcpServer, 0)
@@ -112,20 +119,36 @@ func (m *SessionManager) Rename(ctx context.Context, projectID, sessionID, cwd, 
 }
 
 func (m *SessionManager) Archive(ctx context.Context, projectID, sessionID, cwd string) error {
-	entry, err := m.EnsureAttached(ctx, sessionID, projectID, cwd)
+	admitted, err := m.projects.AssertCWD(projectID, cwd)
+	if err != nil {
+		return err
+	}
+	entry, err := m.queueEntry(sessionID)
 	if err != nil {
 		return err
 	}
 	defer m.releaseEntry(entry)
+	if entry.projectID != projectID || entry.cwd != admitted {
+		return fmt.Errorf("unknown session: %s", sessionID)
+	}
 	if err := m.lockEntry(sessionID, entry); err != nil {
 		return err
 	}
 	defer entry.op.Unlock()
+	entry.state.Lock()
+	queued := queuedFollowUpCount(entry.queue) > 0
+	entry.state.Unlock()
+	if queued {
+		return fmt.Errorf("remove or finish queued follow-ups before archiving the chat")
+	}
 	finish, err := m.beginLifecycle(sessionID, entry)
 	if err != nil {
 		return err
 	}
 	defer finish()
+	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
+		return err
+	}
 	if _, err := m.client.Call(entry.context(ctx), "_goose/unstable/session/archive", map[string]any{"sessionId": sessionID}); err != nil {
 		return err
 	}
@@ -169,11 +192,18 @@ func (m *SessionManager) Unarchive(ctx context.Context, projectID, sessionID str
 }
 
 func (m *SessionManager) Delete(ctx context.Context, projectID, sessionID, cwd string) error {
-	entry, err := m.EnsureAttached(ctx, sessionID, projectID, cwd)
+	admitted, err := m.projects.AssertCWD(projectID, cwd)
+	if err != nil {
+		return err
+	}
+	entry, err := m.queueEntry(sessionID)
 	if err != nil {
 		return err
 	}
 	defer m.releaseEntry(entry)
+	if entry.projectID != projectID || entry.cwd != admitted {
+		return fmt.Errorf("unknown session: %s", sessionID)
+	}
 	if err := m.lockEntry(sessionID, entry); err != nil {
 		return err
 	}
@@ -183,6 +213,9 @@ func (m *SessionManager) Delete(ctx context.Context, projectID, sessionID, cwd s
 		return err
 	}
 	defer finish()
+	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
+		return err
+	}
 	if err := m.client.DeleteSession(entry.context(ctx), sessionID); err != nil {
 		return err
 	}
@@ -191,14 +224,20 @@ func (m *SessionManager) Delete(ctx context.Context, projectID, sessionID, cwd s
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
 	m.history.Forget(sessionID)
+	var cleanup []error
 	if err := m.records.Forget(projectID, sessionID); err != nil {
-		return err
+		cleanup = append(cleanup, fmt.Errorf("remove session association: %w", err))
 	}
 	if err := m.objectives.ClearGoal(projectID, sessionID); err != nil {
-		return err
+		cleanup = append(cleanup, fmt.Errorf("remove session objective: %w", err))
+	}
+	if m.queues != nil {
+		if err := m.queues.Forget(projectID, sessionID); err != nil {
+			cleanup = append(cleanup, fmt.Errorf("remove session queue: %w", err))
+		}
 	}
 	m.emit("session.deleted", map[string]any{"projectId": projectID, "sessionId": sessionID})
-	return nil
+	return errors.Join(cleanup...)
 }
 
 func (m *SessionManager) ObjectiveOwner(token string) (string, string, bool) {

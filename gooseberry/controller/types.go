@@ -59,9 +59,16 @@ type SessionSettlement struct {
 }
 
 type SessionQueue struct {
-	Revision string   `json:"revision"`
-	Steering []string `json:"steering"`
-	FollowUp []string `json:"followUp"`
+	Revision string      `json:"revision"`
+	Steering []string    `json:"steering"`
+	FollowUp []string    `json:"followUp"`
+	Blocked  *QueueBlock `json:"blocked,omitempty"`
+}
+
+type QueueBlock struct {
+	Lane   string `json:"lane"`
+	Index  int    `json:"index"`
+	Reason string `json:"reason"`
 }
 
 type SessionSummary struct {

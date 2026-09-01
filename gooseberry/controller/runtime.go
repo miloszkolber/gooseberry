@@ -81,7 +81,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	}
 	projects.publish = func(project Project) { publish("project.updated", project) }
 	settings := NewSettings(store, func(value AppConfig) { publish("settings.changed", value) })
-	sessions := NewSessionManager(projects, config.Policy, NewSessionRecords(store), NewObjectives(store), publish)
+	sessions := NewSessionManager(projects, config.Policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), publish)
 	client := NewGooseClient(config.GooseURL, strings.TrimSpace(config.Getenv("GOOSEBERRY_GOOSE_SECRET_KEY")), config.AppVersion, sessions)
 	sessions.SetClient(client)
 	sessions.SetObjectiveURL("http://127.0.0.1:" + strconv.Itoa(config.Port) + "/mcp/objective")
@@ -150,7 +150,13 @@ func (r *Runtime) Start() (string, error) {
 	}
 	r.listener = listener
 	r.errors = make(chan error, 1)
+	queued, err := r.sessions.prepareQueueResume()
+	if err != nil {
+		_ = listener.Close()
+		return "", fmt.Errorf("resume queued follow-ups: %w", err)
+	}
 	go func() { r.errors <- r.server.Serve(listener) }()
+	r.sessions.resumeQueues(queued)
 	return "http://" + net.JoinHostPort(r.config.Host, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)), nil
 }
 
@@ -161,8 +167,7 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	r.watches.Close()
 	r.socket.Close(ctx)
 	r.apps.CloseAll(ctx)
-	r.sessions.cancelAll(ctx)
-	r.client.Close()
+	r.sessions.shutdown(ctx)
 	return r.server.Shutdown(ctx)
 }
 
@@ -178,7 +183,7 @@ func runtimeGooseStatus(ctx context.Context, client *GooseClient) map[string]any
 	return map[string]any{"configured": true, "reachable": true}
 }
 
-func (m *SessionManager) cancelAll(ctx context.Context) {
+func (m *SessionManager) shutdown(ctx context.Context) {
 	m.mu.Lock()
 	m.closed = true
 	active := make(map[string]uint64)
@@ -186,11 +191,14 @@ func (m *SessionManager) cancelAll(ctx context.Context) {
 	for id, entry := range m.sessions {
 		ids = append(ids, id)
 		entry.state.Lock()
-		if entry.streaming || entry.runID != "" {
+		if entry.streaming || entry.promptActive || entry.runID != "" {
 			active[id] = entry.attached
 		}
+		if entry.drainRetry != nil {
+			entry.drainRetry.Stop()
+			entry.drainRetry = nil
+		}
 		entry.promptGeneration++
-		entry.queue = SessionQueue{Steering: []string{}, FollowUp: []string{}}
 		entry.state.Unlock()
 	}
 	questions := m.questions
@@ -206,12 +214,18 @@ func (m *SessionManager) cancelAll(ctx context.Context) {
 		}
 	}
 	var pending sync.WaitGroup
-	for id, generation := range active {
-		pending.Add(1)
-		go func(sessionID string) {
-			defer pending.Done()
-			_ = m.client.Cancel(context.WithValue(ctx, connectionGenerationKey{}, generation), sessionID)
-		}(id)
+	if m.client != nil {
+		for id, generation := range active {
+			pending.Add(1)
+			go func(sessionID string) {
+				defer pending.Done()
+				_ = m.client.Cancel(context.WithValue(ctx, connectionGenerationKey{}, generation), sessionID)
+			}(id)
+		}
 	}
 	pending.Wait()
+	if m.client != nil {
+		m.client.Close()
+	}
+	m.work.Wait()
 }

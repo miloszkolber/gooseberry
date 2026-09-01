@@ -220,7 +220,7 @@ func (a *GooseAdmin) sessionAdministration(ctx context.Context, method string, r
 	}
 	ctx = entry.context(ctx)
 	entry.state.Lock()
-	running := entry.streaming || entry.runID != ""
+	running := entry.streaming || entry.promptActive || entry.runID != ""
 	entry.state.Unlock()
 	if mutation && running {
 		return nil, fmt.Errorf("stop the running chat before changing extensions or tool permissions")
