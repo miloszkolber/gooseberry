@@ -138,6 +138,7 @@ test("late hydration respects chat and project closure while allowing an explici
 			archived: false,
 		},
 		messages: [],
+		pendingTools: [],
 	};
 	try {
 		const previous = hydrateChatResource("project", "chat");

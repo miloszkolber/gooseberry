@@ -118,6 +118,13 @@ export interface ToolResultMessage {
 	app?: McpAppAttachment;
 	subagentActivity?: SubagentActivity;
 }
+
+export interface PendingToolPreview {
+	toolCallId: string;
+	output?: unknown;
+	app?: McpAppAttachment;
+	subagentActivity?: SubagentActivity;
+}
 export interface PermissionRequest {
 	id: string;
 	sessionId: string;

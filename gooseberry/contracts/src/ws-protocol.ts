@@ -5,6 +5,7 @@ import type {
 	McpAppOpenResult,
 	McpAppResourceResult,
 	McpAppToolResult,
+	PendingToolPreview,
 	PermissionRequest,
 	QueueLane,
 	RefreshedModels,
@@ -49,7 +50,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 73;
+export const PROTOCOL_VERSION = 74;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -313,7 +314,11 @@ export interface WsMethodMap {
 	};
 	"session.getMessages": {
 		params: { sessionId: string; projectId: string };
-		result: { summary: SessionSummary; messages: TranscriptMessage[] };
+		result: {
+			summary: SessionSummary;
+			messages: TranscriptMessage[];
+			pendingTools: PendingToolPreview[];
+		};
 	};
 	"session.release": { params: { sessionId: string; projectId: string }; result: Ack };
 	"session.appOpen": {
