@@ -98,6 +98,12 @@ export interface WorkspaceState {
 	setChangesView: (view: "list" | "tree") => void;
 	diffScopeByProjectArea: Record<string, GitDiffScope>;
 	setDiffScope: (projectAreaId: string, scope: GitDiffScope) => void;
+	noteDiffComparison: (
+		projectAreaId: string,
+		repository: string,
+		scope: GitDiffScope,
+		comparisonId: string,
+	) => void;
 	noteFsChanged: (payload: ProjectFsChangedPayload) => void;
 	markSkillsSynced: (sessionId: string, syncedTick: number) => void;
 	updateFileTabContent: (projectAreaId: string, id: string, content: string, tick: number) => void;
@@ -621,6 +627,36 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 				? {}
 				: { diffScopeByProjectArea: { ...s.diffScopeByProjectArea, [projectAreaId]: scope } },
 		),
+	noteDiffComparison: (projectAreaId, repository, scope, comparisonId) =>
+		set((s) => {
+			if (s.removedProjectAreaIds[projectAreaId] || scope.kind !== "branch" || comparisonId === "")
+				return {};
+			const tabs = s.tabsByProjectArea[projectAreaId] ?? [];
+			if (
+				!tabs.some(
+					(tab) =>
+						tab.kind === "diff" &&
+						tab.repository === repository &&
+						tab.scope.kind === "branch" &&
+						tab.scope.baseRef === scope.baseRef &&
+						tab.targetComparison !== comparisonId,
+				)
+			)
+				return {};
+			return {
+				tabsByProjectArea: {
+					...s.tabsByProjectArea,
+					[projectAreaId]: tabs.map((tab) =>
+						tab.kind === "diff" &&
+						tab.repository === repository &&
+						tab.scope.kind === "branch" &&
+						tab.scope.baseRef === scope.baseRef
+							? { ...tab, targetComparison: comparisonId }
+							: tab,
+					),
+				},
+			};
+		}),
 	noteFsChanged: (payload) =>
 		set((s) => {
 			if (s.removedProjectAreaIds[payload.projectId]) return {};
@@ -683,11 +719,15 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 							original: preview.original,
 							modified: preview.modified,
 							loadedTick: tick,
-							loadedTarget,
+							loadedTarget: preview.comparisonId ?? loadedTarget,
+							...(tab.scope.kind === "branch" && preview.comparisonId
+								? { targetComparison: preview.comparisonId }
+								: {}),
 						};
-						// Successful reads omit these fields; clear any previous notice or rename.
+						// Clear optional fields that are absent from the latest preview.
 						for (const key of [
 							"originalPath",
+							"comparisonId",
 							"unavailable",
 							"binary",
 							"tooLarge",

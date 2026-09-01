@@ -36,6 +36,7 @@ type GitRepository struct {
 	RelativePath string          `json:"relativePath"`
 	Name         string          `json:"name"`
 	Head         GitHead         `json:"head"`
+	ComparisonID string          `json:"comparisonId,omitempty"`
 	Clean        bool            `json:"clean"`
 	Changes      []GitFileChange `json:"changes"`
 }
@@ -330,12 +331,12 @@ func (g *Git) repositoryFor(ctx context.Context, projectID, requested string) (P
 }
 
 func (g *Git) projectRepository(ctx context.Context, project Project, repository string, scope GitDiffScope) (GitRepository, error) {
-	changes, err := g.changes(ctx, repository, scope)
+	changes, comparisonID, err := g.changes(ctx, repository, scope)
 	if err != nil {
 		return GitRepository{}, err
 	}
 	digest := sha256.Sum256([]byte(repository))
-	return GitRepository{ID: hex.EncodeToString(digest[:])[:24], Root: repository, RelativePath: projectRelativePath(project, repository), Name: filepath.Base(repository), Head: gitHead(ctx, repository), Clean: len(changes) == 0, Changes: changes}, nil
+	return GitRepository{ID: hex.EncodeToString(digest[:])[:24], Root: repository, RelativePath: projectRelativePath(project, repository), Name: filepath.Base(repository), Head: gitHead(ctx, repository), ComparisonID: comparisonID, Clean: len(changes) == 0, Changes: changes}, nil
 }
 
 func gitHead(ctx context.Context, repository string) GitHead {

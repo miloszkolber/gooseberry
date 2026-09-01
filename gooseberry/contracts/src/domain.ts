@@ -202,6 +202,7 @@ export interface GitRepository {
 	head: GitHead;
 	clean: boolean;
 	changes: GitFileChange[];
+	comparisonId?: string;
 }
 
 export interface GitRepositoryList {
@@ -226,6 +227,7 @@ export interface GitDiffFile {
 	original: string;
 	modified: string;
 	originalPath?: string;
+	comparisonId?: string;
 	unavailable?: true;
 	binary?: true;
 	tooLarge?: true;

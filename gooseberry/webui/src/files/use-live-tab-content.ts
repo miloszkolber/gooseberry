@@ -71,7 +71,12 @@ export function useLiveTabContent<T>(
 
 	const lastKey = useRef(loadedKey ?? reloadKey);
 	useEffect(() => {
-		if (reloadKey === undefined || reloadKey === lastKey.current) return;
+		if (reloadKey === undefined) return;
+		if (reloadKey === loadedKey) {
+			lastKey.current = reloadKey;
+			return;
+		}
+		if (reloadKey === lastKey.current) return;
 		lastKey.current = reloadKey;
 		const { read, applyFresh } = opsRef.current;
 		let cancelled = false;
@@ -84,7 +89,7 @@ export function useLiveTabContent<T>(
 		return () => {
 			cancelled = true;
 		};
-	}, [reloadKey, tab.loadedTick, sequencer]);
+	}, [reloadKey, loadedKey, tab.loadedTick, sequencer]);
 }
 
 export type ReadSequencer = { begin: () => () => boolean };

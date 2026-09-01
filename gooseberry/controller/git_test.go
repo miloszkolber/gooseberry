@@ -235,6 +235,8 @@ func TestGitBranchComparisonUsesMergeBaseAndCommittedHead(t *testing.T) {
 	git("add", "--", shared, odd)
 	git("update-index", "--add", "--cacheinfo", "160000,"+common+","+submodule)
 	git("commit", "-m", "feature changes")
+	featureHead := resolveCommit(ctx, repository, "HEAD")
+	comparisonID := common + ".." + featureHead
 	git("switch", "main")
 	if err := os.WriteFile(filepath.Join(repository, "main-only.txt"), []byte("main only\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -275,7 +277,7 @@ func TestGitBranchComparisonUsesMergeBaseAndCommittedHead(t *testing.T) {
 
 	scope := GitDiffScope{Kind: "branch", BaseRef: "refs/heads/main"}
 	status, err := service.Status(ctx, project.ID, repository, scope)
-	if err != nil || status.Head.Kind != "branch" || status.Head.Name != "feature" || len(status.Changes) != 3 {
+	if err != nil || status.Head.Kind != "branch" || status.Head.Name != "feature" || status.ComparisonID != comparisonID || len(status.Changes) != 3 {
 		t.Fatalf("branch status: %#v, %v", status, err)
 	}
 	paths := map[string]bool{}
@@ -291,12 +293,16 @@ func TestGitBranchComparisonUsesMergeBaseAndCommittedHead(t *testing.T) {
 		t.Fatalf("comparison included a base-only change instead of using merge-base: %#v", status.Changes)
 	}
 	preview, err := service.DiffFile(ctx, project.ID, repository, shared, scope)
-	if err != nil || preview.Original != "common\n" || preview.Modified != "feature committed\n" {
+	if err != nil || preview.ComparisonID != status.ComparisonID || preview.Original != "common\n" || preview.Modified != "feature committed\n" {
 		t.Fatalf("branch preview included the dirty worktree: %#v, %v", preview, err)
 	}
 	preview, err = service.DiffFile(ctx, project.ID, repository, submodule, scope)
-	if err != nil || !preview.Unavailable || preview.Message == "" || preview.Original != "" || preview.Modified != "" {
+	if err != nil || preview.ComparisonID != status.ComparisonID || !preview.Unavailable || preview.Message == "" || preview.Original != "" || preview.Modified != "" {
 		t.Fatalf("branch submodule preview: %#v, %v", preview, err)
+	}
+	preview, err = service.DiffFile(ctx, project.ID, repository, "missing.txt", scope)
+	if err != nil || preview.ComparisonID != status.ComparisonID || !preview.Unavailable || preview.Message != "File does not exist" {
+		t.Fatalf("branch missing preview: %#v, %v", preview, err)
 	}
 
 	var branchError *codedError
