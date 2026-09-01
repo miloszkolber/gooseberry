@@ -129,6 +129,10 @@ func TestEnvironmentUsesExactFixedDefaults(t *testing.T) {
 	if err != nil || configuration.Host != "127.0.0.2" || configuration.Port != 9000 || !configuration.Authentication {
 		t.Fatalf("configured environment = %#v, %v", configuration, err)
 	}
+	configuration, err = configFromEnvironment(lookup(map[string]string{"GOOSEBERRY_BROWSER_AUTH": "true", "GOOSEBERRY_BROWSER_TOKEN": testToken, "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://Browser.Example:443"}))
+	if err != nil || configuration.PublicOrigin != "https://browser.example" {
+		t.Fatalf("canonical public origin = %q, %v", configuration.PublicOrigin, err)
+	}
 	for _, values := range []map[string]string{{"GOOSEBERRY_BROWSER_AUTH": ""}, {"GOOSEBERRY_BROWSER_AUTH": "1"}, {"GOOSEBERRY_BROWSER_PORT": "0"}, {"GOOSEBERRY_BROWSER_HOST": "0.0.0.0"}, {"GOOSEBERRY_BROWSER_HOST": "::"}, {"GOOSEBERRY_BROWSER_HOST": "browser.example"}, {"GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://browser.example"}, {"GOOSEBERRY_BROWSER_AUTH": "true", "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://browser.example/path"}} {
 		if _, err := configFromEnvironment(lookup(values)); err == nil {
 			t.Fatalf("invalid environment accepted: %#v", values)
@@ -507,6 +511,7 @@ func TestMCPAuthenticationAndOriginBoundary(t *testing.T) {
 		{name: "rebound host", token: testToken, host: "evil.example:8787", status: http.StatusForbidden},
 		{name: "cross site", token: testToken, fetchSite: "cross-site", status: http.StatusForbidden},
 		{name: "trusted proxy preserves host", token: testToken, host: "browser.example", origin: "https://browser.example", publicOrigin: "https://browser.example", status: http.StatusOK},
+		{name: "trusted proxy canonical default port", token: testToken, host: "browser.example:443", origin: "https://browser.example", publicOrigin: "https://browser.example", status: http.StatusOK},
 		{name: "trusted proxy internal host", token: testToken, origin: "https://browser.example", publicOrigin: "https://browser.example", status: http.StatusOK},
 		{name: "proxy foreign origin", token: testToken, origin: "https://evil.example", publicOrigin: "https://browser.example", status: http.StatusForbidden},
 	} {
