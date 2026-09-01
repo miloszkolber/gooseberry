@@ -40,7 +40,7 @@ Initialization checks the protocol version. Capability-driven controls and compa
 
 ## Gooseberry-owned features
 
-Projects, file/Git views, goals, tasks and follow-up queues belong to Gooseberry. Objectives and questions use session-scoped MCP; browser automation has its own [MCP endpoint](integration.md). Queues survive browser reconnects, not controller restarts.
+Projects, file/Git views, goals, tasks and follow-up queues belong to Gooseberry. Objectives and questions use session-scoped MCP; browser automation has its own [MCP endpoint](integration.md). Queue mutations and delivery attempts persist across controller restarts. Pinned Goose has no prompt-idempotency receipt, so an unconfirmed attempt is reconciled from replay or left for the user to retry or remove.
 
 Git supports uncommitted changes, selected commits, pinned comparisons and comparisons from a selected local or remote-tracking branch merge base. Branch catalogs load on demand; Gooseberry neither fetches nor writes Git state. `skill.list` remains a compatibility endpoint; the Web UI uses session command catalogs instead. Extension-dialog components are retained but have no live transport producer.
 
