@@ -221,7 +221,9 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		entry.streaming = true
 		return []map[string]any{{"type": "thinking", "messageId": optionalText(update["messageId"]), "text": text}}
 	case "tool_call":
-		toolName := textValue(mapValue(mapValue(mapValue(update["_meta"])["goose"])["toolCall"])["toolName"])
+		trustedTool := mapValue(mapValue(mapValue(update["_meta"])["goose"])["toolCall"])
+		toolName := textValue(trustedTool["toolName"])
+		activityTool := textValue(trustedTool["extensionName"]) == "summon" && (toolName == "delegate" || toolName == "load")
 		if toolName == "" {
 			toolName = textValue(update["title"])
 		}
@@ -233,6 +235,12 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		}
 		toolID := textValue(update["toolCallId"])
 		delete(entry.pendingToolOutputs, toolID)
+		if activityTool {
+			if entry.pendingToolOutputs == nil {
+				entry.pendingToolOutputs = make(map[string]toolOutput)
+			}
+			entry.pendingToolOutputs[toolID] = toolOutput{SubagentActivityTool: true}
+		}
 		delete(entry.appAttachments, toolID)
 		input := update["rawInput"]
 		if input == nil {
@@ -245,10 +253,13 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		toolID := textValue(update["toolCallId"])
 		status := textValue(update["status"])
 		finished := status == "completed" || status == "error" || status == "failed"
-		result := projectToolOutput(entry, toolID, update, finished)
+		result, activity := projectToolOutputAndActivity(entry, toolID, update, finished)
 		attachment := projectAppAttachment(entry, toolID, update)
 		if finished {
 			message := map[string]any{"role": "toolResult", "toolCallId": toolID, "content": result, "details": toolDetailsWithoutApp(update)}
+			if activity != nil {
+				message["subagentActivity"] = cloneJSON(activity)
+			}
 			if attachment != nil {
 				message["app"] = attachment
 			}
@@ -262,6 +273,9 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			eventType = "tool-end"
 		}
 		event := map[string]any{"type": eventType, "toolCallId": toolID, "status": status, "tool": result}
+		if activity != nil {
+			event["subagentActivity"] = activity
+		}
 		if attachment != nil {
 			event["app"] = attachment
 		}
@@ -286,14 +300,32 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 // ACP updates replace only the supplied fields. Keep unfinished output by call
 // ID so interleaved tools and status-only completion cannot erase it.
 type toolOutput struct {
-	Raw       any
-	Content   any
-	LiveText  string
-	Sequence  float64
-	Truncated bool
+	Raw                       any
+	Content                   any
+	LiveText                  string
+	Sequence                  float64
+	Truncated                 bool
+	SubagentActivityTool      bool
+	SubagentActivityEvents    []subagentActivityEvent
+	SubagentActivityTruncated bool
 }
 
 func projectToolOutput(entry *sessionEntry, id string, update map[string]any, finished bool) any {
+	result, _ := projectToolOutputAndActivity(entry, id, update, finished)
+	return result
+}
+
+const (
+	maxSubagentActivityEvents          = 32
+	maxSubagentActivityIdentifierBytes = 256
+)
+
+type subagentActivityEvent struct {
+	ChildSessionID string `json:"childSessionId"`
+	ToolName       string `json:"toolName"`
+}
+
+func projectToolOutputAndActivity(entry *sessionEntry, id string, update map[string]any, finished bool) (any, map[string]any) {
 	output := entry.pendingToolOutputs[id]
 	if raw := update["rawOutput"]; raw != nil {
 		output.Raw = raw
@@ -305,6 +337,7 @@ func projectToolOutput(entry *sessionEntry, id string, update map[string]any, fi
 	}
 	// Goose shell output arrives as ordered deltas, not a final result snapshot.
 	notification := mapValue(mapValue(update["_meta"])["toolNotification"])
+	projectSubagentActivity(&output, notification)
 	if notification["type"] == "live_output" {
 		params := mapValue(notification["params"])
 		sequence, _ := params["sequence"].(float64)
@@ -334,22 +367,69 @@ func projectToolOutput(entry *sessionEntry, id string, update map[string]any, fi
 		}
 		entry.pendingToolOutputs[id] = output
 	}
+	activity := subagentActivityValue(output)
 	if output.Raw != nil && len(arrayValue(output.Content)) > 0 {
-		return map[string]any{"structuredContent": output.Raw, "content": output.Content}
+		return map[string]any{"structuredContent": output.Raw, "content": output.Content}, activity
 	}
 	if output.Raw != nil {
-		return output.Raw
+		return output.Raw, activity
 	}
 	if output.Content != nil {
-		return output.Content
+		return output.Content, activity
 	}
 	if output.Truncated {
-		return output.LiveText + "\n[Live output truncated]"
+		return output.LiveText + "\n[Live output truncated]", activity
 	}
 	if output.LiveText != "" {
-		return output.LiveText
+		return output.LiveText, activity
 	}
-	return nil
+	return nil, activity
+}
+
+func projectSubagentActivity(output *toolOutput, notification map[string]any) {
+	if !output.SubagentActivityTool || notification["type"] != "message" {
+		return
+	}
+	params := mapValue(notification["params"])
+	if params["level"] != "info" {
+		return
+	}
+	data := mapValue(params["data"])
+	if data["type"] != "subagent_tool_request" {
+		return
+	}
+	childSessionID := textValue(data["subagent_id"])
+	toolName := textValue(mapValue(data["tool_call"])["name"])
+	if !validSubagentActivityIdentifier(childSessionID) || !validSubagentActivityIdentifier(toolName) || textValue(params["logger"]) != "subagent:"+childSessionID {
+		return
+	}
+	event := subagentActivityEvent{ChildSessionID: childSessionID, ToolName: toolName}
+	if len(output.SubagentActivityEvents) == maxSubagentActivityEvents {
+		copy(output.SubagentActivityEvents, output.SubagentActivityEvents[1:])
+		output.SubagentActivityEvents[len(output.SubagentActivityEvents)-1] = event
+		output.SubagentActivityTruncated = true
+		return
+	}
+	output.SubagentActivityEvents = append(output.SubagentActivityEvents, event)
+}
+
+func validSubagentActivityIdentifier(value string) bool {
+	return value != "" && len(value) <= maxSubagentActivityIdentifierBytes && utf8.ValidString(value) && !strings.ContainsRune(value, 0)
+}
+
+func subagentActivityValue(output toolOutput) map[string]any {
+	if len(output.SubagentActivityEvents) == 0 {
+		return nil
+	}
+	events := make([]any, len(output.SubagentActivityEvents))
+	for index, event := range output.SubagentActivityEvents {
+		events[index] = map[string]any{"childSessionId": event.ChildSessionID, "toolName": event.ToolName}
+	}
+	activity := map[string]any{"events": events}
+	if output.SubagentActivityTruncated {
+		activity["truncated"] = true
+	}
+	return activity
 }
 
 func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]any) []map[string]any {
