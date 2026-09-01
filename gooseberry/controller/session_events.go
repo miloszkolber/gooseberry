@@ -233,6 +233,7 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		}
 		toolID := textValue(update["toolCallId"])
 		delete(entry.pendingToolOutputs, toolID)
+		delete(entry.appAttachments, toolID)
 		input := update["rawInput"]
 		if input == nil {
 			input = map[string]any{}
@@ -245,8 +246,12 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		status := textValue(update["status"])
 		finished := status == "completed" || status == "error" || status == "failed"
 		result := projectToolOutput(entry, toolID, update, finished)
+		attachment := projectAppAttachment(entry, toolID, update)
 		if finished {
-			message := map[string]any{"role": "toolResult", "toolCallId": toolID, "content": result, "details": update}
+			message := map[string]any{"role": "toolResult", "toolCallId": toolID, "content": result, "details": toolDetailsWithoutApp(update)}
+			if attachment != nil {
+				message["app"] = attachment
+			}
 			if status == "error" || status == "failed" {
 				message["isError"] = true
 			}
@@ -256,7 +261,11 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		if finished {
 			eventType = "tool-end"
 		}
-		return []map[string]any{{"type": eventType, "toolCallId": toolID, "status": status, "tool": result}}
+		event := map[string]any{"type": eventType, "toolCallId": toolID, "status": status, "tool": result}
+		if attachment != nil {
+			event["app"] = attachment
+		}
+		return []map[string]any{event}
 	case "config_option_update":
 		entry.configOptions = arrayValue(update["configOptions"])
 		entry.thinkingLevel = thinkingFromOptions(entry.configOptions)

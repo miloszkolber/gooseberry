@@ -2,6 +2,7 @@ import { Check, ChevronRight, Loader2, X } from "lucide-react";
 import { cn } from "@/lib";
 import { useFold } from "./fold-state";
 import { getToolRenderer, getToolSummary, resolveProminence } from "./tool-registry";
+import { McpAppView } from "./tools/apps/mcp-app-view";
 import type { ToolResultState } from "./types";
 
 export function ToolCard({
@@ -29,6 +30,7 @@ export function ToolCard({
 		toolName,
 		args,
 		result: tool?.raw,
+		app: tool?.app,
 		status,
 		projectAreaRoot,
 		streaming,
@@ -73,8 +75,14 @@ export function ToolCard({
 				/>
 			</button>
 			{expanded ? (
-				<div className={cn("px-sm pb-xs", isError && "text-feedback-error")}>
+				<div
+					className={cn(
+						"flex flex-col items-start gap-sm px-sm pb-xs",
+						isError && "text-feedback-error",
+					)}
+				>
 					<Renderer {...renderProps} />
+					<McpAppView {...renderProps} />
 				</div>
 			) : null}
 		</div>

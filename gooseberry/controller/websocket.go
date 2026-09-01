@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	BrowserProtocolVersion  = 67
+	BrowserProtocolVersion  = 70
 	maxWSRequestBytes       = 32 * 1024 * 1024
 	maxConcurrentWSRequests = 256
 )
@@ -43,6 +43,7 @@ type WebSocketServer struct {
 	sockets         map[string]browserSocket
 	reapTimers      map[string]*time.Timer
 	inflight        chan struct{}
+	handlers        sync.WaitGroup
 }
 
 type browserSocket struct {
@@ -191,8 +192,19 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 		_ = output.connection.Close(websocket.StatusTryAgainLater, "too many pending requests; reconnect to resume")
 		return
 	}
+	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		<-s.inflight
+		return
+	}
+	s.handlers.Add(1)
+	s.mu.Unlock()
 	go func() {
-		defer func() { <-s.inflight }()
+		defer func() {
+			<-s.inflight
+			s.handlers.Done()
+		}()
 		var after func()
 		response, err := s.replay.Run(ctx, clientKey, id, fingerprint, func() ([]byte, error) {
 			result, handleErr := s.Handler.Handle(ctx, method, params, clientKey)
@@ -350,7 +362,7 @@ func (s *WebSocketServer) Publish(ctx context.Context, channel string, data any)
 	return firstErr
 }
 
-func (s *WebSocketServer) Close() {
+func (s *WebSocketServer) Close(ctx context.Context) {
 	s.cancel()
 	s.mu.Lock()
 	sockets := s.sockets
@@ -362,5 +374,14 @@ func (s *WebSocketServer) Close() {
 	s.mu.Unlock()
 	for _, socket := range sockets {
 		_ = socket.connection.CloseNow()
+	}
+	settled := make(chan struct{})
+	go func() {
+		s.handlers.Wait()
+		close(settled)
+	}()
+	select {
+	case <-settled:
+	case <-ctx.Done():
 	}
 }

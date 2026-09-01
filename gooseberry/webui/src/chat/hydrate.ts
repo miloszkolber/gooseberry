@@ -30,6 +30,7 @@ export function messagesToRuntime(
 			toolResults[message.toolCallId] = {
 				status: message.isError ? "error" : "done",
 				raw: message.content,
+				...(message.app ? { app: message.app } : {}),
 			};
 			turnIdByMessageIndex.push(null);
 		}

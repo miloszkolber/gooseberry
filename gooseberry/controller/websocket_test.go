@@ -21,6 +21,18 @@ type countingHandler struct {
 	calls atomic.Int32
 }
 
+type blockingHandler struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (h blockingHandler) Handle(ctx context.Context, _ string, _ json.RawMessage, _ string) (any, error) {
+	close(h.started)
+	<-ctx.Done()
+	<-h.release
+	return nil, ctx.Err()
+}
+
 func (h *countingHandler) Handle(ctx context.Context, method string, params json.RawMessage, client string) (any, error) {
 	h.calls.Add(1)
 	return h.inner.Handle(ctx, method, params, client)
@@ -47,7 +59,7 @@ func TestBrowserWebSocketUsesConfiguredOriginPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer server.Close()
+			defer server.Close(context.Background())
 			host := httptest.NewServer(server)
 			defer host.Close()
 			origin := test.origin
@@ -71,6 +83,53 @@ func TestBrowserWebSocketUsesConfiguredOriginPolicy(t *testing.T) {
 	}
 }
 
+func TestWebSocketCloseWaitsForAdmittedHandlers(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	server, err := NewWebSocketServer(blockingHandler{started: started, release: release}, nil, AuthConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := httptest.NewServer(server)
+	defer host.Close()
+	connection, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(host.URL, "http")+"/?client=stable", &websocket.DialOptions{HTTPHeader: map[string][]string{"Origin": {host.URL}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	if err := connection.Write(context.Background(), websocket.MessageText, []byte(`{"id":"one","method":"block","params":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	closed := make(chan struct{})
+	go func() {
+		server.Close(context.Background())
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("WebSocket server closed before its admitted handler settled")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("WebSocket server did not close after its handler settled")
+	}
+}
+
 func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	mount := t.TempDir()
 	policy, err := NewPathPolicy([]string{mount}, false)
@@ -86,7 +145,7 @@ func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer server.Close()
+	defer server.Close(context.Background())
 	httpServer := httptest.NewServer(server)
 	defer httpServer.Close()
 	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/?client=stable"
@@ -96,7 +155,7 @@ func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	}
 	defer connection.CloseNow()
 	_, welcome, err := connection.Read(context.Background())
-	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":67`) {
+	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":70`) {
 		t.Fatalf("welcome %s, %v", welcome, err)
 	}
 	request := []byte(`{"id":"one","method":"project.open","params":{"path":` + mustJSON(t, mount) + `}}`)
@@ -215,7 +274,7 @@ func TestSlowBrowserCannotStallOrderedUpdatesOrRequestReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer server.Close()
+	defer server.Close(context.Background())
 	host := httptest.NewServer(server)
 	defer host.Close()
 	connect := func(key string) *websocket.Conn {

@@ -37,6 +37,23 @@ function withClientId(url: string): string {
 export interface RequestOptions {
 	sessionId?: string;
 	timeoutMs?: number;
+	signal?: AbortSignal;
+}
+
+interface PendingRequest {
+	frame: string;
+	resolve: (value: unknown) => void;
+	reject: (error: Error) => void;
+	timer: ReturnType<typeof setTimeout>;
+	signal: AbortSignal | undefined;
+	onAbort: (() => void) | undefined;
+}
+
+function requestAborted(signal: AbortSignal): Error {
+	if (signal.reason instanceof Error) return signal.reason;
+	const error = new Error("request aborted");
+	error.name = "AbortError";
+	return error;
 }
 
 export class WsTransport {
@@ -48,15 +65,7 @@ export class WsTransport {
 	private readonly isAuthenticated: (() => Promise<boolean>) | undefined;
 	private stopped = false;
 	private hasOpened = false;
-	private readonly pending = new Map<
-		string,
-		{
-			frame: string;
-			resolve: (v: unknown) => void;
-			reject: (e: Error) => void;
-			timer: ReturnType<typeof setTimeout>;
-		}
-	>();
+	private readonly pending = new Map<string, PendingRequest>();
 	private readonly subscribers = new Map<string, Set<PushHandler>>();
 	private ackQueue: string[] = [];
 	private ackScheduled = false;
@@ -112,11 +121,9 @@ export class WsTransport {
 		this.stopped = true;
 		this.ws?.close();
 		this.ws = null;
-		for (const entry of this.pending.values()) {
-			clearTimeout(entry.timer);
-			entry.reject(new Error("transport stopped"));
+		for (const id of [...this.pending.keys()]) {
+			this.takePending(id)?.reject(new Error("transport stopped"));
 		}
-		this.pending.clear();
 	}
 
 	private async reconnectAfterClose(): Promise<void> {
@@ -134,22 +141,45 @@ export class WsTransport {
 		params: WsParams<M>,
 		options: RequestOptions = {},
 	): Promise<WsResult<M>> {
-		const { sessionId, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+		const { sessionId, signal, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
 		const id = `trpi_${++requestSequence}`;
 		const frame = JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) });
 		return new Promise<WsResult<M>>((resolve, reject) => {
+			if (signal?.aborted) {
+				reject(requestAborted(signal));
+				return;
+			}
 			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				reject(new Error(`request "${method}" timed out`));
+				this.takePending(id)?.reject(new Error(`request "${method}" timed out`));
 			}, timeoutMs);
-			this.pending.set(id, {
+			const entry: PendingRequest = {
 				frame,
 				resolve: resolve as (v: unknown) => void,
 				reject,
 				timer,
-			});
+				signal,
+				onAbort: undefined,
+			};
+			if (signal) {
+				entry.onAbort = () => this.takePending(id)?.reject(requestAborted(signal));
+				signal.addEventListener("abort", entry.onAbort, { once: true });
+			}
+			this.pending.set(id, entry);
+			if (signal?.aborted) entry.onAbort?.();
+			if (!this.pending.has(id)) return;
 			this.sendFrame(frame);
 		});
+	}
+
+	private takePending(id: string): PendingRequest | undefined {
+		const entry = this.pending.get(id);
+		if (!entry) return undefined;
+		this.pending.delete(id);
+		clearTimeout(entry.timer);
+		if (entry.signal && entry.onAbort) {
+			entry.signal.removeEventListener("abort", entry.onAbort);
+		}
+		return entry;
 	}
 
 	subscribe(channel: string, handler: PushHandler): () => void {
@@ -206,10 +236,8 @@ export class WsTransport {
 			return;
 		}
 		this.queueAck(msg.id);
-		const entry = this.pending.get(msg.id);
+		const entry = this.takePending(msg.id);
 		if (!entry) return;
-		clearTimeout(entry.timer);
-		this.pending.delete(msg.id);
 		if (msg.ok) {
 			entry.resolve(msg.result);
 			return;

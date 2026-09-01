@@ -20,6 +20,7 @@ services:
             GOOSEBERRY_BROWSER_AUTH: "true"
             GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set a distinct strong browser token in .gooseberry}"
             GOOSEBERRY_BROWSER_URL: "${GOOSEBERRY_BROWSER_URL:-http://127.0.0.1:8787}"
+            GOOSEBERRY_BROWSER_PUBLIC_ORIGIN: "${GOOSEBERRY_BROWSER_PUBLIC_ORIGIN:-}"
         volumes:
             - type: bind
               source: "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app"
