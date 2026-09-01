@@ -142,9 +142,19 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 	if m.closed {
 		entry = nil
 	}
+	retainUntilScheduled := entry != nil && kind == "status_message" && terminalStatusKind(textValue(mapValue(update["status"])["type"]))
+	if retainUntilScheduled {
+		// A terminal notification wakes durable queued work after releasing the
+		// projection lock. Keep the projection alive across that handoff so lease
+		// reconciliation cannot evict it before scheduler admission.
+		entry.refs++
+	}
 	m.mu.Unlock()
 	if entry == nil {
 		return nil
+	}
+	if retainUntilScheduled {
+		defer m.releaseEntry(entry)
 	}
 	entry.state.Lock()
 	target := entry
@@ -538,18 +548,24 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 		if entry.promptActive {
 			return nil
 		}
-		if strings.Contains(strings.ToLower(kind), "error") || strings.Contains(strings.ToLower(kind), "fail") {
+		lowerKind := strings.ToLower(kind)
+		if strings.Contains(lowerKind, "error") || strings.Contains(lowerKind, "fail") {
 			entry.streaming = false
 			entry.settlement = &SessionSettlement{StopReason: "error", ErrorMessage: message}
 			return []map[string]any{{"type": "error", "error": message}}
 		}
-		if strings.Contains(strings.ToLower(kind), "complete") || strings.Contains(strings.ToLower(kind), "idle") || strings.Contains(strings.ToLower(kind), "done") || strings.Contains(strings.ToLower(kind), "cancel") {
+		if terminalStatusKind(lowerKind) {
 			entry.streaming = false
 			entry.settlement = &SessionSettlement{StopReason: kind}
 			return []map[string]any{{"type": "complete", "status": kind}}
 		}
 	}
 	return nil
+}
+
+func terminalStatusKind(kind string) bool {
+	kind = strings.ToLower(kind)
+	return strings.Contains(kind, "error") || strings.Contains(kind, "fail") || strings.Contains(kind, "complete") || strings.Contains(kind, "idle") || strings.Contains(kind, "done") || strings.Contains(kind, "cancel")
 }
 
 func appendMessageBlock(entry *sessionEntry, role string, block map[string]any) {
