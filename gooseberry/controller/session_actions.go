@@ -210,8 +210,8 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 	entry.streaming = true
 	entry.promptGeneration++
 	generation := entry.promptGeneration
-	entry.state.Unlock()
 	m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "run-start"}})
+	entry.state.Unlock()
 	m.mu.Lock()
 	entry.refs++
 	m.mu.Unlock()
@@ -231,8 +231,8 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 		entry.streaming = false
 		if promptErr != nil {
 			entry.settlement = &SessionSettlement{StopReason: "error", ErrorMessage: promptErr.Error()}
-			entry.state.Unlock()
 			m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "error", "error": promptErr.Error()}})
+			entry.state.Unlock()
 			return
 		}
 		stopReason := string(response.StopReason)
@@ -240,8 +240,8 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 			stopReason = "complete"
 		}
 		entry.settlement = &SessionSettlement{StopReason: stopReason}
-		entry.state.Unlock()
 		m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "complete", "status": stopReason}})
+		entry.state.Unlock()
 		m.scheduleFollowUp(sessionID, entry)
 	}()
 	return nil

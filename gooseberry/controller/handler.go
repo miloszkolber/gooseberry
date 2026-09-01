@@ -320,7 +320,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err != nil {
 			return nil, err
 		}
-		return h.Sessions.Messages(ctx, request.SessionID, request.ProjectID, cwd, clientKey)
+		return h.Sessions.messageResponse(ctx, request.SessionID, request.ProjectID, cwd, clientKey)
 	case "session.appResourceRead":
 		var request struct {
 			ProjectID   string `json:"projectId"`
