@@ -7,7 +7,7 @@ import {
 	reduceSessionEvent,
 	useAppStore,
 } from "@/store/app-store";
-import { selectDiffTabTargetRef } from "@/workspace/selectors";
+import { selectDiffTabTargetRef, selectSkillsStale } from "@/workspace/selectors";
 
 const project: Project = {
 	id: "p1",
@@ -166,12 +166,30 @@ beforeEach(() => {
 		sessions: {},
 		deletedSessionsByProjectArea: {},
 		navTickByProjectArea: {},
+		fsChangesByProjectArea: {},
+		skillChangeTickByProjectArea: {},
+		skillsSyncedTickBySession: {},
+		commandCatalogGeneration: 0,
 		changesRequest: null,
 		chatLocationRequest: null,
 		routeChatTarget: null,
 		historyOpenRequest: null,
 		pendingPermissions: {},
 	});
+});
+
+test("truncated skill watches keep concurrent session command baselines independent", () => {
+	const state = useAppStore.getState();
+	state.openChatSession("p1", "one", null, "medium");
+	state.openChatSession("p1", "two", null, "medium");
+	state.noteFsChanged({ projectId: "p1", changes: [], truncated: true });
+	expect(selectSkillsStale(useAppStore.getState(), "p1", "one")).toBe(true);
+	expect(selectSkillsStale(useAppStore.getState(), "p1", "two")).toBe(true);
+	state.markSkillsSynced("one", 1);
+	expect(selectSkillsStale(useAppStore.getState(), "p1", "one")).toBe(false);
+	expect(selectSkillsStale(useAppStore.getState(), "p1", "two")).toBe(true);
+	state.noteCommandCatalogChanged();
+	expect(useAppStore.getState().commandCatalogGeneration).toBe(1);
 });
 
 test("live text preserves thinking and parallel tool calls after terminal tool updates", () => {
@@ -225,6 +243,48 @@ test("live text preserves thinking and parallel tool calls after terminal tool u
 		"shell-call": { status: "error", raw: { error: "exit 1" } },
 		"read-call": { status: "done", raw: { text: "ok" } },
 	});
+});
+
+test("standard ACP command snapshots replace the session command catalog", () => {
+	const runtime = reduceSessionEvent(EMPTY_RUNTIME, {
+		type: "commands",
+		commands: [
+			{
+				name: "compact",
+				description: "Compact the conversation",
+				inputHint: "optional focus",
+				source: "goose",
+				sourceInfo: {
+					path: "compact",
+					source: "Goose",
+					scope: "temporary",
+					origin: "top-level",
+				},
+			},
+		],
+	});
+	expect(runtime.commands.map((command) => command.name)).toEqual(["compact"]);
+	expect(runtime.commands[0]?.inputHint).toBe("optional focus");
+	expect(runtime.commandRevision).toBe(1);
+});
+
+test("a delayed command refresh cannot overwrite a newer ACP command snapshot", () => {
+	const state = useAppStore.getState();
+	state.openChatSession("p1", "commands", null, "medium");
+	const revision = useAppStore.getState().sessions.commands?.commandRevision;
+	const command = (name: string) => ({
+		name,
+		source: "goose" as const,
+		sourceInfo: {
+			path: name,
+			source: "Goose",
+			scope: "temporary" as const,
+			origin: "top-level" as const,
+		},
+	});
+	state.handleAgentEvent({ type: "commands", commands: [command("new")] }, "commands");
+	state.setCommands("commands", [command("stale")], revision);
+	expect(useAppStore.getState().sessions.commands?.commands[0]?.name).toBe("new");
 });
 
 test("live assistant content only merges adjacent compatible blocks", () => {
