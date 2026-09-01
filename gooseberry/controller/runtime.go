@@ -87,6 +87,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	sessions.SetObjectiveURL("http://127.0.0.1:" + strconv.Itoa(config.Port) + "/mcp/objective")
 	admin := NewGooseAdmin(client, settings)
 	admin.sessions = sessions
+	admin.publish = publish
 	admin.logins.publish = func(clientKey string, data any) {
 		if socket != nil {
 			_ = socket.PublishToClient(context.Background(), clientKey, "provider.login", data)

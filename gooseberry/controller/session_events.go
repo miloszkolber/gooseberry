@@ -215,6 +215,8 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			return []map[string]any{{"type": "message_start", "message": entry.messages[len(entry.messages)-1]}}
 		}
 		return []map[string]any{{"type": "text", "messageId": optionalText(update["messageId"]), "text": text}}
+	case "available_commands_update":
+		return []map[string]any{{"type": "commands", "commands": projectSlashCommands(update["availableCommands"])}}
 	case "agent_thought_chunk":
 		text := textValue(mapValue(update["content"])["text"])
 		appendMessageBlock(entry, "assistant", map[string]any{"type": "thinking", "thinking": text})

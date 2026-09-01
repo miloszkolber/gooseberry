@@ -49,7 +49,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 72;
+export const PROTOCOL_VERSION = 73;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -187,6 +187,7 @@ export const WS_CHANNELS = {
 	sessionLifecycleChanged: "session.lifecycleChanged",
 	providerLogin: "provider.login",
 	projectFsChanged: "project.fsChanged",
+	commandCatalogChanged: "goose.commandCatalogChanged",
 	settingsChanged: "settings.changed",
 	permissionRequest: "session.permissionRequest",
 	permissionResolved: "session.permissionResolved",

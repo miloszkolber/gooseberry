@@ -15,9 +15,14 @@ import (
 
 func TestGooseAdministrationScopesSecretsAndScansRecipes(t *testing.T) {
 	var recipeSaves atomic.Int32
+	var recipeDeletes atomic.Int32
+	var recipeWarnings atomic.Bool
+	var malformedRecipeSave atomic.Bool
+	var commandCatalogChanges atomic.Int32
 	var authentications atomic.Int32
 	var failProviderSave atomic.Bool
 	savedCredential := make(chan string, 1)
+	recipeWarnings.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		connection, err := websocket.Accept(response, request, nil)
 		if err != nil {
@@ -62,9 +67,16 @@ func TestGooseAdministrationScopesSecretsAndScansRecipes(t *testing.T) {
 			case "_goose/unstable/extensions/available":
 				result = map[string]any{"extensions": []any{}}
 			case "_goose/unstable/recipes/scan":
-				result = map[string]any{"has_security_warnings": true}
+				result = map[string]any{"has_security_warnings": recipeWarnings.Load()}
 			case "_goose/unstable/recipes/save":
 				recipeSaves.Add(1)
+				if malformedRecipeSave.Load() {
+					result = map[string]any{"id": "saved"}
+				} else {
+					result = map[string]any{"id": "saved", "file_name": "saved.yaml", "file_path": "/private/recipe/saved.yaml"}
+				}
+			case "_goose/unstable/recipes/delete":
+				recipeDeletes.Add(1)
 			case "_goose/unstable/providers/config/delete":
 				failure = map[string]any{"code": -32603, "message": "private-config-path and error-secret"}
 			}
@@ -84,6 +96,11 @@ func TestGooseAdministrationScopesSecretsAndScansRecipes(t *testing.T) {
 	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "fixture", "test", nil)
 	defer client.Close()
 	admin := NewGooseAdmin(client, NewSettings(Store{Dir: t.TempDir()}, nil))
+	admin.publish = func(channel string, _ any) {
+		if channel == "goose.commandCatalogChanged" {
+			commandCatalogChanges.Add(1)
+		}
+	}
 	defer admin.logins.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -125,8 +142,24 @@ func TestGooseAdministrationScopesSecretsAndScansRecipes(t *testing.T) {
 		t.Fatalf("raw extension leaked: %s", encoded)
 	}
 	_, err = admin.handleAutomation(ctx, "goose.recipeSave", map[string]any{"recipe": map[string]any{"title": "Unsafe", "description": "Fixture"}})
-	if err == nil || recipeSaves.Load() != 0 {
+	if err == nil || recipeSaves.Load() != 0 || commandCatalogChanges.Load() != 0 {
 		t.Fatal("saved a recipe with security warnings")
+	}
+	recipeWarnings.Store(false)
+	result, err = admin.handleAutomation(ctx, "goose.recipeSave", map[string]any{"recipe": map[string]any{"title": "Safe", "description": "Fixture"}})
+	if err != nil || recipeSaves.Load() != 1 || commandCatalogChanges.Load() != 1 || textValue(mapValue(result)["id"]) != "saved" {
+		t.Fatalf("successful recipe save did not publish command invalidation: %#v, %v", result, err)
+	}
+	malformedRecipeSave.Store(true)
+	if _, err = admin.handleAutomation(ctx, "goose.recipeSave", map[string]any{"recipe": map[string]any{"title": "Changed", "description": "Fixture"}}); err == nil || recipeSaves.Load() != 2 || commandCatalogChanges.Load() != 2 {
+		t.Fatal("mutated recipe with a malformed response did not publish command invalidation")
+	}
+	if _, err = admin.handleAutomation(ctx, "goose.recipeDelete", map[string]any{"id": ""}); err == nil || commandCatalogChanges.Load() != 2 {
+		t.Fatal("invalid recipe delete published command invalidation")
+	}
+	result, err = admin.handleAutomation(ctx, "goose.recipeDelete", map[string]any{"id": "saved"})
+	if err != nil || recipeDeletes.Load() != 1 || commandCatalogChanges.Load() != 3 || mapValue(result)["ok"] != true {
+		t.Fatalf("successful recipe delete did not publish command invalidation: %#v, %v", result, err)
 	}
 	result, err = admin.logins.Start(ctx, "browser-a", "native", "oauth")
 	if err != nil {

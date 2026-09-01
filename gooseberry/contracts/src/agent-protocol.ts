@@ -250,6 +250,7 @@ export type AgentEvent =
 			subagentActivity?: SubagentActivity;
 	  }
 	| { type: "agent_start" }
+	| { type: "commands"; commands: SlashCommandInfo[] }
 	| ({ type: "queue_update" } & SessionQueueState)
 	| { type: "message_start"; message: AgentMessage }
 	| {
@@ -287,6 +288,7 @@ export interface SessionEventPayload {
 export interface SlashCommandInfo {
 	name: string;
 	description?: string;
+	inputHint?: string;
 	source: "goose" | "extension" | "prompt" | "skill";
 	sourceInfo: {
 		path: string;

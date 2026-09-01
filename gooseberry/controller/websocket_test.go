@@ -155,7 +155,7 @@ func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	}
 	defer connection.CloseNow()
 	_, welcome, err := connection.Read(context.Background())
-	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":72`) {
+	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":73`) {
 		t.Fatalf("welcome %s, %v", welcome, err)
 	}
 	request := []byte(`{"id":"one","method":"project.open","params":{"path":` + mustJSON(t, mount) + `}}`)
