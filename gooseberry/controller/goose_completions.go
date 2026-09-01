@@ -2,7 +2,18 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+const (
+	maxSlashCommands          = 128
+	maxSlashCommandCandidates = 512
+	maxSlashCommandBytes      = 64 * 1024
+	maxSlashCommandNameBytes  = 256
 )
 
 func (a *GooseAdmin) completions(ctx context.Context, method string, request map[string]any) (any, error) {
@@ -46,7 +57,7 @@ func (a *GooseAdmin) completions(ctx context.Context, method string, request map
 			}
 		}
 		defer a.sessions.releaseEntry(entry)
-		if err := a.sessions.lockEntry(sessionID, entry); err != nil {
+		if err := a.sessions.lockEntryContext(ctx, sessionID, entry); err != nil {
 			return nil, err
 		}
 		defer entry.op.Unlock()
@@ -71,20 +82,85 @@ func (a *GooseAdmin) completions(ctx context.Context, method string, request map
 	if err != nil {
 		return nil, err
 	}
-	result := make([]map[string]any, 0)
-	for _, value := range arrayValue(response["availableCommands"]) {
-		command := mapValue(value)
-		name, err := requiredIdentifier(command["name"], "Command name")
-		if err != nil {
-			return nil, err
+	return projectSlashCommands(response["availableCommands"]), nil
+}
+
+func projectSlashCommands(value any) []map[string]any {
+	result := make([]map[string]any, 0, min(len(arrayValue(value)), maxSlashCommands))
+	optional := make([]map[string]string, 0, cap(result))
+	total := 2 // JSON array delimiters.
+	for index, value := range arrayValue(value) {
+		if index == maxSlashCommandCandidates {
+			break
 		}
-		entry := map[string]any{"name": name, "source": "goose", "sourceInfo": map[string]any{"path": name, "source": "Goose", "scope": "temporary", "origin": "top-level"}}
-		if description := textValue(command["description"]); description != "" {
-			entry["description"] = description
+		if len(result) == maxSlashCommands {
+			break
+		}
+		command := mapValue(value)
+		name := textValue(command["name"])
+		if !validSlashCommandName(name) {
+			continue
+		}
+		entry := map[string]any{
+			"name":   name,
+			"source": "goose",
+			"sourceInfo": map[string]any{
+				"path": name, "source": "Goose", "scope": "temporary", "origin": "top-level",
+			},
+		}
+		encoded, err := json.Marshal(entry)
+		separator := 0
+		if len(result) > 0 {
+			separator = 1
+		}
+		if err != nil || total+separator+len(encoded) > maxSlashCommandBytes {
+			continue
 		}
 		result = append(result, entry)
+		optional = append(optional, map[string]string{
+			"description": safeCommandText(command["description"], 2048),
+			"inputHint":   safeCommandText(mapValue(command["input"])["hint"], 512),
+		})
+		total += separator + len(encoded)
 	}
-	return result, nil
+	for index, fields := range optional {
+		for _, target := range []string{"description", "inputHint"} {
+			text := fields[target]
+			if text == "" {
+				continue
+			}
+			before, err := json.Marshal(result[index])
+			if err != nil {
+				continue
+			}
+			result[index][target] = text
+			after, err := json.Marshal(result[index])
+			if err != nil || total+len(after)-len(before) > maxSlashCommandBytes {
+				delete(result[index], target)
+				continue
+			}
+			total += len(after) - len(before)
+		}
+	}
+	return result
+}
+
+func validSlashCommandName(value string) bool {
+	return value != "" &&
+		len(value) <= maxSlashCommandNameBytes &&
+		utf8.ValidString(value) &&
+		!strings.ContainsRune(value, 0) &&
+		strings.IndexFunc(value, func(character rune) bool {
+			return unicode.IsSpace(character) || unicode.IsControl(character) || unicode.Is(unicode.Cf, character)
+		}) < 0
+}
+
+func safeCommandText(value any, limit int) string {
+	text, ok := value.(string)
+	if !ok || text == "" || len(text) > limit || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return ""
+	}
+	return text
 }
 
 func projectAgentMentions(value any) ([]map[string]any, error) {

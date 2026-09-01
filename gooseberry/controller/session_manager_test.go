@@ -65,6 +65,64 @@ func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
 	}
 }
 
+func TestAvailableCommandsUpdateProjectsOneBoundedSafeCatalog(t *testing.T) {
+	raw := []any{
+		map[string]any{
+			"name":        "compact",
+			"description": "Compact the conversation",
+			"input":       map[string]any{"hint": "optional focus", "private": "/private/input"},
+			"_meta":       map[string]any{"sourcePath": "/private/recipe.yaml"},
+			"sourcePath":  "/private/source.md",
+		},
+		map[string]any{"name": "unsafe\u202ename"},
+		map[string]any{"name": "format\u2060name"},
+		map[string]any{"name": "oversized", "description": strings.Repeat("x", 2049)},
+	}
+	for index := 0; index < 200; index++ {
+		raw = append(raw, map[string]any{"name": fmt.Sprintf("command-%03d", index)})
+	}
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	events := applySessionUpdate(entry, "available_commands_update", map[string]any{"availableCommands": raw}, false)
+	if len(events) != 1 || events[0]["type"] != "commands" {
+		t.Fatalf("command event: %#v", events)
+	}
+	commands, ok := events[0]["commands"].([]map[string]any)
+	if !ok || len(commands) != maxSlashCommands {
+		t.Fatalf("bounded commands: %#v", events[0]["commands"])
+	}
+	encoded, _ := json.Marshal(commands)
+	if len(encoded) > maxSlashCommandBytes || strings.Contains(string(encoded), "/private/") || strings.Contains(string(encoded), "unsafe") || strings.Contains(string(encoded), "format") {
+		t.Fatalf("unsafe command projection: %s", encoded)
+	}
+	first := commands[0]
+	if first["name"] != "compact" || first["inputHint"] != "optional focus" {
+		t.Fatalf("standard command metadata was lost: %#v", first)
+	}
+	if _, exists := commands[1]["description"]; exists {
+		t.Fatalf("oversized optional command field was retained: %#v", commands[1])
+	}
+	invalidPrefix := make([]any, maxSlashCommandCandidates)
+	for index := range invalidPrefix {
+		invalidPrefix[index] = map[string]any{"name": "invalid command"}
+	}
+	invalidPrefix = append(invalidPrefix, map[string]any{"name": "outside-bound"})
+	if projected := projectSlashCommands(invalidPrefix); len(projected) != 0 {
+		t.Fatalf("projector inspected candidates outside its bound: %#v", projected)
+	}
+	rich := make([]any, maxSlashCommands)
+	for index := range rich {
+		rich[index] = map[string]any{
+			"name":        fmt.Sprintf("rich-%03d", index),
+			"description": strings.Repeat("d", 2048),
+			"input":       map[string]any{"hint": strings.Repeat("h", 512)},
+		}
+	}
+	projectedRich := projectSlashCommands(rich)
+	if len(projectedRich) != maxSlashCommands || projectedRich[len(projectedRich)-1]["description"] != nil {
+		t.Fatalf("optional metadata displaced command names: count=%d last=%#v", len(projectedRich), projectedRich[len(projectedRich)-1])
+	}
+}
+
 func summonToolStart(toolCallID, toolName string) map[string]any {
 	return map[string]any{
 		"sessionUpdate": "tool_call",
