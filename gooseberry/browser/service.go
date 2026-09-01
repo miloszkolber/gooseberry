@@ -126,6 +126,7 @@ func quotaError(message string) *serviceError {
 
 type app struct {
 	config         config
+	appViews       *appViewStore
 	accounting     sync.Mutex
 	reservations   map[string]int64
 	artifactUsage  map[string]int64
@@ -158,7 +159,7 @@ func newApp(config config) (*app, error) {
 	if _, err := os.Stat(config.BrowserConfig); err != nil {
 		return nil, fmt.Errorf("check browser config: %w", err)
 	}
-	app := &app{config: config, reservations: map[string]int64{}, artifactUsage: map[string]int64{}, active: map[uint64]context.CancelFunc{}}
+	app := &app{config: config, appViews: newAppViewStore(), reservations: map[string]int64{}, artifactUsage: map[string]int64{}, active: map[uint64]context.CancelFunc{}}
 	if err := app.initializeStorage(); err != nil {
 		return nil, err
 	}
@@ -1061,6 +1062,28 @@ func (a *app) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	path := parsed.EscapedPath()
+	if parsed.RawQuery == "" && path == appViewPath {
+		if request.Method != http.MethodPost {
+			rejectMethod(response, request, http.MethodPost)
+		} else {
+			a.registerAppView(response, request)
+		}
+		return
+	}
+	if parsed.RawQuery == "" {
+		if ticket, ok := appViewTicket(path); ok {
+			switch request.Method {
+			case http.MethodGet:
+				a.serveAppView(response, request, ticket)
+			case http.MethodDelete:
+				a.deleteAppView(response, request, ticket)
+			default:
+				response.Header().Set("Allow", http.MethodGet+", "+http.MethodDelete)
+				writeJSON(response, http.StatusMethodNotAllowed, map[string]any{"outcome": "rejected", "code": "method_not_allowed"}, nil)
+			}
+			return
+		}
+	}
 	if path == "/mcp" {
 		a.serveMCP(response, request)
 		return
@@ -1129,6 +1152,7 @@ func (a *app) shutdown() {
 		cancels = append(cancels, cancel)
 	}
 	a.activeMu.Unlock()
+	a.appViews.close()
 	for _, cancel := range cancels {
 		cancel()
 	}
