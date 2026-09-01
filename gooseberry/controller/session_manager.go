@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,7 @@ type sessionEntry struct {
 	attached           uint64
 	replay             *sessionEntry
 	promptGeneration   uint64
+	projectionID       string
 	inactiveAt         time.Time
 	inactiveBytes      int // Encoded size under state; zero means a mutation needs recounting.
 	pendingEcho        *userEcho
@@ -333,6 +335,7 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.pendingToolOutputs = replay.pendingToolOutputs
 	entry.appAttachments = replay.appAttachments
 	entry.attached = replay.attached
+	entry.projectionID = replay.projectionID
 	entry.replay = nil
 	if recoveredDispatch {
 		m.emitQueueProjection(sessionID, entry, !entry.promptActive)
@@ -433,51 +436,6 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 		result = append(result, SessionSummary{SessionID: record.SessionID, ProjectID: projectID, CWD: record.CWD, ParentSessionID: record.ParentSessionID, Title: source.title, ThinkingLevel: "off", MessageCount: source.messageCount, UpdatedAt: source.updatedAt, Live: false, Archived: source.archived, Queue: &queue})
 	}
 	return result, nil
-}
-
-func (m *SessionManager) Messages(ctx context.Context, sessionID, projectID, cwd, clientKey string) (map[string]any, error) {
-	result, release, err := m.messageSnapshot(ctx, sessionID, projectID, cwd, clientKey, true)
-	if release != nil {
-		release()
-	}
-	return result, err
-}
-
-func (m *SessionManager) messageResponse(ctx context.Context, sessionID, projectID, cwd, clientKey string) (any, error) {
-	result, release, err := m.messageSnapshot(ctx, sessionID, projectID, cwd, clientKey, false)
-	if err != nil {
-		return nil, err
-	}
-	return deferredResponse{result: result, after: release}, nil
-}
-
-func (m *SessionManager) messageSnapshot(ctx context.Context, sessionID, projectID, cwd, clientKey string, detach bool) (map[string]any, func(), error) {
-	entry, err := m.EnsureAttached(ctx, sessionID, projectID, cwd)
-	if err != nil {
-		return nil, nil, err
-	}
-	m.mu.Lock()
-	m.retainSessionLocked(clientKey, sessionID, projectID)
-	m.mu.Unlock()
-	entry.state.Lock()
-	// Keep state locked until the WebSocket response is queued. Session updates
-	// therefore fall wholly before or after the reload snapshot instead of
-	// crossing it in transit. Direct callers receive an owned copy; the wire path
-	// avoids duplicating a long transcript before encoding it under this lock.
-	var messages any = entry.messages
-	if detach {
-		messages = cloneJSON(entry.messages)
-	}
-	pendingTools := pendingToolPreviewsLocked(entry)
-	summary := m.summaryLocked(sessionID, entry)
-	var once sync.Once
-	release := func() {
-		once.Do(func() {
-			entry.state.Unlock()
-			m.releaseEntry(entry)
-		})
-	}
-	return map[string]any{"summary": summary, "messages": messages, "pendingTools": pendingTools}, release, nil
 }
 
 func (m *SessionManager) SetModel(ctx context.Context, sessionID string, model WireModel) error {
@@ -882,22 +840,22 @@ func (m *SessionManager) evictLocked() {
 		total += entry.inactiveBytes
 		entry.state.Unlock()
 	}
-	for len(candidates) > inactiveProjectionMaxCount || total > inactiveProjectionMaxBytes {
-		oldest := 0
-		for index := range candidates {
-			if candidates[index].at.Before(candidates[oldest].at) {
-				oldest = index
-			}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].at.Equal(candidates[j].at) {
+			return candidates[i].id < candidates[j].id
 		}
-		item := candidates[oldest]
+		return candidates[i].at.Before(candidates[j].at)
+	})
+	for len(candidates) > inactiveProjectionMaxCount || total > inactiveProjectionMaxBytes {
+		item := candidates[0]
 		delete(m.sessions, item.id)
 		total -= item.bytes
-		candidates = append(candidates[:oldest], candidates[oldest+1:]...)
+		candidates = candidates[1:]
 	}
 }
 
 func newSessionEntry(sessionID, projectID, cwd, parent, token string) *sessionEntry {
-	return &sessionEntry{projectID: projectID, cwd: cwd, parentSessionID: parent, title: "Chat", thinkingLevel: "off", messages: []any{}, stats: SessionStats{SessionID: sessionID, Reported: map[string]bool{}}, queue: newSessionQueueState(), objectiveToken: token, consumedQuestions: make(map[string]bool)}
+	return &sessionEntry{projectID: projectID, cwd: cwd, parentSessionID: parent, title: "Chat", thinkingLevel: "off", messages: []any{}, stats: SessionStats{SessionID: sessionID, Reported: map[string]bool{}}, queue: newSessionQueueState(), objectiveToken: token, consumedQuestions: make(map[string]bool), projectionID: randomID()}
 }
 
 func (m *SessionManager) restoredQueue(projectID, sessionID string) (sessionQueueState, error) {

@@ -323,7 +323,10 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		}
 		return h.Sessions.List(ctx, request.ProjectID, request.Archived)
 	case "session.getMessages":
-		var request sessionOwnerRequest
+		var request struct {
+			sessionOwnerRequest
+			Before *transcriptBefore `json:"before"`
+		}
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {
 			return nil, fmt.Errorf("malformed session request")
 		}
@@ -331,7 +334,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err != nil {
 			return nil, err
 		}
-		return h.Sessions.messageResponse(ctx, request.SessionID, request.ProjectID, cwd, clientKey)
+		return h.Sessions.messageResponse(ctx, request.SessionID, request.ProjectID, cwd, clientKey, transcriptPageRequest{Before: request.Before})
 	case "session.appResourceRead":
 		var request struct {
 			ProjectID   string `json:"projectId"`

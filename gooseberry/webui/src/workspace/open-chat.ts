@@ -46,13 +46,12 @@ export async function openChatInTab(
 		return;
 	}
 	try {
-		const { summary, messages, pendingTools } = await getTransport().request(
-			"session.getMessages",
-			{
-				sessionId,
-				projectId: projectAreaId,
-			},
-		);
+		const response = await getTransport().request("session.getMessages", {
+			sessionId,
+			projectId: projectAreaId,
+		});
+		if (response.kind !== "snapshot") throw new Error("invalid chat snapshot");
+		const { summary, messages, pendingTools, page } = response;
 		const current = useAppStore.getState();
 		if (
 			!current.projects.some((project) => project.id === projectId) ||
@@ -72,7 +71,12 @@ export async function openChatInTab(
 		}
 		current.hydrateSession(
 			summary,
-			messagesToRuntime(messages, summary.lastSettlement, pendingTools),
+			messagesToRuntime(messages, {
+				lastSettlement: summary.lastSettlement,
+				pendingTools,
+				page,
+				isStreaming: summary.isStreaming,
+			}),
 			!background,
 			undefined,
 			options,

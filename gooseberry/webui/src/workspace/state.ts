@@ -1067,11 +1067,11 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 				turns: hydrated.turns,
 				toolResults: hydrated.toolResults,
 				askAnswers: hydrated.askAnswers,
+				turnIdByMessageIndex: hydrated.turnIdByMessageIndex,
+				transcript: hydrated.transcript,
+				currentAssistantId: hydrated.currentAssistantId,
 				isStreaming: summary.isStreaming,
 				...(summary.queue ? { queue: summary.queue } : {}),
-				...(hydrated.turnIdByMessageIndex
-					? { turnIdByMessageIndex: hydrated.turnIdByMessageIndex }
-					: {}),
 			};
 			const tabs = s.tabsByProjectArea[wsId] ?? [];
 			const existing = tabs.find(
