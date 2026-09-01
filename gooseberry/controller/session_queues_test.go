@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func queueTestContext(key, fingerprint byte) context.Context {
@@ -258,7 +259,13 @@ func TestRemoteTerminalUpdateWakesQueueRestoredBehindRunningTurn(t *testing.T) {
 	entry := newSessionEntry("session", "project", "/project", "", "token")
 	entry.streaming = true
 	entry.queue.FollowUp = []queuedFollowUp{{ID: "queued", Text: "run after replayed turn"}}
-	manager := &SessionManager{sessions: map[string]*sessionEntry{"session": entry}}
+	retainedDuringPublish := false
+	manager := &SessionManager{sessions: map[string]*sessionEntry{"session": entry}, now: time.Now}
+	manager.publish = func(string, any) {
+		manager.mu.Lock()
+		retainedDuringPublish = entry.refs > 0
+		manager.mu.Unlock()
+	}
 	entry.op.Lock() // Keep the scheduled worker observable before it can drain.
 	if err := manager.applyUpdate(context.Background(), map[string]any{
 		"sessionId": "session",
@@ -278,7 +285,7 @@ func TestRemoteTerminalUpdateWakesQueueRestoredBehindRunningTurn(t *testing.T) {
 	manager.mu.Unlock()
 	entry.op.Unlock()
 	manager.work.Wait()
-	if !woken {
+	if !woken || !retainedDuringPublish {
 		t.Fatal("remote terminal status left the restored follow-up queue asleep")
 	}
 }
