@@ -41,6 +41,7 @@ type GitDiffFile struct {
 	Original     string `json:"original"`
 	Modified     string `json:"modified"`
 	OriginalPath string `json:"originalPath,omitempty"`
+	ComparisonID string `json:"comparisonId,omitempty"`
 	Unavailable  bool   `json:"unavailable,omitempty"`
 	Binary       bool   `json:"binary,omitempty"`
 	TooLarge     bool   `json:"tooLarge,omitempty"`
@@ -56,11 +57,12 @@ type GitCommit struct {
 }
 
 type diffRange struct {
-	prefix      []string
-	revisions   []string
-	untracked   bool
-	originalRef string
-	modifiedRef string
+	prefix       []string
+	revisions    []string
+	untracked    bool
+	originalRef  string
+	modifiedRef  string
+	comparisonID string
 }
 
 func resolveCommit(ctx context.Context, repository, ref string) string {
@@ -191,7 +193,7 @@ func resolveDiffRange(ctx context.Context, repository string, scope GitDiffScope
 		if !fullGitOID(mergeBase) {
 			return diffRange{}, fmt.Errorf("could not compare branches")
 		}
-		return diffRange{prefix: []string{"diff"}, revisions: []string{mergeBase, head}, originalRef: mergeBase, modifiedRef: head}, nil
+		return diffRange{prefix: []string{"diff"}, revisions: []string{mergeBase, head}, originalRef: mergeBase, modifiedRef: head, comparisonID: mergeBase + ".." + head}, nil
 	}
 	requested := scope.SHA
 	if scope.Kind == "pinned" {
@@ -228,22 +230,22 @@ func changedArgs(value diffRange, mode string) []string {
 	return append(args, "--")
 }
 
-func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope) ([]GitFileChange, error) {
+func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope) ([]GitFileChange, string, error) {
 	rangeValue, err := resolveDiffRange(ctx, repository, scope)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	countsResult := runGit(ctx, repository, changedArgs(rangeValue, "--numstat"), gitOutputLimit)
 	tracked := runGit(ctx, repository, changedArgs(rangeValue, "--name-status"), gitOutputLimit)
 	if !countsResult.ok || !tracked.ok {
-		return nil, fmt.Errorf("could not read changed files")
+		return nil, "", fmt.Errorf("could not read changed files")
 	}
 	counts := parseNumstat(countsResult.out)
 	result := parseNameStatus(tracked.out, counts)
 	if rangeValue.untracked {
 		untracked := runGit(ctx, repository, []string{"ls-files", "-z", "--others", "--exclude-standard"}, gitOutputLimit)
 		if !untracked.ok {
-			return nil, fmt.Errorf("could not read untracked files: %s", untracked.err)
+			return nil, "", fmt.Errorf("could not read untracked files: %s", untracked.err)
 		}
 		counted := 0
 		for _, name := range strings.Split(untracked.out, "\x00") {
@@ -269,7 +271,7 @@ func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
-	return result, nil
+	return result, rangeValue.comparisonID, nil
 }
 
 func parseNumstat(output string) map[string][2]int {
@@ -377,7 +379,7 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 		// alone would make Git report it as an added file.
 		changed := runGit(ctx, admitted, changedArgs(rangeValue, "--name-status"), gitOutputLimit)
 		if !changed.ok {
-			return unavailableDiff(filePreview{issue: "unavailable"}, ""), nil
+			return unavailableDiff(filePreview{issue: "unavailable"}, "", rangeValue.comparisonID), nil
 		}
 		for _, change := range parseNameStatus(changed.out, nil) {
 			if change.Path == name && change.OriginalPath != "" {
@@ -395,7 +397,7 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 		original = readBlobPreview(ctx, admitted, rangeValue.originalRef, originalName)
 	}
 	if original.issue != "" && original.issue != "missing" {
-		return unavailableDiff(original, originalPath), nil
+		return unavailableDiff(original, originalPath, rangeValue.comparisonID), nil
 	}
 	modified := filePreview{}
 	if rangeValue.modifiedRef != "" {
@@ -405,14 +407,14 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 	}
 	if modified.issue == "missing" {
 		if original.issue == "missing" {
-			return unavailableDiff(modified, originalPath), nil
+			return unavailableDiff(modified, originalPath, rangeValue.comparisonID), nil
 		}
-		return GitDiffFile{Original: original.content, OriginalPath: originalPath}, nil
+		return GitDiffFile{Original: original.content, OriginalPath: originalPath, ComparisonID: rangeValue.comparisonID}, nil
 	}
 	if modified.issue != "" {
-		return unavailableDiff(modified, originalPath), nil
+		return unavailableDiff(modified, originalPath, rangeValue.comparisonID), nil
 	}
-	return GitDiffFile{Original: original.content, Modified: modified.content, OriginalPath: originalPath}, nil
+	return GitDiffFile{Original: original.content, Modified: modified.content, OriginalPath: originalPath, ComparisonID: rangeValue.comparisonID}, nil
 }
 
 func (g *Git) ListCommits(ctx context.Context, projectID, repository string) (map[string]any, error) {
@@ -557,8 +559,8 @@ func readBlobPreview(ctx context.Context, repository, ref, name string) filePrev
 	return filePreview{content: shown.out}
 }
 
-func unavailableDiff(preview filePreview, originalPath string) GitDiffFile {
-	result := GitDiffFile{Unavailable: true, OriginalPath: originalPath}
+func unavailableDiff(preview filePreview, originalPath, comparisonID string) GitDiffFile {
+	result := GitDiffFile{Unavailable: true, OriginalPath: originalPath, ComparisonID: comparisonID}
 	switch preview.issue {
 	case "binary":
 		result.Binary, result.Message = true, "Binary files cannot be previewed"

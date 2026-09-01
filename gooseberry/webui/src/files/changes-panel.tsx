@@ -113,7 +113,12 @@ export function ChangesPanel({
 				scope,
 			}),
 		{
-			onResult: (result) => setScoped({ key: readKey, status: result }),
+			onResult: (result, id) => {
+				setScoped({ key: readKey, status: result });
+				if (scope.kind === "branch" && result.comparisonId) {
+					useAppStore.getState().noteDiffComparison(id, result.root, scope, result.comparisonId);
+				}
+			},
 			onFailure: (_id, failure) => setScoped({ key: readKey, error: errorText(failure) }),
 			onSwitch: () => setScoped(null),
 		},
@@ -132,11 +137,17 @@ export function ChangesPanel({
 		(path: string, intent: TabIntent) => {
 			setHighlighted(path);
 			if (status)
-				void openDiffInTab(projectAreaId, scope, path, intent, undefined, status.root).then(
-					(opened) => {
-						if (opened) onOpen?.();
-					},
-				);
+				void openDiffInTab(
+					projectAreaId,
+					scope,
+					path,
+					intent,
+					undefined,
+					status.root,
+					status.comparisonId,
+				).then((opened) => {
+					if (opened) onOpen?.();
+				});
 		},
 		[status, projectAreaId, scope, onOpen],
 	);

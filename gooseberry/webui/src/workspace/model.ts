@@ -48,6 +48,7 @@ export interface DiffTab extends GitDiffFile {
 	path: string;
 	scope: GitDiffScope;
 	loadedTarget: string;
+	targetComparison?: string;
 	ignoreWhitespace?: boolean;
 	loadedTick?: number;
 }

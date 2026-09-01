@@ -120,10 +120,10 @@ export function selectDiffScope(
 
 export function selectDiffTabTargetRef(
 	state: ActiveProjectAreaState,
-	tab: { projectAreaId: string; scope: GitDiffScope },
+	tab: { projectAreaId: string; scope: GitDiffScope; targetComparison?: string },
 ): string {
 	return tab.scope.kind === "branch" && selectProjectAreaById(state, tab.projectAreaId)
-		? tab.scope.baseRef
+		? (tab.targetComparison ?? "")
 		: "";
 }
 
