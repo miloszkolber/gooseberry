@@ -209,6 +209,15 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 			return nil, fmt.Errorf("malformed Git request")
 		}
 		return h.Git.ListCommits(ctx, request.ProjectID, request.Repository)
+	case "git.listBranches":
+		var request struct {
+			ProjectID  string `json:"projectId"`
+			Repository string `json:"repository"`
+		}
+		if h.Git == nil || decodeParams(raw, &request) != nil || request.ProjectID == "" || request.Repository == "" {
+			return nil, fmt.Errorf("malformed Git request")
+		}
+		return h.Git.ListBranches(ctx, request.ProjectID, request.Repository)
 	case "session.create":
 		var request struct {
 			ProjectID     string     `json:"projectId"`

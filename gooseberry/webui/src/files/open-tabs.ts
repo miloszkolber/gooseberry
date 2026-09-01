@@ -3,7 +3,6 @@ import { errorText, getTransport } from "../connection";
 import { DOUBLE_CLICK_SETTLE_MS, projectRelativePath, tupleKey } from "../lib";
 import {
 	type ContentTab,
-	selectDiffTabTargetRef,
 	selectProjectAreaById,
 	selectProjectAreaTick,
 	type TabIntent,
@@ -151,11 +150,11 @@ export function openDiffInTab(
 	intent: TabIntent,
 	_requestedNavigation?: unknown,
 	repository?: string,
+	targetComparison?: string,
 ): Promise<boolean> {
 	const selectedRepository = repository ?? "";
 	const canonicalPath = projectRelativePath(path, selectedRepository);
 	const id = diffTabId(projectAreaId, selectedRepository, scope, canonicalPath);
-	const target = selectDiffTabTargetRef(useAppStore.getState(), { projectAreaId, scope });
 	return openReadTab(
 		projectAreaId,
 		id,
@@ -168,17 +167,21 @@ export function openDiffInTab(
 				path: canonicalPath,
 				scope,
 			}),
-		(preview, loadedTick) => ({
-			...preview,
-			kind: "diff",
-			id,
-			projectAreaId,
-			repository: selectedRepository,
-			path: canonicalPath,
-			scope,
-			name: diffTabName(scope, canonicalPath),
-			loadedTick,
-			loadedTarget: target,
-		}),
+		(preview, loadedTick) => {
+			const comparison = preview.comparisonId ?? targetComparison ?? "";
+			return {
+				...preview,
+				kind: "diff",
+				id,
+				projectAreaId,
+				repository: selectedRepository,
+				path: canonicalPath,
+				scope,
+				name: diffTabName(scope, canonicalPath),
+				loadedTick,
+				loadedTarget: comparison,
+				...(scope.kind === "branch" ? { targetComparison: comparison } : {}),
+			};
+		},
 	);
 }

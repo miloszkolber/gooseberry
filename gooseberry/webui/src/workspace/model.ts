@@ -48,6 +48,7 @@ export interface DiffTab extends GitDiffFile {
 	path: string;
 	scope: GitDiffScope;
 	loadedTarget: string;
+	targetComparison?: string;
 	ignoreWhitespace?: boolean;
 	loadedTick?: number;
 }
@@ -65,7 +66,7 @@ function contentResourceIdentity(tab: ContentTab): string {
 		const reference =
 			tab.scope.kind === "commit"
 				? tab.scope.sha
-				: tab.scope.kind === "pinned"
+				: tab.scope.kind === "pinned" || tab.scope.kind === "branch"
 					? tab.scope.baseRef
 					: "";
 		return tupleKey(

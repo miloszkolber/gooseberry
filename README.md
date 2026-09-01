@@ -6,7 +6,7 @@ A self-hosted workspace for [Goose](https://github.com/aaif-goose/goose): conver
 
 - Concurrent chats with streaming replies, images, steering, follow-up queues, search and forks.
 - Projects spanning multiple directories and Git repositories.
-- Read-only file previews, source highlighting and commit or working-tree diffs.
+- Read-only file previews, source highlighting and commit, branch-base or working-tree diffs.
 - Goals, tasks, permission prompts and custom agent mentions.
 - Goose provider, model, extension, recipe and schedule controls.
 - Browser automation with MCP tools and screenshot previews.

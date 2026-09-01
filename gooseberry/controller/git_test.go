@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,6 +93,7 @@ func TestGitLinkedWorktreeDiscoveryAndScopedPreviews(t *testing.T) {
 	}{
 		{GitDiffScope{Kind: "commit", SHA: commit}, committed},
 		{GitDiffScope{Kind: "pinned", BaseRef: base}, working},
+		{GitDiffScope{Kind: "branch", BaseRef: "refs/heads/main"}, committed},
 	} {
 		status, err := service.Status(ctx, project.ID, worktree, check.scope)
 		if err != nil || len(status.Changes) != 1 || status.Changes[0].Path != name {
@@ -116,6 +118,15 @@ func TestGitPreservesOddPathsAndBoundsDiffPreviews(t *testing.T) {
 	status, err := service.Status(context.Background(), project.ID, repository, GitDiffScope{})
 	if err != nil || status.Head.Kind != "unborn" || len(status.Changes) != 1 || status.Changes[0].Path != name {
 		t.Fatalf("unborn odd-path status: %#v, %v", status, err)
+	}
+	branches, err := service.ListBranches(context.Background(), project.ID, repository)
+	if err != nil || branches.Truncated || len(branches.Branches) != 0 {
+		t.Fatalf("unborn branch catalog: %#v, %v", branches, err)
+	}
+	_, err = service.Status(context.Background(), project.ID, repository, GitDiffScope{Kind: "branch", BaseRef: "refs/heads/main"})
+	var coded *codedError
+	if !errors.As(err, &coded) || coded.code != "UNBORN_HEAD" {
+		t.Fatalf("unborn branch comparison: %v", err)
 	}
 	git("add", "--", name)
 	git("commit", "-m", "initial")
@@ -201,6 +212,143 @@ func TestGitPreservesOddPathsAndBoundsDiffPreviews(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("status did not settle")
+	}
+}
+
+func TestGitBranchComparisonUsesMergeBaseAndCommittedHead(t *testing.T) {
+	service, project, repository, git := gitFixture(t)
+	ctx := context.Background()
+	shared, odd, submodule := "shared.txt", "odd\tname\nline.txt", "vendor/submodule"
+	if err := os.WriteFile(filepath.Join(repository, shared), []byte("common\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "--", shared)
+	git("commit", "-m", "common")
+	common := resolveCommit(ctx, repository, "HEAD")
+	git("switch", "-c", "feature")
+	if err := os.WriteFile(filepath.Join(repository, shared), []byte("feature committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, odd), []byte("odd branch content\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "--", shared, odd)
+	git("update-index", "--add", "--cacheinfo", "160000,"+common+","+submodule)
+	git("commit", "-m", "feature changes")
+	featureHead := resolveCommit(ctx, repository, "HEAD")
+	comparisonID := common + ".." + featureHead
+	git("switch", "main")
+	if err := os.WriteFile(filepath.Join(repository, "main-only.txt"), []byte("main only\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, shared), []byte("main committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "--", "main-only.txt", shared)
+	git("commit", "-m", "main changes")
+	git("update-ref", "refs/remotes/origin/main", "refs/heads/main")
+	git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	git("switch", "feature")
+	git("tag", "feature", common)
+	if err := os.WriteFile(filepath.Join(repository, shared), []byte("dirty worktree\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	branches, err := service.ListBranches(ctx, project.ID, repository)
+	if err != nil || branches.Truncated {
+		t.Fatalf("branch catalog: %#v, %v", branches, err)
+	}
+	want := map[string]string{
+		"refs/heads/feature":       "feature",
+		"refs/heads/main":          "main",
+		"refs/remotes/origin/main": "origin/main",
+	}
+	for _, branch := range branches.Branches {
+		if expected, ok := want[branch.Ref]; ok && branch.Name == expected {
+			delete(want, branch.Ref)
+		}
+		if branch.Ref == "refs/remotes/origin/HEAD" {
+			t.Fatal("symbolic remote HEAD was listed as a branch")
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing branches: %#v from %#v", want, branches)
+	}
+
+	scope := GitDiffScope{Kind: "branch", BaseRef: "refs/heads/main"}
+	status, err := service.Status(ctx, project.ID, repository, scope)
+	if err != nil || status.Head.Kind != "branch" || status.Head.Name != "feature" || status.ComparisonID != comparisonID || len(status.Changes) != 3 {
+		t.Fatalf("branch status: %#v, %v", status, err)
+	}
+	paths := map[string]bool{}
+	for _, change := range status.Changes {
+		paths[change.Path] = true
+	}
+	for _, path := range []string{shared, odd, submodule} {
+		if !paths[path] {
+			t.Fatalf("branch status omitted %q: %#v", path, status.Changes)
+		}
+	}
+	if paths["main-only.txt"] {
+		t.Fatalf("comparison included a base-only change instead of using merge-base: %#v", status.Changes)
+	}
+	preview, err := service.DiffFile(ctx, project.ID, repository, shared, scope)
+	if err != nil || preview.ComparisonID != status.ComparisonID || preview.Original != "common\n" || preview.Modified != "feature committed\n" {
+		t.Fatalf("branch preview included the dirty worktree: %#v, %v", preview, err)
+	}
+	preview, err = service.DiffFile(ctx, project.ID, repository, submodule, scope)
+	if err != nil || preview.ComparisonID != status.ComparisonID || !preview.Unavailable || preview.Message == "" || preview.Original != "" || preview.Modified != "" {
+		t.Fatalf("branch submodule preview: %#v, %v", preview, err)
+	}
+	preview, err = service.DiffFile(ctx, project.ID, repository, "missing.txt", scope)
+	if err != nil || preview.ComparisonID != status.ComparisonID || !preview.Unavailable || preview.Message != "File does not exist" {
+		t.Fatalf("branch missing preview: %#v, %v", preview, err)
+	}
+
+	var branchError *codedError
+	for _, check := range []struct {
+		ref  string
+		code string
+	}{
+		{"refs/remotes/origin/HEAD", "SYMBOLIC_BRANCH"},
+		{"refs/heads/missing", "UNKNOWN_BRANCH"},
+		{"main", "UNKNOWN_BRANCH"},
+	} {
+		_, err := service.Status(ctx, project.ID, repository, GitDiffScope{Kind: "branch", BaseRef: check.ref})
+		branchError = nil
+		if !errors.As(err, &branchError) || branchError.code != check.code {
+			t.Fatalf("branch %q: %v", check.ref, err)
+		}
+	}
+
+	var updates strings.Builder
+	for index := 0; index <= gitBranchLimit; index++ {
+		fmt.Fprintf(&updates, "create refs/heads/catalog/%03d %s\n", index, common)
+	}
+	command := exec.Command("git", "-C", repository, "update-ref", "--stdin")
+	command.Stdin = strings.NewReader(updates.String())
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create branch catalog: %v: %s", err, output)
+	}
+	branches, err = service.ListBranches(ctx, project.ID, repository)
+	if err != nil || !branches.Truncated || len(branches.Branches) != gitBranchLimit {
+		t.Fatalf("bounded branch catalog: %d, truncated=%v, %v", len(branches.Branches), branches.Truncated, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repository, shared), []byte("feature committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("switch", "--orphan", "unrelated")
+	git("rm", "-rf", "--ignore-unmatch", ".")
+	if err := os.WriteFile(filepath.Join(repository, "unrelated.txt"), []byte("unrelated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "--", "unrelated.txt")
+	git("commit", "-m", "unrelated")
+	_, err = service.Status(ctx, project.ID, repository, scope)
+	branchError = nil
+	if !errors.As(err, &branchError) || branchError.code != "NO_MERGE_BASE" {
+		t.Fatalf("unrelated branch comparison: %v", err)
 	}
 }
 
