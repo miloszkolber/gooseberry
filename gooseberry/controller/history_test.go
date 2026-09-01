@@ -28,7 +28,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := NewSessionManager(projects, policy, NewSessionRecords(store), NewObjectives(store), nil)
+	manager := NewSessionManager(projects, policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), nil)
 	for index := 0; index < 10; index++ {
 		if err := manager.records.Record(ProjectSessionRecord{ProjectID: project.ID, SessionID: fmt.Sprintf("chat-%d", index), CWD: project.Roots[0]}); err != nil {
 			t.Fatal(err)

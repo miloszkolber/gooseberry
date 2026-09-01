@@ -160,17 +160,22 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 		return nil
 	}
 	events := applySessionUpdate(target, kind, update, gooseOnly)
+	wakeQueue := false
 	if publish {
 		for _, event := range events {
 			if event["type"] == "message_start" {
 				event["message"] = cloneJSON(event["message"])
 			}
+			wakeQueue = wakeQueue || event["type"] == "complete" || event["type"] == "error"
 		}
 		for _, event := range events {
 			m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": event})
 		}
 	}
 	entry.state.Unlock()
+	if wakeQueue {
+		m.scheduleFollowUp(sessionID, entry)
+	}
 	return nil
 }
 
@@ -527,6 +532,12 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 		status := mapValue(update["status"])
 		kind := textValue(status["type"])
 		message := textValue(status["message"])
+		// Goose may publish a terminal status before session/prompt returns.
+		// Keep the browser busy until that RPC supplies the authoritative result;
+		// otherwise a second optimistic prompt can be admitted and then rejected.
+		if entry.promptActive {
+			return nil
+		}
 		if strings.Contains(strings.ToLower(kind), "error") || strings.Contains(strings.ToLower(kind), "fail") {
 			entry.streaming = false
 			entry.settlement = &SessionSettlement{StopReason: "error", ErrorMessage: message}
@@ -606,6 +617,7 @@ func consumeEchoText(entry *sessionEntry, text string) bool {
 	}
 	echo.offset += len(text)
 	if echoComplete(echo) {
+		entry.promptAcknowledged = true
 		entry.pendingEcho = nil
 	}
 	return true
@@ -620,6 +632,7 @@ func consumeEchoImage(entry *sessionEntry, image map[string]any) bool {
 		if !echo.matched[index] && expected["data"] == image["data"] && expected["mimeType"] == image["mimeType"] {
 			echo.matched[index] = true
 			if echoComplete(echo) {
+				entry.promptAcknowledged = true
 				entry.pendingEcho = nil
 			}
 			return true

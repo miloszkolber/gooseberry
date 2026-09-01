@@ -272,7 +272,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.Index == nil {
 			return nil, fmt.Errorf("malformed session request")
 		}
-		return ack(h.Sessions.EditQueue(request.SessionID, request.Lane, *request.Index, request.Text, request.Revision))
+		return ack(h.Sessions.EditQueue(ctx, request.SessionID, request.Lane, *request.Index, request.Text, request.Revision))
 	case "session.queueRemove":
 		var request struct {
 			SessionID string `json:"sessionId"`
@@ -283,7 +283,18 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.Index == nil {
 			return nil, fmt.Errorf("malformed session request")
 		}
-		return ack(h.Sessions.RemoveQueue(request.SessionID, request.Lane, *request.Index, request.Revision))
+		return ack(h.Sessions.RemoveQueue(ctx, request.SessionID, request.Lane, *request.Index, request.Revision))
+	case "session.queueRetry":
+		var request struct {
+			SessionID string `json:"sessionId"`
+			Lane      string `json:"lane"`
+			Index     *int   `json:"index"`
+			Revision  string `json:"revision"`
+		}
+		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.Index == nil {
+			return nil, fmt.Errorf("malformed session request")
+		}
+		return ack(h.Sessions.RetryQueue(ctx, request.SessionID, request.Lane, *request.Index, request.Revision))
 	case "session.abort":
 		var request struct {
 			SessionID string `json:"sessionId"`

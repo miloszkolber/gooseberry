@@ -161,7 +161,7 @@ func TestProjectImagesAndBrowserArtifactsPreserveBytesAndAuthority(t *testing.T)
 }
 
 func TestObjectiveHTTPBindsCredentialAndRejectsNullTasks(t *testing.T) {
-	manager := NewSessionManager(nil, nil, nil, NewObjectives(Store{Dir: t.TempDir()}), nil)
+	manager := NewSessionManager(nil, nil, nil, nil, NewObjectives(Store{Dir: t.TempDir()}), nil)
 	manager.sessions["session"] = newSessionEntry("session", "project", "/project", "", "bound-token")
 	handler := ObjectiveHandler{Sessions: manager}
 	call := func(token, body string) *httptest.ResponseRecorder {

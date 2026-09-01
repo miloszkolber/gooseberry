@@ -39,9 +39,10 @@ type sessionEntry struct {
 	configOptions      []any
 	messages           []any
 	streaming          bool
+	promptActive       bool
 	settlement         *SessionSettlement
 	stats              SessionStats
-	queue              SessionQueue
+	queue              sessionQueueState
 	runID              string
 	objectiveToken     string
 	attached           uint64
@@ -50,10 +51,13 @@ type sessionEntry struct {
 	inactiveAt         time.Time
 	inactiveBytes      int // Encoded size under state; zero means a mutation needs recounting.
 	pendingEcho        *userEcho
+	promptAcknowledged bool
 	pendingToolOutputs map[string]toolOutput
 	appAttachments     map[string]appAttachmentState
 	consumedQuestions  map[string]bool
 	drainScheduled     bool
+	drainFailures      uint8
+	drainRetry         *time.Timer
 }
 
 type userEcho struct {
@@ -87,11 +91,13 @@ type clientSessionLeases struct {
 
 type SessionManager struct {
 	mu           sync.Mutex
+	work         sync.WaitGroup
 	closed       bool
 	client       *GooseClient
 	projects     *Projects
 	policy       *PathPolicy
 	records      *SessionRecords
+	queues       *SessionQueues
 	objectives   *Objectives
 	objectiveURL string
 	sessions     map[string]*sessionEntry
@@ -105,8 +111,8 @@ type SessionManager struct {
 	history      *HistoryIndex
 }
 
-func NewSessionManager(projects *Projects, policy *PathPolicy, records *SessionRecords, objectives *Objectives, publish SessionPublisher) *SessionManager {
-	manager := &SessionManager{projects: projects, policy: policy, records: records, objectives: objectives, sessions: make(map[string]*sessionEntry), permissions: make(map[string]*pendingPermission), questions: make(map[string]*pendingQuestion), publish: publish, now: time.Now}
+func NewSessionManager(projects *Projects, policy *PathPolicy, records *SessionRecords, queues *SessionQueues, objectives *Objectives, publish SessionPublisher) *SessionManager {
+	manager := &SessionManager{projects: projects, policy: policy, records: records, queues: queues, objectives: objectives, sessions: make(map[string]*sessionEntry), permissions: make(map[string]*pendingPermission), questions: make(map[string]*pendingQuestion), publish: publish, now: time.Now}
 	manager.history = newHistoryIndex(manager)
 	return manager
 }
@@ -214,6 +220,11 @@ func (m *SessionManager) EnsureAttached(ctx context.Context, sessionID, projectI
 			return nil, fmt.Errorf("unknown session: %s", sessionID)
 		}
 		entry = newSessionEntry(sessionID, projectID, admitted, record.ParentSessionID, randomID())
+		queue, queueErr := m.restoredQueue(projectID, sessionID)
+		if queueErr != nil {
+			return nil, queueErr
+		}
+		entry.queue = queue
 		m.mu.Lock()
 		if m.closed || m.lifecycle[sessionID] {
 			m.mu.Unlock()
@@ -300,7 +311,13 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	replay.model = modelFromSetup(replay.configOptions, response.Meta)
 	replay.thinkingLevel = thinkingFromOptions(replay.configOptions)
 	replay.attached = generation
-	replay.queue = entry.queue
+	replay.queue = entry.queue.clone()
+	recoveredDispatch := replay.queue.Dispatch != nil
+	if err := m.recoverQueuedDispatchLocked(sessionID, replay); err != nil {
+		entry.replay = nil
+		entry.state.Unlock()
+		return err
+	}
 	replay.stats.TotalMessages = len(replay.messages)
 	entry.title = replay.title
 	entry.model = replay.model
@@ -317,6 +334,9 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.appAttachments = replay.appAttachments
 	entry.attached = replay.attached
 	entry.replay = nil
+	if recoveredDispatch {
+		m.emitQueueProjection(sessionID, entry, !entry.promptActive)
+	}
 	entry.state.Unlock()
 	m.scheduleFollowUp(sessionID, entry)
 	return nil
@@ -331,6 +351,18 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 	for _, record := range records {
 		if record.ProjectID == projectID {
 			filtered = append(filtered, record)
+		}
+	}
+	queues := make(map[string]sessionQueueState)
+	if m.queues != nil {
+		stored, queueErr := m.queues.List()
+		if queueErr != nil {
+			return nil, queueErr
+		}
+		for _, record := range stored {
+			if record.ProjectID == projectID {
+				queues[record.SessionID] = queueStateFromRecord(record)
+			}
 		}
 	}
 	remote := make(map[string]remoteSession)
@@ -394,7 +426,11 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 			result = append(result, m.summary(record.SessionID, live))
 			continue
 		}
-		result = append(result, SessionSummary{SessionID: record.SessionID, ProjectID: projectID, CWD: record.CWD, ParentSessionID: record.ParentSessionID, Title: source.title, ThinkingLevel: "off", MessageCount: source.messageCount, UpdatedAt: source.updatedAt, Live: false, Archived: source.archived})
+		queue := SessionQueue{Revision: "", Steering: []string{}, FollowUp: []string{}}
+		if stored, ok := queues[record.SessionID]; ok {
+			queue = stored.wire(true)
+		}
+		result = append(result, SessionSummary{SessionID: record.SessionID, ProjectID: projectID, CWD: record.CWD, ParentSessionID: record.ParentSessionID, Title: source.title, ThinkingLevel: "off", MessageCount: source.messageCount, UpdatedAt: source.updatedAt, Live: false, Archived: source.archived, Queue: &queue})
 	}
 	return result, nil
 }
@@ -460,7 +496,11 @@ func (m *SessionManager) SetModel(ctx context.Context, sessionID string, model W
 	ctx = entry.context(ctx)
 	entry.state.Lock()
 	current := entry.model
+	running := entry.streaming || entry.promptActive || entry.runID != ""
 	entry.state.Unlock()
+	if running {
+		return fmt.Errorf("stop the running chat before changing its model")
+	}
 	if current != nil && current.Provider == model.Provider && current.ID == model.ID {
 		return nil
 	}
@@ -497,6 +537,12 @@ func (m *SessionManager) SetThinking(ctx context.Context, sessionID, level strin
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
 		return err
 	}
+	entry.state.Lock()
+	running := entry.streaming || entry.promptActive || entry.runID != ""
+	entry.state.Unlock()
+	if running {
+		return fmt.Errorf("stop the running chat before changing its thinking level")
+	}
 	options, err := m.setConfig(entry.context(ctx), sessionID, "thinking_effort", level)
 	if err != nil {
 		return err
@@ -530,6 +576,46 @@ func (m *SessionManager) entry(sessionID string) (*sessionEntry, error) {
 	return entry, nil
 }
 
+func (m *SessionManager) queueEntry(sessionID string) (*sessionEntry, error) {
+	entry, err := m.entry(sessionID)
+	if err == nil || m.records == nil {
+		return entry, err
+	}
+	records, loadErr := m.records.List()
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	var record *ProjectSessionRecord
+	for index := range records {
+		if records[index].SessionID == sessionID {
+			record = &records[index]
+			break
+		}
+	}
+	if record == nil {
+		return nil, err
+	}
+	queue, loadErr := m.restoredQueue(record.ProjectID, sessionID)
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	candidate := newSessionEntry(sessionID, record.ProjectID, record.CWD, record.ParentSessionID, randomID())
+	candidate.queue = queue
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.lifecycle[sessionID] {
+		return nil, fmt.Errorf("wait for the chat lifecycle operation to finish")
+	}
+	if existing := m.sessions[sessionID]; existing != nil {
+		entry = existing
+	} else {
+		entry = candidate
+		m.sessions[sessionID] = entry
+	}
+	entry.refs++
+	return entry, nil
+}
+
 func (m *SessionManager) releaseEntry(entry *sessionEntry) {
 	m.mu.Lock()
 	entry.state.Lock()
@@ -538,6 +624,25 @@ func (m *SessionManager) releaseEntry(entry *sessionEntry) {
 	entry.refs--
 	m.evictLocked()
 	m.mu.Unlock()
+}
+
+// Background prompt and queue workers register before shutdown can begin.
+// shutdown can therefore close the ACP connection and wait for every worker
+// that was admitted while the manager was live.
+func (m *SessionManager) retainWork(sessionID string, entry *sessionEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.sessions[sessionID] != entry || m.lifecycle[sessionID] {
+		return fmt.Errorf("session changed while starting background work")
+	}
+	entry.refs++
+	m.work.Add(1)
+	return nil
+}
+
+func (m *SessionManager) releaseWork(entry *sessionEntry) {
+	m.releaseEntry(entry)
+	m.work.Done()
 }
 
 func (m *SessionManager) retainSessionLocked(clientKey, sessionID, projectID string) {
@@ -561,7 +666,13 @@ func (m *SessionManager) SetLeases(clientKey string, revision uint64, requested 
 		return fmt.Errorf("invalid session lease snapshot")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	resume := make([]queueResume, 0)
+	defer func() {
+		m.mu.Unlock()
+		for _, target := range resume {
+			m.scheduleFollowUp(target.sessionID, target.entry)
+		}
+	}()
 	if m.closed {
 		return fmt.Errorf("session manager has been shut down")
 	}
@@ -577,6 +688,16 @@ func (m *SessionManager) SetLeases(clientKey string, revision uint64, requested 
 	byID := make(map[string]ProjectSessionRecord, len(records))
 	for _, record := range records {
 		byID[record.SessionID] = record
+	}
+	durableQueues := make(map[string]sessionQueueState)
+	if m.queues != nil {
+		stored, queueErr := m.queues.List()
+		if queueErr != nil {
+			return queueErr
+		}
+		for _, record := range stored {
+			durableQueues[record.SessionID] = queueStateFromRecord(record)
+		}
 	}
 	next := &clientSessionLeases{revision: revision, sessions: make(map[string]string, len(requested))}
 	projects := make(map[string]Project)
@@ -633,10 +754,23 @@ func (m *SessionManager) SetLeases(clientKey string, revision uint64, requested 
 			record := byID[sessionID]
 			// A long disconnect may outlive eviction. Restore only the association;
 			// the next read/prompt loads the authoritative transcript from Goose.
-			m.sessions[sessionID] = newSessionEntry(sessionID, projectID, record.CWD, record.ParentSessionID, randomID())
+			entry := newSessionEntry(sessionID, projectID, record.CWD, record.ParentSessionID, randomID())
+			if queue, ok := durableQueues[sessionID]; ok {
+				entry.queue = queue
+			}
+			m.sessions[sessionID] = entry
 		}
 	}
 	m.evictLocked()
+	for sessionID := range next.sessions {
+		if entry := m.sessions[sessionID]; entry != nil {
+			entry.state.Lock()
+			if runnableFollowUpLocked(entry) {
+				resume = append(resume, queueResume{sessionID: sessionID, entry: entry})
+			}
+			entry.state.Unlock()
+		}
+	}
 	return nil
 }
 
@@ -693,8 +827,8 @@ func (m *SessionManager) summary(sessionID string, entry *sessionEntry) SessionS
 }
 
 func (m *SessionManager) summaryLocked(sessionID string, entry *sessionEntry) SessionSummary {
-	queue := SessionQueue{Revision: entry.queue.Revision, Steering: append([]string{}, entry.queue.Steering...), FollowUp: append([]string{}, entry.queue.FollowUp...)}
-	return SessionSummary{SessionID: sessionID, ProjectID: entry.projectID, CWD: entry.cwd, ParentSessionID: entry.parentSessionID, Title: entry.title, Model: entry.model, ThinkingLevel: entry.thinkingLevel, IsStreaming: entry.streaming, MessageCount: len(entry.messages), UpdatedAt: m.now().UnixMilli(), Live: true, Archived: false, LastSettlement: entry.settlement, Queue: &queue}
+	queue := entry.queue.wire(!entry.promptActive)
+	return SessionSummary{SessionID: sessionID, ProjectID: entry.projectID, CWD: entry.cwd, ParentSessionID: entry.parentSessionID, Title: entry.title, Model: entry.model, ThinkingLevel: entry.thinkingLevel, IsStreaming: entry.streaming || entry.promptActive, MessageCount: len(entry.messages), UpdatedAt: m.now().UnixMilli(), Live: true, Archived: false, LastSettlement: entry.settlement, Queue: &queue}
 }
 
 func (m *SessionManager) evictLocked() {
@@ -716,7 +850,8 @@ func (m *SessionManager) evictLocked() {
 			continue
 		}
 		entry.state.Lock()
-		if leased[id] || entry.streaming || entry.runID != "" || len(entry.queue.Steering) > 0 || len(entry.queue.FollowUp) > 0 || entry.replay != nil {
+		memoryOnlyQueue := m.queues == nil && queuedFollowUpCount(entry.queue) > 0
+		if leased[id] || entry.streaming || entry.promptActive || entry.runID != "" || len(entry.queue.Steering) > 0 || memoryOnlyQueue || entry.drainScheduled || entry.drainRetry != nil || entry.replay != nil {
 			entry.inactiveAt = time.Time{}
 			entry.state.Unlock()
 			continue
@@ -762,7 +897,96 @@ func (m *SessionManager) evictLocked() {
 }
 
 func newSessionEntry(sessionID, projectID, cwd, parent, token string) *sessionEntry {
-	return &sessionEntry{projectID: projectID, cwd: cwd, parentSessionID: parent, title: "Chat", thinkingLevel: "off", messages: []any{}, stats: SessionStats{SessionID: sessionID, Reported: map[string]bool{}}, queue: SessionQueue{Revision: randomID(), Steering: []string{}, FollowUp: []string{}}, objectiveToken: token, consumedQuestions: make(map[string]bool)}
+	return &sessionEntry{projectID: projectID, cwd: cwd, parentSessionID: parent, title: "Chat", thinkingLevel: "off", messages: []any{}, stats: SessionStats{SessionID: sessionID, Reported: map[string]bool{}}, queue: newSessionQueueState(), objectiveToken: token, consumedQuestions: make(map[string]bool)}
+}
+
+func (m *SessionManager) restoredQueue(projectID, sessionID string) (sessionQueueState, error) {
+	if m.queues == nil {
+		return newSessionQueueState(), nil
+	}
+	queue, found, err := m.queues.Get(projectID, sessionID)
+	if err != nil {
+		return sessionQueueState{}, err
+	}
+	if !found {
+		return newSessionQueueState(), nil
+	}
+	return queue, nil
+}
+
+type queueResume struct {
+	sessionID string
+	entry     *sessionEntry
+}
+
+// prepareQueueResume recreates only sessions with work that can advance
+// safely. Blocked or temporarily unavailable sessions stay on disk.
+func (m *SessionManager) prepareQueueResume() ([]queueResume, error) {
+	if m.queues == nil || m.records == nil {
+		return nil, nil
+	}
+	stored, err := m.queues.List()
+	if err != nil {
+		return nil, err
+	}
+	records, err := m.records.List()
+	if err != nil {
+		return nil, err
+	}
+	associations := make(map[string]ProjectSessionRecord, len(records))
+	for _, record := range records {
+		key := queueRecordKey(record.ProjectID, record.SessionID)
+		associations[key] = record
+	}
+	candidates := make([]queueResume, 0, len(stored))
+	for _, record := range stored {
+		state := queueStateFromRecord(record)
+		if state.Blocked != nil || len(state.FollowUp) == 0 && state.Dispatch == nil {
+			continue
+		}
+		association, found := associations[queueRecordKey(record.ProjectID, record.SessionID)]
+		if !found {
+			continue
+		}
+		project, err := m.projects.Get(record.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if project.Closed {
+			continue
+		}
+		admitted, err := m.projects.AssertCWD(record.ProjectID, association.CWD)
+		if err != nil {
+			continue
+		}
+		candidate := newSessionEntry(record.SessionID, record.ProjectID, admitted, association.ParentSessionID, randomID())
+		candidate.queue = state
+		candidates = append(candidates, queueResume{sessionID: record.SessionID, entry: candidate})
+	}
+	targets := make([]queueResume, 0, len(candidates))
+	for _, candidate := range candidates {
+		m.mu.Lock()
+		entry := m.sessions[candidate.sessionID]
+		if entry == nil {
+			entry = candidate.entry
+			m.sessions[candidate.sessionID] = entry
+		}
+		if m.closed || m.lifecycle[candidate.sessionID] || entry.projectID != candidate.entry.projectID || entry.cwd != candidate.entry.cwd {
+			m.mu.Unlock()
+			continue
+		}
+		entry.refs++
+		m.mu.Unlock()
+		targets = append(targets, queueResume{sessionID: candidate.sessionID, entry: entry})
+	}
+	return targets, nil
+}
+
+func (m *SessionManager) resumeQueues(targets []queueResume) {
+	for _, target := range targets {
+		m.scheduleFollowUp(target.sessionID, target.entry)
+		m.releaseEntry(target.entry)
+	}
 }
 
 func (m *SessionManager) objectiveServers(token string) []acp.McpServer {

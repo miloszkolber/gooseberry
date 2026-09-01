@@ -30,10 +30,13 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	}
 	root = project.Roots[0]
 	settled := make(chan string, 8)
+	queuedTurns := make(chan string, 1)
+	usageObserved := make(chan struct{}, 1)
 	created := make(chan string, 1)
+	var hiddenQueueUpdates atomic.Int32
 	var observedEntry atomic.Pointer[sessionEntry]
 	var manager *SessionManager
-	manager = NewSessionManager(projects, policy, NewSessionRecords(store), NewObjectives(store), func(channel string, data any) {
+	manager = NewSessionManager(projects, policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), func(channel string, data any) {
 		if channel == "session.lifecycleChanged" && textValue(mapValue(data)["operation"]) == "created" {
 			cwd, err := manager.RecordedCWD(textValue(mapValue(data)["projectId"]), textValue(mapValue(data)["sessionId"]))
 			if err != nil {
@@ -41,15 +44,37 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 			}
 			created <- cwd
 		}
-		kind := textValue(mapValue(mapValue(data)["event"])["type"])
+		event := mapValue(mapValue(data)["event"])
+		kind := textValue(event["type"])
+		if kind == "queue_update" && len(arrayValue(event["followUp"])) == 0 {
+			hiddenQueueUpdates.Add(1)
+		}
+		if kind == "usage" {
+			select {
+			case usageObserved <- struct{}{}:
+			default:
+			}
+		}
 		if entry := observedEntry.Load(); entry != nil && (kind == "run-start" || kind == "error" || kind == "complete") {
 			if entry.state.TryLock() {
 				entry.state.Unlock()
 				t.Errorf("%s event was published outside the session snapshot boundary", kind)
 			}
+			if kind == "run-start" && entry.queue.wire(!entry.promptActive).Blocked != nil {
+				t.Error("a running queued prompt was projected as an uncertain delivery")
+			}
+			if kind == "run-start" && entry.queue.Dispatch != nil && hiddenQueueUpdates.Load() < 2 {
+				t.Error("queued prompt start did not publish an authoritative hidden queue projection")
+			}
 		}
 		if kind == "error" || kind == "complete" {
 			settled <- kind
+		}
+		if kind == "message_start" {
+			message := mapValue(mapValue(mapValue(data)["event"])["message"])
+			if message["role"] == "user" && historyText(message) == "next" {
+				queuedTurns <- "next"
+			}
 		}
 	})
 	if err := manager.records.Record(ProjectSessionRecord{ProjectID: project.ID, SessionID: "chat", CWD: root}); err != nil {
@@ -60,6 +85,7 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 		id         json.RawMessage
 		method     string
 		params     map[string]any
+		attempted  bool
 	}
 	requests := make(chan request, 8)
 	var failLoad atomic.Bool
@@ -95,7 +121,15 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 				}
 				_ = writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "method": "_goose/unstable/session/update", "params": map[string]any{"sessionId": "chat", "update": map[string]any{"sessionUpdate": "status_message", "status": map[string]any{"type": "idle"}}}})
 			case "session/prompt", "session/delete", "_goose/unstable/session/archive", "_goose/unstable/session/unarchive":
-				requests <- request{connection, rpc.ID, rpc.Method, rpc.Params}
+				attempted := false
+				if rpc.Method == "session/prompt" {
+					prompt := arrayValue(rpc.Params["prompt"])
+					if len(prompt) > 0 && textValue(mapValue(prompt[0])["text"]) == "next" {
+						state, found, queueErr := manager.queues.Get(project.ID, "chat")
+						attempted = queueErr == nil && found && state.Dispatch != nil && state.Dispatch.Attempted
+					}
+				}
+				requests <- request{connection, rpc.ID, rpc.Method, rpc.Params, attempted}
 				continue
 			}
 			if len(rpc.ID) > 0 {
@@ -176,6 +210,34 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	queuedRevision := manager.summary("chat", entry).Queue.Revision
+	if err := writeTestRPC(initial.connection, map[string]any{"jsonrpc": "2.0", "method": "_goose/unstable/session/update", "params": map[string]any{"sessionId": "chat", "update": map[string]any{"sessionUpdate": "status_message", "status": map[string]any{"type": "idle"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestRPC(initial.connection, map[string]any{"jsonrpc": "2.0", "method": "_goose/unstable/session/update", "params": map[string]any{"sessionId": "chat", "update": map[string]any{"sessionUpdate": "message_usage", "usage": map[string]any{"inputTokens": 1}}}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-usageObserved:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	entry.state.Lock()
+	stillRunning := entry.streaming && entry.promptActive
+	entry.state.Unlock()
+	if !stillRunning {
+		t.Fatal("terminal status ended the browser run before session/prompt returned")
+	}
+	if err := manager.Prompt(ctx, "chat", "overlap", nil); err == nil {
+		t.Fatal("accepted a second prompt before the first prompt RPC returned")
+	}
+	if err := manager.SetThinking(ctx, "chat", "high"); err == nil {
+		t.Fatal("changed thinking level before the prompt RPC returned")
+	}
+	select {
+	case unexpected := <-requests:
+		t.Fatalf("terminal status triggered an overlapping operation: %s", unexpected.method)
+	default:
+	}
 	if err := manager.Archive(ctx, project.ID, "chat", root); err == nil {
 		t.Fatal("archived a running chat")
 	}
@@ -205,6 +267,14 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	next := take("session/prompt")
 	if textValue(mapValue(arrayValue(next.params["prompt"])[0])["text"]) != "next" {
 		t.Fatalf("wrong queued prompt: %#v", next.params)
+	}
+	if !next.attempted {
+		t.Fatal("queued prompt reached ACP before its attempted state was durable")
+	}
+	select {
+	case <-queuedTurns:
+	default:
+		t.Fatal("drained follow-up was not published to the live transcript")
 	}
 	queue := manager.summary("chat", entry).Queue
 	if len(queue.FollowUp) != 0 || queue.Revision == queuedRevision {
@@ -259,6 +329,9 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	}
 	if _, err := manager.RecordedCWD(project.ID, "chat"); err == nil {
 		t.Fatal("deleted chat association retained")
+	}
+	if _, found, err := manager.queues.Get(project.ID, "chat"); err != nil || found {
+		t.Fatalf("deleted chat retained its durable queue: found=%v err=%v", found, err)
 	}
 	select {
 	case unexpected := <-requests:

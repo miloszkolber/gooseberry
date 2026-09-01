@@ -103,7 +103,7 @@ func (m *SessionManager) beginLifecycle(sessionID string, entry *sessionEntry) (
 	}
 	if current != nil {
 		current.state.Lock()
-		running := current.streaming || current.runID != ""
+		running := current.streaming || current.promptActive || current.runID != ""
 		current.state.Unlock()
 		if running {
 			return nil, fmt.Errorf("stop the running chat before changing its lifecycle")
@@ -117,5 +117,8 @@ func (m *SessionManager) beginLifecycle(sessionID string, entry *sessionEntry) (
 		m.mu.Lock()
 		delete(m.lifecycle, sessionID)
 		m.mu.Unlock()
+		if entry != nil {
+			m.scheduleFollowUp(sessionID, entry)
+		}
 	}, nil
 }

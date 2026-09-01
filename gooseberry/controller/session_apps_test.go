@@ -80,7 +80,7 @@ func TestCanceledAppOperationStopsWaitingForSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	manager := NewSessionManager(projects, policy, records, NewObjectives(store), nil)
+	manager := NewSessionManager(projects, policy, records, NewSessionQueues(store), NewObjectives(store), nil)
 	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "fixture", "test", manager)
 	defer client.Close()
 	defer func() {
@@ -253,7 +253,7 @@ func TestAppOperationsStayBoundToTrustedToolAttachment(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	manager := NewSessionManager(projects, policy, records, NewObjectives(store), nil)
+	manager := NewSessionManager(projects, policy, records, NewSessionQueues(store), NewObjectives(store), nil)
 	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "fixture", "test", manager)
 	defer client.Close()
 	manager.SetClient(client)

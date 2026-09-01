@@ -25,7 +25,7 @@ func TestSessionLeasesFollowEachBrowserAndRejectStaleSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, otherRoot = project.Roots[0], other.Roots[0]
-	manager := NewSessionManager(projects, policy, NewSessionRecords(store), NewObjectives(store), nil)
+	manager := NewSessionManager(projects, policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), nil)
 	for _, record := range []ProjectSessionRecord{
 		{SessionID: "chat", ProjectID: project.ID, CWD: root},
 		{SessionID: "other", ProjectID: other.ID, CWD: otherRoot},
@@ -122,7 +122,7 @@ func TestReleasingSessionLeasesPreservesActiveWorkAndPendingReplies(t *testing.T
 	for _, protect := range []func(*sessionEntry){
 		func(entry *sessionEntry) { entry.streaming = true },
 		func(entry *sessionEntry) { entry.runID = "running" },
-		func(entry *sessionEntry) { entry.queue.FollowUp = []string{"queued"} },
+		func(entry *sessionEntry) { entry.queue.FollowUp = []queuedFollowUp{{ID: randomID(), Text: "queued"}} },
 		func(entry *sessionEntry) { entry.queue.Steering = []string{"steer"} },
 		func(entry *sessionEntry) { entry.replay = &sessionEntry{} },
 		func(entry *sessionEntry) { entry.refs = 1 }, // Permission/question callbacks retain a reference.

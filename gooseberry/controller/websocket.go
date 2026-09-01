@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	BrowserProtocolVersion  = 74
+	BrowserProtocolVersion  = 75
 	maxWSRequestBytes       = 32 * 1024 * 1024
 	maxConcurrentWSRequests = 256
 )
@@ -184,6 +184,8 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 		params = json.RawMessage("null")
 	}
 	fingerprint := requestFingerprint(method, params, envelope["sessionId"])
+	requestKey := sha256.Sum256([]byte(clientKey + "\x00" + id))
+	requestContext := context.WithValue(ctx, queueRequestIdentityContextKey{}, queueRequestIdentity{Key: hex.EncodeToString(requestKey[:]), Fingerprint: fingerprint})
 	select {
 	case s.inflight <- struct{}{}:
 	case <-ctx.Done():
@@ -207,7 +209,7 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 		}()
 		var after func()
 		response, err := s.replay.Run(ctx, clientKey, id, fingerprint, func() ([]byte, error) {
-			result, handleErr := s.Handler.Handle(ctx, method, params, clientKey)
+			result, handleErr := s.Handler.Handle(requestContext, method, params, clientKey)
 			if handleErr != nil {
 				failure := map[string]any{"id": id, "ok": false, "error": handleErr.Error()}
 				var coded *codedError
