@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,16 +44,150 @@ func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
 	entry.replay = newSessionEntry("chat", "project", "/project", "", "")
 	entry.replay.attached = 2
 	manager := &SessionManager{sessions: map[string]*sessionEntry{"chat": entry}}
-	update := map[string]any{"sessionId": "chat", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "replayed", "rawOutput": "new output"}}
+	start := map[string]any{"sessionId": "chat", "update": summonToolStart("replayed", "delegate")}
+	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(2)), start, false); err != nil {
+		t.Fatal(err)
+	}
+	fresh := subagentToolUpdate("replayed", "child-fresh", "developer__read")
+	fresh["rawOutput"] = "new output"
+	update := map[string]any{"sessionId": "chat", "update": fresh}
 	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(2)), update, false); err != nil {
 		t.Fatal(err)
 	}
-	mapValue(update["update"])["rawOutput"] = "stale output"
-	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(1)), update, false); err != nil {
+	stale := subagentToolUpdate("replayed", "child-stale", "developer__write")
+	stale["rawOutput"] = "stale output"
+	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(1)), map[string]any{"sessionId": "chat", "update": stale}, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(entry.pendingToolOutputs) != 0 || entry.replay.pendingToolOutputs["replayed"].Raw != "new output" {
+	projected := entry.replay.pendingToolOutputs["replayed"]
+	if len(entry.pendingToolOutputs) != 0 || projected.Raw != "new output" || len(projected.SubagentActivityEvents) != 1 || projected.SubagentActivityEvents[0].ChildSessionID != "child-fresh" {
 		t.Fatal("old connection output entered a replacement replay")
+	}
+}
+
+func summonToolStart(toolCallID, toolName string) map[string]any {
+	return map[string]any{
+		"sessionUpdate": "tool_call",
+		"toolCallId":    toolCallID,
+		"_meta": map[string]any{"goose": map[string]any{"toolCall": map[string]any{
+			"extensionName": "summon",
+			"toolName":      toolName,
+		}}},
+	}
+}
+
+func subagentToolUpdate(toolCallID, childSessionID, toolName string) map[string]any {
+	return map[string]any{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    toolCallID,
+		"status":        "in_progress",
+		"_meta": map[string]any{"toolNotification": map[string]any{
+			"type": "message",
+			"params": map[string]any{
+				"level":  "info",
+				"logger": "subagent:" + childSessionID,
+				"data": map[string]any{
+					"type":        "subagent_tool_request",
+					"subagent_id": childSessionID,
+					"tool_call": map[string]any{
+						"name":      toolName,
+						"arguments": map[string]any{"secret": "not projected"},
+					},
+				},
+			},
+		}},
+	}
+}
+
+func TestSubagentActivityRequiresTrustedSummonAndStaysBounded(t *testing.T) {
+	wrongExtension := summonToolStart("call", "delegate")
+	mapValue(mapValue(mapValue(wrongExtension["_meta"])["goose"])["toolCall"])["extensionName"] = "other"
+	wrongTool := summonToolStart("call", "discover")
+	wrongTool["title"] = "delegate"
+	wrongLogger := subagentToolUpdate("call", "child", "developer__read")
+	mapValue(mapValue(mapValue(wrongLogger["_meta"])["toolNotification"])["params"])["logger"] = "subagent:other"
+	wrongLevel := subagentToolUpdate("call", "child", "developer__read")
+	mapValue(mapValue(mapValue(wrongLevel["_meta"])["toolNotification"])["params"])["level"] = "warning"
+	wrongData := subagentToolUpdate("call", "child", "developer__read")
+	mapValue(mapValue(mapValue(mapValue(wrongData["_meta"])["toolNotification"])["params"])["data"])["type"] = "other"
+	wrongMessage := subagentToolUpdate("call", "child", "developer__read")
+	mapValue(mapValue(wrongMessage["_meta"])["toolNotification"])["type"] = "live_output"
+
+	tests := []struct {
+		name   string
+		start  map[string]any
+		update map[string]any
+		want   bool
+	}{
+		{name: "delegate", start: summonToolStart("call", "delegate"), update: subagentToolUpdate("call", "child", "developer__read"), want: true},
+		{name: "load", start: summonToolStart("call", "load"), update: subagentToolUpdate("call", "child", "developer__read"), want: true},
+		{name: "title fallback is not authority", start: map[string]any{"toolCallId": "call", "title": "delegate"}, update: subagentToolUpdate("call", "child", "developer__read")},
+		{name: "other extension", start: wrongExtension, update: subagentToolUpdate("call", "child", "developer__read")},
+		{name: "other actual tool", start: wrongTool, update: subagentToolUpdate("call", "child", "developer__read")},
+		{name: "logger mismatch", start: summonToolStart("call", "delegate"), update: wrongLogger},
+		{name: "other level", start: summonToolStart("call", "delegate"), update: wrongLevel},
+		{name: "other message data", start: summonToolStart("call", "delegate"), update: wrongData},
+		{name: "other notification", start: summonToolStart("call", "delegate"), update: wrongMessage},
+		{name: "oversized child id", start: summonToolStart("call", "delegate"), update: subagentToolUpdate("call", strings.Repeat("x", maxSubagentActivityIdentifierBytes+1), "developer__read")},
+		{name: "invalid tool name", start: summonToolStart("call", "delegate"), update: subagentToolUpdate("call", "child", "developer\x00read")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entry := newSessionEntry("chat", "project", "/project", "", "")
+			applySessionUpdate(entry, "tool_call", test.start, false)
+			events := applySessionUpdate(entry, "tool_call_update", test.update, false)
+			if len(events) != 1 {
+				t.Fatalf("tool update emitted %d events", len(events))
+			}
+			activity, projected := events[0]["subagentActivity"].(map[string]any)
+			if projected != test.want {
+				t.Fatalf("projection=%t, want %t: %#v", projected, test.want, events[0])
+			}
+			if !test.want {
+				return
+			}
+			projectedEvents := arrayValue(activity["events"])
+			if len(projectedEvents) != 1 {
+				t.Fatalf("projected activity: %#v", activity)
+			}
+			projectedEvent := mapValue(projectedEvents[0])
+			if len(projectedEvent) != 2 || projectedEvent["childSessionId"] != "child" || projectedEvent["toolName"] != "developer__read" {
+				t.Fatalf("projection leaked or lost fields: %#v", projectedEvent)
+			}
+		})
+	}
+
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	applySessionUpdate(entry, "tool_call", summonToolStart("bounded", "delegate"), false)
+	var latest map[string]any
+	for index := 0; index < maxSubagentActivityEvents+2; index++ {
+		latest = applySessionUpdate(entry, "tool_call_update", subagentToolUpdate("bounded", fmt.Sprintf("child-%02d", index), fmt.Sprintf("tool-%02d", index)), false)[0]
+	}
+	activity := mapValue(latest["subagentActivity"])
+	activityEvents := arrayValue(activity["events"])
+	if len(activityEvents) != maxSubagentActivityEvents || activity["truncated"] != true || mapValue(activityEvents[0])["childSessionId"] != "child-02" || mapValue(activityEvents[len(activityEvents)-1])["childSessionId"] != "child-33" {
+		t.Fatalf("activity did not retain the latest bounded window: %#v", activity)
+	}
+
+	finished := applySessionUpdate(entry, "tool_call_update", map[string]any{"toolCallId": "bounded", "status": "completed"}, false)[0]
+	finalActivity := mapValue(finished["subagentActivity"])
+	historyActivity := mapValue(mapValue(entry.messages[len(entry.messages)-1])["subagentActivity"])
+	if !reflect.DeepEqual(finalActivity, historyActivity) {
+		t.Fatalf("completion lost activity: event %#v, history %#v", finalActivity, historyActivity)
+	}
+	if _, pending := entry.pendingToolOutputs["bounded"]; pending {
+		t.Fatal("completed activity remained in transient output")
+	}
+	mapValue(arrayValue(finalActivity["events"])[0])["childSessionId"] = "mutated"
+	if mapValue(arrayValue(historyActivity["events"])[0])["childSessionId"] != "child-02" {
+		t.Fatal("live event and retained transcript shared mutable activity")
+	}
+
+	applySessionUpdate(entry, "tool_call", summonToolStart("bounded", "load"), false)
+	reused := applySessionUpdate(entry, "tool_call_update", subagentToolUpdate("bounded", "child-new", "developer__read"), false)[0]
+	reusedActivity := mapValue(reused["subagentActivity"])
+	if len(arrayValue(reusedActivity["events"])) != 1 || reusedActivity["truncated"] != nil {
+		t.Fatalf("reused tool id retained old activity: %#v", reusedActivity)
 	}
 }
 
