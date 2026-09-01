@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -165,13 +166,11 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 				event["message"] = cloneJSON(event["message"])
 			}
 		}
-	}
-	entry.state.Unlock()
-	if publish {
 		for _, event := range events {
 			m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": event})
 		}
 	}
+	entry.state.Unlock()
 	return nil
 }
 
@@ -370,22 +369,56 @@ func projectToolOutputAndActivity(entry *sessionEntry, id string, update map[str
 		entry.pendingToolOutputs[id] = output
 	}
 	activity := subagentActivityValue(output)
+	return toolOutputValue(output), activity
+}
+
+func toolOutputValue(output toolOutput) any {
 	if output.Raw != nil && len(arrayValue(output.Content)) > 0 {
-		return map[string]any{"structuredContent": output.Raw, "content": output.Content}, activity
+		return map[string]any{"structuredContent": output.Raw, "content": output.Content}
 	}
 	if output.Raw != nil {
-		return output.Raw, activity
+		return output.Raw
 	}
 	if output.Content != nil {
-		return output.Content, activity
+		return output.Content
 	}
 	if output.Truncated {
-		return output.LiveText + "\n[Live output truncated]", activity
+		return output.LiveText + "\n[Live output truncated]"
 	}
 	if output.LiveText != "" {
-		return output.LiveText, activity
+		return output.LiveText
 	}
-	return nil, activity
+	return nil
+}
+
+func toolOutputHasValue(output toolOutput) bool {
+	return output.Raw != nil || output.Content != nil || output.Truncated || output.LiveText != ""
+}
+
+// The caller holds entry.state. Output maps and slices are detached so the
+// response encoder cannot observe later live updates.
+func pendingToolPreviewsLocked(entry *sessionEntry) []any {
+	ids := make([]string, 0, len(entry.pendingToolOutputs))
+	for id := range entry.pendingToolOutputs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	previews := make([]any, 0, len(ids))
+	for _, id := range ids {
+		output := entry.pendingToolOutputs[id]
+		preview := map[string]any{"toolCallId": id}
+		if toolOutputHasValue(output) {
+			preview["output"] = cloneJSON(toolOutputValue(output))
+		}
+		if activity := subagentActivityValue(output); activity != nil {
+			preview["subagentActivity"] = activity
+		}
+		if state, ok := entry.appAttachments[id]; ok {
+			preview["app"] = appAttachmentValue(state.attachment)
+		}
+		previews = append(previews, preview)
+	}
+	return previews
 }
 
 func projectSubagentActivity(output *toolOutput, notification map[string]any) {

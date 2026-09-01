@@ -31,6 +31,7 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	root = project.Roots[0]
 	settled := make(chan string, 8)
 	created := make(chan string, 1)
+	var observedEntry atomic.Pointer[sessionEntry]
 	var manager *SessionManager
 	manager = NewSessionManager(projects, policy, NewSessionRecords(store), NewObjectives(store), func(channel string, data any) {
 		if channel == "session.lifecycleChanged" && textValue(mapValue(data)["operation"]) == "created" {
@@ -41,6 +42,12 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 			created <- cwd
 		}
 		kind := textValue(mapValue(mapValue(data)["event"])["type"])
+		if entry := observedEntry.Load(); entry != nil && (kind == "run-start" || kind == "error" || kind == "complete") {
+			if entry.state.TryLock() {
+				entry.state.Unlock()
+				t.Errorf("%s event was published outside the session snapshot boundary", kind)
+			}
+		}
 		if kind == "error" || kind == "complete" {
 			settled <- kind
 		}
@@ -145,6 +152,7 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	observedEntry.Store(entry)
 	oldConnection := entry.context(ctx)
 	entry.state.Lock()
 	entry.pendingToolOutputs = map[string]toolOutput{"interrupted": {LiveText: "old preview"}}

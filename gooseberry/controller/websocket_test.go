@@ -26,11 +26,19 @@ type blockingHandler struct {
 	release chan struct{}
 }
 
+type deferredOrderHandler struct {
+	after func()
+}
+
 func (h blockingHandler) Handle(ctx context.Context, _ string, _ json.RawMessage, _ string) (any, error) {
 	close(h.started)
 	<-ctx.Done()
 	<-h.release
 	return nil, ctx.Err()
+}
+
+func (h deferredOrderHandler) Handle(context.Context, string, json.RawMessage, string) (any, error) {
+	return deferredResponse{result: map[string]bool{"snapshot": true}, after: h.after}, nil
 }
 
 func (h *countingHandler) Handle(ctx context.Context, method string, params json.RawMessage, client string) (any, error) {
@@ -130,6 +138,54 @@ func TestWebSocketCloseWaitsForAdmittedHandlers(t *testing.T) {
 	}
 }
 
+func TestDeferredResponseIsQueuedBeforeItsLaterEvent(t *testing.T) {
+	var server *WebSocketServer
+	handler := deferredOrderHandler{after: func() {
+		if err := server.Publish(context.Background(), "ordered.after", true); err != nil {
+			t.Errorf("publish after deferred response: %v", err)
+		}
+	}}
+	var err error
+	server, err = NewWebSocketServer(handler, nil, AuthConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	host := httptest.NewServer(server)
+	defer host.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(host.URL, "http")+"/?client=ordered", &websocket.DialOptions{HTTPHeader: map[string][]string{"Origin": {host.URL}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	if err := connection.Write(ctx, websocket.MessageText, []byte(`{"id":"snapshot","method":"messages","params":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	_, first, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		ID string `json:"id"`
+		OK bool   `json:"ok"`
+	}
+	if json.Unmarshal(first, &response) != nil || response.ID != "snapshot" || !response.OK {
+		t.Fatalf("deferred response was not first: %s", first)
+	}
+	_, second, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Channel string `json:"channel"`
+	}
+	if json.Unmarshal(second, &event) != nil || event.Channel != "ordered.after" {
+		t.Fatalf("later event was not second: %s", second)
+	}
+}
+
 func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	mount := t.TempDir()
 	policy, err := NewPathPolicy([]string{mount}, false)
@@ -155,7 +211,7 @@ func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	}
 	defer connection.CloseNow()
 	_, welcome, err := connection.Read(context.Background())
-	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":73`) {
+	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":74`) {
 		t.Fatalf("welcome %s, %v", welcome, err)
 	}
 	request := []byte(`{"id":"one","method":"project.open","params":{"path":` + mustJSON(t, mount) + `}}`)
