@@ -8,6 +8,7 @@ import type {
 	SessionStats,
 	SlashCommandInfo,
 	ThinkingLevel,
+	TranscriptPage,
 	UserMessage,
 	WireModel,
 } from "@gooseberry/contracts";
@@ -19,7 +20,8 @@ export interface SessionRuntime {
 	/** The immediate Goose session parent for a forked chat, when recorded. */
 	parentSessionId?: string;
 	turns: ChatTurn[];
-	turnIdByMessageIndex?: (string | null)[];
+	turnIdByMessageIndex: Record<number, string | null>;
+	transcript: TranscriptPage | null;
 	toolResults: Record<string, ToolResultState>;
 	askAnswers: Record<string, AskUserQuestionResult>;
 	currentAssistantId: string | null;
@@ -56,6 +58,8 @@ export function createSessionRuntime(
 ): SessionRuntime {
 	return {
 		turns: [],
+		turnIdByMessageIndex: {},
+		transcript: null,
 		toolResults: {},
 		askAnswers: {},
 		currentAssistantId: null,
@@ -190,6 +194,9 @@ function updateStreamingAssistant(
 			content: updateContent(existing?.kind === "assistant" ? existing.message.content : []),
 		},
 		streaming: true,
+		...(existing?.kind === "assistant" && existing.toolResultsByBlock
+			? { toolResultsByBlock: existing.toolResultsByBlock }
+			: {}),
 	};
 	return {
 		...rt,
@@ -197,6 +204,27 @@ function updateStreamingAssistant(
 		currentAssistantId: id,
 		turns: existing ? rt.turns.map((item) => (item.id === id ? turn : item)) : [...rt.turns, turn],
 	};
+}
+
+function bindLatestToolResult(
+	turns: ChatTurn[],
+	toolCallId: string,
+	result: ToolResultState,
+): ChatTurn[] {
+	for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex--) {
+		const turn = turns[turnIndex];
+		if (turn?.kind !== "assistant") continue;
+		for (let blockIndex = turn.message.content.length - 1; blockIndex >= 0; blockIndex--) {
+			const block = turn.message.content[blockIndex];
+			if (block?.type !== "toolCall" || block.id !== toolCallId) continue;
+			const replacement: ChatTurn = {
+				...turn,
+				toolResultsByBlock: { ...turn.toolResultsByBlock, [blockIndex]: result },
+			};
+			return turns.map((candidate, index) => (index === turnIndex ? replacement : candidate));
+		}
+	}
+	return turns;
 }
 
 export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): SessionRuntime {
@@ -224,24 +252,36 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 		case "tool-start": {
 			const toolCallId = event.toolCallId;
 			if (!toolCallId) return rt;
+			const previous = rt.toolResults[toolCallId];
+			const continuing = previous?.status === "running";
+			const result: ToolResultState = {
+				status: "running",
+				raw: continuing ? previous.raw : undefined,
+				...(continuing && previous.app ? { app: previous.app } : {}),
+				...(continuing && previous.subagentActivity
+					? { subagentActivity: previous.subagentActivity }
+					: {}),
+			};
+			const updated = updateStreamingAssistant(rt, (content) =>
+				continuing && content.some((part) => part.type === "toolCall" && part.id === toolCallId)
+					? [...content]
+					: [
+							...content,
+							{
+								type: "toolCall",
+								id: toolCallId,
+								...(event.toolName ? { toolName: event.toolName } : {}),
+								name: event.toolName ?? "tool",
+								arguments: event.tool ?? {},
+							},
+						],
+			);
 			return {
-				...updateStreamingAssistant(rt, (content) =>
-					content.some((part) => part.type === "toolCall" && part.id === toolCallId)
-						? [...content]
-						: [
-								...content,
-								{
-									type: "toolCall",
-									id: toolCallId,
-									...(event.toolName ? { toolName: event.toolName } : {}),
-									name: event.toolName ?? "tool",
-									arguments: event.tool ?? {},
-								},
-							],
-				),
+				...updated,
+				turns: bindLatestToolResult(updated.turns, toolCallId, result),
 				toolResults: {
 					...rt.toolResults,
-					[toolCallId]: { status: "running", raw: undefined },
+					[toolCallId]: result,
 				},
 			};
 		}
@@ -252,25 +292,22 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			const app = event.app ?? rt.toolResults[toolCallId]?.app;
 			const subagentActivity =
 				event.subagentActivity ?? rt.toolResults[toolCallId]?.subagentActivity;
-			return toolCallId
-				? {
-						...rt,
-						toolResults: {
-							...rt.toolResults,
-							[toolCallId]: {
-								status:
-									event.type === "tool-end" && /error|failed/i.test(event.status ?? "")
-										? "error"
-										: event.type === "tool-end"
-											? "done"
-											: "running",
-								raw: event.tool ?? rt.toolResults[toolCallId]?.raw ?? event.status,
-								...(app ? { app } : {}),
-								...(subagentActivity ? { subagentActivity } : {}),
-							},
-						},
-					}
-				: rt;
+			const result: ToolResultState = {
+				status:
+					event.type === "tool-end" && /error|failed/i.test(event.status ?? "")
+						? "error"
+						: event.type === "tool-end"
+							? "done"
+							: "running",
+				raw: event.tool ?? rt.toolResults[toolCallId]?.raw ?? event.status,
+				...(app ? { app } : {}),
+				...(subagentActivity ? { subagentActivity } : {}),
+			};
+			return {
+				...rt,
+				turns: bindLatestToolResult(rt.turns, toolCallId, result),
+				toolResults: { ...rt.toolResults, [toolCallId]: result },
+			};
 		}
 		case "usage":
 			return event.usage
@@ -354,7 +391,14 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				const last = rt.turns[rt.turns.length - 1];
 				if (last?.kind === "user") {
 					const optimisticText = userText(last.message.content);
-					if (optimisticText === text) return rt;
+					if (optimisticText === text) {
+						return last.optimistic
+							? {
+									...rt,
+									turns: [...rt.turns.slice(0, -1), { kind: "user", id: last.id, message }],
+								}
+							: rt;
+					}
 					const invocation = parseSkillInvocation(text);
 					if (invocation && matchesSkillInvocationCommand(optimisticText, invocation)) {
 						return {
@@ -383,7 +427,16 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			if (!snapshot) return rt;
 			const id = rt.currentAssistantId ?? crypto.randomUUID();
 			const streaming = !(ame.type === "done" || ame.type === "error");
-			const turn: ChatTurn = { kind: "assistant", id, message: snapshot, streaming };
+			const existing = rt.turns.find((turn) => turn.id === id && turn.kind === "assistant");
+			const turn: ChatTurn = {
+				kind: "assistant",
+				id,
+				message: snapshot,
+				streaming,
+				...(existing?.kind === "assistant" && existing.toolResultsByBlock
+					? { toolResultsByBlock: existing.toolResultsByBlock }
+					: {}),
+			};
 			return {
 				...rt,
 				currentAssistantId: streaming ? id : null,
@@ -396,7 +449,16 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 		case "message_end": {
 			if (event.message.role !== "assistant" || !rt.currentAssistantId) return rt;
 			const id = rt.currentAssistantId;
-			const turn: ChatTurn = { kind: "assistant", id, message: event.message, streaming: false };
+			const existing = rt.turns.find((turn) => turn.id === id && turn.kind === "assistant");
+			const turn: ChatTurn = {
+				kind: "assistant",
+				id,
+				message: event.message,
+				streaming: false,
+				...(existing?.kind === "assistant" && existing.toolResultsByBlock
+					? { toolResultsByBlock: existing.toolResultsByBlock }
+					: {}),
+			};
 			return {
 				...rt,
 				currentAssistantId: null,
@@ -406,30 +468,42 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 					: [...rt.turns, turn],
 			};
 		}
-		case "tool_execution_start":
+		case "tool_execution_start": {
+			const result: ToolResultState = { status: "running", raw: undefined };
 			return {
 				...rt,
+				turns: bindLatestToolResult(rt.turns, event.toolCallId, result),
 				toolResults: {
 					...rt.toolResults,
-					[event.toolCallId]: { status: "running", raw: undefined },
+					[event.toolCallId]: result,
 				},
 			};
-		case "tool_execution_update":
+		}
+		case "tool_execution_update": {
+			const result: ToolResultState = { status: "running", raw: event.partialResult };
 			return {
 				...rt,
+				turns: bindLatestToolResult(rt.turns, event.toolCallId, result),
 				toolResults: {
 					...rt.toolResults,
-					[event.toolCallId]: { status: "running", raw: event.partialResult },
+					[event.toolCallId]: result,
 				},
 			};
-		case "tool_execution_end":
+		}
+		case "tool_execution_end": {
+			const result: ToolResultState = {
+				status: event.isError ? "error" : "done",
+				raw: event.result,
+			};
 			return {
 				...rt,
+				turns: bindLatestToolResult(rt.turns, event.toolCallId, result),
 				toolResults: {
 					...rt.toolResults,
-					[event.toolCallId]: { status: event.isError ? "error" : "done", raw: event.result },
+					[event.toolCallId]: result,
 				},
 			};
+		}
 		case "agent_end":
 			return rt;
 		case "agent_settled": {

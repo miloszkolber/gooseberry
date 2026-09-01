@@ -186,6 +186,16 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 	if wakeQueue {
 		m.scheduleFollowUp(sessionID, entry)
 	}
+	if !wakeQueue {
+		// A late status/tool notification can grow an otherwise idle, unleased
+		// projection without passing through an operation release. Re-apply the
+		// inactive budget here so the 8 MiB cap remains a cap, not a later hint.
+		m.mu.Lock()
+		if !m.closed && m.sessions[sessionID] == entry && entry.refs == 0 && !m.isLeasedLocked(sessionID) {
+			m.evictLocked()
+		}
+		m.mu.Unlock()
+	}
 	return nil
 }
 
@@ -250,13 +260,13 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			toolName = "ask_user_question"
 		}
 		toolID := textValue(update["toolCallId"])
-		delete(entry.pendingToolOutputs, toolID)
-		if activityTool {
-			if entry.pendingToolOutputs == nil {
-				entry.pendingToolOutputs = make(map[string]toolOutput)
-			}
-			entry.pendingToolOutputs[toolID] = toolOutput{SubagentActivityTool: true}
+		if entry.pendingToolOutputs == nil {
+			entry.pendingToolOutputs = make(map[string]toolOutput)
 		}
+		// Keep an empty entry for every active call. Besides restoring running
+		// tools after reconnect, this tombstones a completed older invocation if
+		// an upstream reuses its call ID.
+		entry.pendingToolOutputs[toolID] = toolOutput{SubagentActivityTool: activityTool}
 		delete(entry.appAttachments, toolID)
 		input := update["rawInput"]
 		if input == nil {

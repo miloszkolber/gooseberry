@@ -1,6 +1,6 @@
-import type { AskUserQuestionResult, PromptHit, QueueLane } from "@gooseberry/contracts";
+import type { AskUserQuestionResult, PromptHit, QueueLane, WsResult } from "@gooseberry/contracts";
 import { ArrowDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +12,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { EMPTY_RUNTIME, selectProjectAreaById, toast, useAppStore } from "@/store";
-import { errorText, getTransport } from "../connection";
+import { errorText, getTransport, wsErrorCode } from "../connection";
 import {
 	agentMentionIdentity,
 	fileMentionCandidateIdentity,
@@ -30,7 +30,12 @@ import {
 	type MentionCandidate,
 	type SubmitBehavior,
 } from "./composer";
+import { loadTranscriptUntil, type TranscriptLoadOutcome } from "./history-loading";
 import { HistoryOverlay } from "./history-overlay";
+import {
+	messagesToRuntime,
+	prependTranscriptPage as prependHydratedTranscriptPage,
+} from "./hydrate";
 import { QueueStrip } from "./queue-strip";
 import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
 import { SessionGoalControl } from "./session-goal-control";
@@ -63,7 +68,44 @@ function turnAnchorText(turn: ChatTurn): string {
 	return "";
 }
 
-type ChatListContext = { status: StreamStatus | null };
+type TranscriptLoadState = "idle" | "loading" | "error";
+interface TranscriptLoadFlight {
+	controller: AbortController;
+	promise: Promise<TranscriptLoadOutcome>;
+}
+
+type ChatListContext = {
+	status: StreamStatus | null;
+	history: {
+		hasEarlier: boolean;
+		state: TranscriptLoadState;
+		onLoad: () => void;
+	};
+};
+
+function HistoryHeader({ context }: { context: ChatListContext }) {
+	const { hasEarlier, state, onLoad } = context.history;
+	if (!hasEarlier && state !== "error") return null;
+	const label =
+		state === "loading"
+			? "Loading earlier messages…"
+			: state === "error"
+				? "Retry loading earlier messages"
+				: "Load earlier messages";
+	return (
+		<div className="mx-auto flex max-w-3xl justify-center px-md py-sm">
+			<button
+				type="button"
+				aria-label={label}
+				disabled={state === "loading"}
+				onClick={onLoad}
+				className="rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-sm py-xs text-text-muted tr-text-metadata hover:bg-control-bg-hovered hover:text-text-default disabled:cursor-wait disabled:opacity-70"
+			>
+				{label}
+			</button>
+		</div>
+	);
+}
 
 function StreamFooter({ context }: { context: ChatListContext }) {
 	if (!context.status) return null;
@@ -74,7 +116,8 @@ function StreamFooter({ context }: { context: ChatListContext }) {
 	);
 }
 
-const CHAT_LIST_COMPONENTS = { Footer: StreamFooter };
+const CHAT_LIST_COMPONENTS = { Header: HistoryHeader, Footer: StreamFooter };
+const CHAT_VIRTUAL_INDEX_BASE = 1_000_000_000;
 
 export default function ChatView({
 	sessionId,
@@ -84,6 +127,7 @@ export default function ChatView({
 	projectAreaId: string;
 }) {
 	const runtime = useAppStore((s) => s.sessions[sessionId]) ?? EMPTY_RUNTIME;
+	const connectionGeneration = useAppStore((s) => s.connectionGeneration);
 	const parentDeleted = useAppStore(
 		(state) =>
 			runtime.parentSessionId !== undefined &&
@@ -130,13 +174,6 @@ export default function ChatView({
 		() => deriveRows(turns, toolResults, isStreaming),
 		[turns, toolResults, isStreaming],
 	);
-
-	const listContext = useMemo<ChatListContext>(() => {
-		const last = turns[turns.length - 1];
-		const status =
-			isStreaming && last?.kind !== "retry" ? streamStatus(turns, currentAssistantId) : null;
-		return { status };
-	}, [turns, isStreaming, currentAssistantId]);
 
 	const recentPrompts = useMemo(() => {
 		const texts = turns
@@ -201,6 +238,210 @@ export default function ChatView({
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const { followOutput, handleAtBottom, showScrollButton, scrollToBottom, containerProps } =
 		useChatScroll(virtuosoRef);
+	const projectionId = runtime.transcript?.projectionId ?? null;
+	const transcriptStart = runtime.transcript?.start ?? 0;
+	const [transcriptLoadState, setTranscriptLoadState] = useState<TranscriptLoadState>("idle");
+	const transcriptFlightRef = useRef<TranscriptLoadFlight | null>(null);
+	const autoHistoryLoadArmed = useRef(false);
+	const [firstItemIndex, setFirstItemIndex] = useState(CHAT_VIRTUAL_INDEX_BASE);
+	const virtualOriginRef = useRef({
+		projectionId,
+		start: transcriptStart,
+		rowCount: rows.length,
+		firstItemIndex: CHAT_VIRTUAL_INDEX_BASE,
+	});
+
+	useLayoutEffect(() => {
+		const previous = virtualOriginRef.current;
+		const resetSnapshot =
+			previous.projectionId !== projectionId || transcriptStart > previous.start;
+		if (resetSnapshot) {
+			virtualOriginRef.current = {
+				projectionId,
+				start: transcriptStart,
+				rowCount: rows.length,
+				firstItemIndex: CHAT_VIRTUAL_INDEX_BASE,
+			};
+			setFirstItemIndex(CHAT_VIRTUAL_INDEX_BASE);
+			if (previous.projectionId === projectionId && transcriptStart > previous.start) {
+				virtuosoRef.current?.scrollToIndex({ index: "LAST" });
+			}
+			return;
+		}
+		const addedRows =
+			transcriptStart < previous.start ? Math.max(0, rows.length - previous.rowCount) : 0;
+		const nextFirstItemIndex = Math.max(0, previous.firstItemIndex - addedRows);
+		virtualOriginRef.current = {
+			projectionId,
+			start: transcriptStart,
+			rowCount: rows.length,
+			firstItemIndex: nextFirstItemIndex,
+		};
+		if (nextFirstItemIndex !== previous.firstItemIndex) {
+			setFirstItemIndex(nextFirstItemIndex);
+		}
+	}, [projectionId, rows.length, transcriptStart]);
+
+	const displayedFirstItemIndex =
+		virtualOriginRef.current.projectionId === projectionId
+			? firstItemIndex
+			: CHAT_VIRTUAL_INDEX_BASE;
+
+	const loadEarlierMessages = useCallback((): Promise<TranscriptLoadOutcome> => {
+		const existing = transcriptFlightRef.current;
+		if (existing) return existing.promise;
+		const state = useAppStore.getState();
+		const transcript = state.sessions[sessionId]?.transcript;
+		if (!transcript || transcript.start <= 0) return Promise.resolve("exhausted");
+		if (state.status !== "connected") {
+			setTranscriptLoadState("error");
+			return Promise.resolve("failed");
+		}
+
+		autoHistoryLoadArmed.current = false;
+		const generation = state.connectionGeneration;
+		const before = transcript.start;
+		const expectedProjectionId = transcript.projectionId;
+		const controller = new AbortController();
+		const flight = { controller } as TranscriptLoadFlight;
+		const isCurrent = () => transcriptFlightRef.current === flight;
+		const isSameRuntime = () => {
+			const current = useAppStore.getState();
+			const currentTranscript = current.sessions[sessionId]?.transcript;
+			return (
+				current.status === "connected" &&
+				current.connectionGeneration === generation &&
+				currentTranscript?.projectionId === expectedProjectionId &&
+				currentTranscript.start === before
+			);
+		};
+		const promise = (async (): Promise<TranscriptLoadOutcome> => {
+			try {
+				let response: WsResult<"session.getMessages">;
+				try {
+					response = await getTransport().request(
+						"session.getMessages",
+						{
+							sessionId,
+							projectId: projectAreaId,
+							before: { projectionId: expectedProjectionId, index: before },
+						},
+						{ signal: controller.signal },
+					);
+				} catch (error) {
+					if (wsErrorCode(error) !== "STALE_TRANSCRIPT_PROJECTION") throw error;
+					if (!isSameRuntime()) return "ignored";
+					const snapshot = await getTransport().request(
+						"session.getMessages",
+						{ sessionId, projectId: projectAreaId },
+						{ signal: controller.signal },
+					);
+					if (snapshot.kind !== "snapshot") throw new Error("invalid chat snapshot");
+					if (!isSameRuntime()) return "ignored";
+					const hydrated = messagesToRuntime(snapshot.messages, {
+						lastSettlement: snapshot.summary.lastSettlement,
+						pendingTools: snapshot.pendingTools,
+						page: snapshot.page,
+						isStreaming: snapshot.summary.isStreaming,
+					});
+					useAppStore.getState().replaceTranscriptSnapshot(sessionId, snapshot.summary, hydrated);
+					if (isCurrent()) setTranscriptLoadState("idle");
+					return "reloaded";
+				}
+
+				if (response.kind !== "page") throw new Error("invalid transcript page");
+				if (!isSameRuntime()) return "ignored";
+				const hydrated = messagesToRuntime(response.messages, { page: response.page });
+				const currentRuntime = useAppStore.getState().sessions[sessionId];
+				if (!currentRuntime) return "ignored";
+				const preview = prependHydratedTranscriptPage(currentRuntime, hydrated);
+				if (!preview) return "ignored";
+				const previousRowCount = deriveRows(
+					currentRuntime.turns,
+					currentRuntime.toolResults,
+					currentRuntime.isStreaming,
+				).length;
+				const nextRowCount = deriveRows(
+					preview.turns,
+					preview.toolResults,
+					preview.isStreaming,
+				).length;
+				const origin = virtualOriginRef.current;
+				if (origin.projectionId === expectedProjectionId && origin.start === before) {
+					const nextFirstItemIndex = Math.max(
+						0,
+						origin.firstItemIndex - Math.max(0, nextRowCount - previousRowCount),
+					);
+					virtualOriginRef.current = {
+						projectionId: expectedProjectionId,
+						start: response.page.start,
+						rowCount: nextRowCount,
+						firstItemIndex: nextFirstItemIndex,
+					};
+					setFirstItemIndex(nextFirstItemIndex);
+				}
+				const applied = useAppStore.getState().prependTranscriptPage(sessionId, hydrated);
+				if (!applied) return "ignored";
+				if (isCurrent()) setTranscriptLoadState("idle");
+				return "loaded";
+			} catch (error) {
+				if ((error as { name?: string }).name === "AbortError") return "ignored";
+				if (isCurrent()) setTranscriptLoadState("error");
+				return "failed";
+			} finally {
+				if (isCurrent()) transcriptFlightRef.current = null;
+			}
+		})();
+		flight.promise = promise;
+		transcriptFlightRef.current = flight;
+		setTranscriptLoadState("loading");
+		return promise;
+	}, [projectAreaId, sessionId]);
+
+	useEffect(() => {
+		void connectionGeneration;
+		void projectionId;
+		void sessionId;
+		setTranscriptLoadState("idle");
+		autoHistoryLoadArmed.current = false;
+		return () => {
+			const flight = transcriptFlightRef.current;
+			if (!flight) return;
+			transcriptFlightRef.current = null;
+			flight.controller.abort();
+		};
+	}, [connectionGeneration, projectionId, sessionId]);
+
+	const requestEarlierMessages = useCallback(() => {
+		void loadEarlierMessages();
+	}, [loadEarlierMessages]);
+
+	const handleStartReached = useCallback(() => {
+		if (!autoHistoryLoadArmed.current) return;
+		autoHistoryLoadArmed.current = false;
+		void loadEarlierMessages();
+	}, [loadEarlierMessages]);
+
+	const listContext = useMemo<ChatListContext>(() => {
+		const last = turns[turns.length - 1];
+		const status =
+			isStreaming && last?.kind !== "retry" ? streamStatus(turns, currentAssistantId) : null;
+		return {
+			status,
+			history: {
+				hasEarlier: transcriptStart > 0,
+				state: transcriptLoadState,
+				onLoad: requestEarlierMessages,
+			},
+		};
+	}, [
+		turns,
+		isStreaming,
+		currentAssistantId,
+		transcriptStart,
+		transcriptLoadState,
+		requestEarlierMessages,
+	]);
 	const composerRef = useRef<ComposerHandle>(null);
 	const askFocusScope = useRef<object>({}).current;
 
@@ -217,6 +458,12 @@ export default function ChatView({
 	} = useHistorySearch(sessionId, projectAreaId, projectId);
 
 	const chatLocationRequest = useAppStore((s) => s.chatLocationRequest);
+	const chatLocationLoadRef = useRef<{
+		request: NonNullable<typeof chatLocationRequest>;
+		active: boolean;
+		cursor: string;
+	} | null>(null);
+	const [chatLocationLoadRevision, setChatLocationLoadRevision] = useState(0);
 	const [flashRowId, setFlashRowId] = useState<string | null>(null);
 
 	useSessionCommandSync(sessionId, projectAreaId);
@@ -463,18 +710,46 @@ export default function ChatView({
 	};
 
 	useEffect(() => {
+		void chatLocationLoadRevision;
 		if (
 			!chatLocationRequest ||
 			chatLocationRequest.projectAreaId !== projectAreaId ||
-			chatLocationRequest.sessionId !== sessionId ||
-			rows.length === 0
+			chatLocationRequest.sessionId !== sessionId
 		) {
 			return;
 		}
 		if (useAppStore.getState().chatLocationRequest !== chatLocationRequest) return;
 		const { messageIndex, anchorText } = chatLocationRequest;
+		if (runtime.transcript && messageIndex < runtime.transcript.start) {
+			const cursor = `${runtime.transcript.projectionId}:${runtime.transcript.start}`;
+			const priorLoad = chatLocationLoadRef.current;
+			if (
+				priorLoad?.request === chatLocationRequest &&
+				(priorLoad.active || priorLoad.cursor === cursor)
+			) {
+				return;
+			}
+			const locationLoad = { request: chatLocationRequest, active: true, cursor };
+			chatLocationLoadRef.current = locationLoad;
+			void loadTranscriptUntil(
+				messageIndex,
+				() => useAppStore.getState().sessions[sessionId]?.transcript,
+				loadEarlierMessages,
+				() => useAppStore.getState().chatLocationRequest === chatLocationRequest,
+			).finally(() => {
+				if (chatLocationLoadRef.current !== locationLoad) return;
+				const transcript = useAppStore.getState().sessions[sessionId]?.transcript;
+				chatLocationLoadRef.current = {
+					...locationLoad,
+					active: false,
+					cursor: transcript ? `${transcript.projectionId}:${transcript.start}` : "",
+				};
+				setChatLocationLoadRevision((revision) => revision + 1);
+			});
+			return;
+		}
 		const prefix = anchorText.slice(0, 40);
-		const mappedId = runtime.turnIdByMessageIndex?.[messageIndex];
+		const mappedId = runtime.turnIdByMessageIndex[messageIndex];
 		const mapped = mappedId ? turns.find((t) => t.id === mappedId) : undefined;
 		const target =
 			mapped && turnAnchorText(mapped).includes(prefix)
@@ -486,10 +761,23 @@ export default function ChatView({
 			useAppStore.getState().clearChatLocation();
 			return;
 		}
-		virtuosoRef.current?.scrollToIndex({ index, align: "center" });
+		virtuosoRef.current?.scrollToIndex({
+			index,
+			align: "center",
+		});
 		setFlashRowId(rows[index]?.id ?? null);
 		useAppStore.getState().clearChatLocation();
-	}, [chatLocationRequest, sessionId, rows, runtime.turnIdByMessageIndex, turns, projectAreaId]);
+	}, [
+		chatLocationRequest,
+		chatLocationLoadRevision,
+		loadEarlierMessages,
+		projectAreaId,
+		rows,
+		runtime.transcript,
+		runtime.turnIdByMessageIndex,
+		sessionId,
+		turns,
+	]);
 
 	const historyOpenRequest = useAppStore((s) => s.historyOpenRequest);
 	const historyOverlayOpen = historyState.open;
@@ -590,14 +878,32 @@ export default function ChatView({
 							data-testid="chat-scroll"
 							className="relative flex min-h-0 flex-1 flex-col"
 							{...containerProps}
+							onPointerDown={(event) => {
+								autoHistoryLoadArmed.current = true;
+								containerProps.onPointerDown(event);
+							}}
+							onWheel={(event) => {
+								if (event.deltaY < 0) autoHistoryLoadArmed.current = true;
+								containerProps.onWheel(event);
+							}}
+							onTouchStart={(event) => {
+								autoHistoryLoadArmed.current = true;
+								containerProps.onTouchStart(event);
+							}}
 						>
 							<Virtuoso<ChatRow, ChatListContext>
+								key={projectionId ?? `live:${sessionId}`}
 								ref={virtuosoRef}
 								data={rows}
 								context={listContext}
 								components={CHAT_LIST_COMPONENTS}
 								className="min-h-0 flex-1 overflow-x-hidden"
-								initialTopMostItemIndex={{ index: Math.max(rows.length - 1, 0), align: "end" }}
+								firstItemIndex={displayedFirstItemIndex}
+								initialTopMostItemIndex={{
+									index: Math.max(rows.length - 1, 0),
+									align: "end",
+								}}
+								startReached={handleStartReached}
 								followOutput={followOutput}
 								atBottomStateChange={handleAtBottom}
 								atBottomThreshold={50}

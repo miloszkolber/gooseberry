@@ -81,21 +81,25 @@ export function deriveRows(
 					rows.push({ kind: "image", id: `${turn.id}:image:${b}`, image: block });
 				} else if (block.type === "toolCall") {
 					const toolName = block.toolName ?? block.name;
+					const rowId = `${turn.id}:tool:${b}`;
+					const hasReplayResult = Object.hasOwn(turn.toolResultsByBlock ?? {}, b);
 					const data: ToolCallData = {
 						toolCallId: block.id,
 						toolName,
 						args: (typeof block.arguments === "object" && block.arguments !== null
 							? block.arguments
 							: {}) as Record<string, unknown>,
-						tool: toolResults[block.id],
+						tool: hasReplayResult
+							? (turn.toolResultsByBlock?.[b] ?? undefined)
+							: toolResults[block.id],
 						dead,
 						streaming: turn.streaming,
 					};
 					if (resolveProminence(toolName).prominence === "primary") {
 						flushRun();
-						rows.push({ kind: "tool", id: block.id, ...data });
+						rows.push({ kind: "tool", id: rowId, ...data });
 					} else {
-						run.push({ kind: "tool", id: block.id, ...data });
+						run.push({ kind: "tool", id: rowId, ...data });
 					}
 				}
 			}

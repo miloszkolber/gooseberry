@@ -18,8 +18,20 @@ export type ExtUiDialogRequest = Extract<
 >;
 
 export type ChatTurn =
-	| { kind: "user"; id: string; message: UserMessage; attachmentNames?: string[] }
-	| { kind: "assistant"; id: string; message: AssistantMessage; streaming: boolean }
+	| {
+			kind: "user";
+			id: string;
+			message: UserMessage;
+			attachmentNames?: string[];
+			optimistic?: { transcriptTotal: number | null };
+	  }
+	| {
+			kind: "assistant";
+			id: string;
+			message: AssistantMessage;
+			streaming: boolean;
+			toolResultsByBlock?: Record<number, ToolResultState | null>;
+	  }
 	| { kind: "system"; id: string; text: string; endedAt?: number }
 	| ({ kind: "compaction"; id: string } & CompactionState)
 	| { kind: "error"; id: string; text: string }
