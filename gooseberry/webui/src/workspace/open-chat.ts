@@ -46,10 +46,13 @@ export async function openChatInTab(
 		return;
 	}
 	try {
-		const { summary, messages } = await getTransport().request("session.getMessages", {
-			sessionId,
-			projectId: projectAreaId,
-		});
+		const { summary, messages, pendingTools } = await getTransport().request(
+			"session.getMessages",
+			{
+				sessionId,
+				projectId: projectAreaId,
+			},
+		);
 		const current = useAppStore.getState();
 		if (
 			!current.projects.some((project) => project.id === projectId) ||
@@ -69,7 +72,7 @@ export async function openChatInTab(
 		}
 		current.hydrateSession(
 			summary,
-			messagesToRuntime(messages, summary.lastSettlement),
+			messagesToRuntime(messages, summary.lastSettlement, pendingTools),
 			!background,
 			undefined,
 			options,
