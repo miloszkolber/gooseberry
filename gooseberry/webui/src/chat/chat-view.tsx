@@ -42,6 +42,7 @@ import { ChatTurnView } from "./turns";
 import type { ChatAttachment, ChatTurn } from "./types";
 import { useChatScroll } from "./use-chat-scroll";
 import { useHistorySearch } from "./use-history-search";
+import { useSessionCommandSync } from "./use-session-command-sync";
 
 function turnAnchorText(turn: ChatTurn): string {
 	if (turn.kind === "user") {
@@ -218,12 +219,7 @@ export default function ChatView({
 	const chatLocationRequest = useAppStore((s) => s.chatLocationRequest);
 	const [flashRowId, setFlashRowId] = useState<string | null>(null);
 
-	useEffect(() => {
-		getTransport()
-			.request("session.getCommands", { sessionId })
-			.then((c) => useAppStore.getState().setCommands(sessionId, c))
-			.catch(() => {});
-	}, [sessionId]);
+	useSessionCommandSync(sessionId, projectAreaId);
 
 	const mergedCommands = commands;
 

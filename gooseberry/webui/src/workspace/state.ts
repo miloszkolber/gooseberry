@@ -69,6 +69,7 @@ export interface WorkspaceState {
 	>;
 	skillChangeTickByProjectArea: Record<string, number>;
 	skillsSyncedTickBySession: Record<string, number>;
+	commandCatalogGeneration: number;
 	installProjectSnapshot: (projects: Project[], recentProjects: Project[]) => void;
 	applyProjectUpdated: (project: Project) => void;
 	setProjectAreas: (projectId: string, projectAreas: ProjectArea[]) => void;
@@ -106,6 +107,7 @@ export interface WorkspaceState {
 	) => void;
 	noteFsChanged: (payload: ProjectFsChangedPayload) => void;
 	markSkillsSynced: (sessionId: string, syncedTick: number) => void;
+	noteCommandCatalogChanged: () => void;
 	updateFileTabContent: (projectAreaId: string, id: string, content: string, tick: number) => void;
 	updateDiffTabContent: (
 		projectAreaId: string,
@@ -353,6 +355,7 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 	fsChangesByProjectArea: {},
 	skillChangeTickByProjectArea: {},
 	skillsSyncedTickBySession: {},
+	commandCatalogGeneration: 0,
 	installProjectSnapshot: (projects, recentProjects) =>
 		set((state) => projectSnapshot(state, projects, recentProjects)),
 	applyProjectUpdated: (project) =>
@@ -662,7 +665,8 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 			if (s.removedProjectAreaIds[payload.projectId]) return {};
 			const prev = s.fsChangesByProjectArea[payload.projectId];
 			const tick = (prev?.tick ?? 0) + 1;
-			const skillChanged = payload.changes.some(({ path }) => /(^|\/)SKILL\.md$/.test(path));
+			const skillChanged =
+				payload.truncated || payload.changes.some(({ path }) => /(^|\/)SKILL\.md$/.test(path));
 			return {
 				fsChangesByProjectArea: {
 					...s.fsChangesByProjectArea,
@@ -690,6 +694,8 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 				skillsSyncedTickBySession: { ...s.skillsSyncedTickBySession, [sessionId]: synced },
 			};
 		}),
+	noteCommandCatalogChanged: () =>
+		set((s) => ({ commandCatalogGeneration: s.commandCatalogGeneration + 1 })),
 	updateFileTabContent: (projectAreaId, id, content, tick) =>
 		set((state) => {
 			if (state.removedProjectAreaIds[projectAreaId]) return {};

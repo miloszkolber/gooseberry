@@ -33,7 +33,7 @@ export interface ChatState {
 	setCurrentModel: (sessionId: string, model: WireModel) => void;
 	setThinkingLevel: (sessionId: string, level: ThinkingLevel) => void;
 	setStats: (sessionId: string, stats: SessionStats) => void;
-	setCommands: (sessionId: string, commands: SlashCommandInfo[]) => void;
+	setCommands: (sessionId: string, commands: SlashCommandInfo[], expectedRevision?: number) => void;
 	setChatDraft: (sessionId: string, text: string) => void;
 	setSessionGoalLoading: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoalSaving: (sessionId: string, projectAreaId: string) => void;
@@ -125,8 +125,14 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 	setThinkingLevel: (sessionId, level) =>
 		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, thinkingLevel: level }))),
 	setStats: (sessionId, stats) => set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, stats }))),
-	setCommands: (sessionId, commands) =>
-		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, commands }))),
+	setCommands: (sessionId, commands, expectedRevision) =>
+		set((s) =>
+			withRuntime(s, sessionId, (rt) =>
+				expectedRevision !== undefined && rt.commandRevision !== expectedRevision
+					? rt
+					: { ...rt, commands },
+			),
+		),
 	setChatDraft: (sessionId, draft) =>
 		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, draft }))),
 	setSessionGoalLoading: (sessionId, projectAreaId) =>
