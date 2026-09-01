@@ -1,3 +1,4 @@
+import type { SubagentActivity } from "@gooseberry/contracts";
 import { GitFork } from "lucide-react";
 import { DefaultToolRenderer, type ToolRenderProps } from "../../tool-registry";
 import { Collapsible, countLines } from "../collapsible";
@@ -136,10 +137,15 @@ function modelLabel(
 }
 
 export function SubagentCard(props: ToolRenderProps) {
-	const { args, result, status, toolName } = props;
+	const { args, result, status, subagentActivity, toolName } = props;
 	const details = subagentDetails(result);
 	// Goose's load also discovers/reads agents, skills and recipes, not just child runs.
-	if (toolName === "load" && !details.status && !details.results?.length) {
+	if (
+		toolName === "load" &&
+		!details.status &&
+		!details.results?.length &&
+		!subagentActivity?.events.length
+	) {
 		return <DefaultToolRenderer {...props} />;
 	}
 	const child = details.results?.[0];
@@ -158,7 +164,7 @@ export function SubagentCard(props: ToolRenderProps) {
 	return (
 		<div data-testid="tool-subagent" className="flex flex-col gap-xs">
 			<div className="flex items-center gap-xs tr-text-metadata">
-				<GitFork className="size-3.5 shrink-0 text-text-muted" />
+				<GitFork aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
 				<span className="truncate text-primary" title={task || "subagent"}>
 					{subagentSummary(args)}
 				</span>
@@ -167,6 +173,7 @@ export function SubagentCard(props: ToolRenderProps) {
 			{task ? <p className="truncate text-text-muted tr-text-metadata">{task}</p> : null}
 			<span className="text-text-muted tr-text-metadata">{label}</span>
 			{model ? <span className="text-text-muted tr-text-metadata">{model}</span> : null}
+			<RecentChildActivity activity={subagentActivity} />
 			{child?.truncated ? (
 				<span className="text-text-muted tr-text-metadata">Output truncated</span>
 			) : null}
@@ -179,6 +186,43 @@ export function SubagentCard(props: ToolRenderProps) {
 					<ToolOutput result={result ?? child?.finalOutput} />
 				</Collapsible>
 			)}
+		</div>
+	);
+}
+
+function RecentChildActivity({ activity }: { activity?: SubagentActivity | undefined }) {
+	if (!activity?.events.length) return null;
+	const multipleChildren = new Set(activity.events.map((event) => event.childSessionId)).size > 1;
+	const seen = new Map<string, number>();
+	const entries = activity.events.map((event) => {
+		const identity = `${event.childSessionId}\0${event.toolName}`;
+		const occurrence = (seen.get(identity) ?? 0) + 1;
+		seen.set(identity, occurrence);
+		return { event, key: `${identity}\0${occurrence}` };
+	});
+	return (
+		<div className="flex min-w-0 max-w-full flex-col gap-xs">
+			<span className="text-text-muted tr-text-metadata">Recent child activity</span>
+			<ul className="flex min-w-0 max-w-full flex-col gap-0.5">
+				{entries.map(({ event, key }) => (
+					<li key={key} className="flex min-w-0 max-w-full items-baseline gap-xs tr-text-metadata">
+						{multipleChildren ? (
+							<span
+								className="max-w-[12rem] shrink truncate text-text-muted"
+								title={event.childSessionId}
+							>
+								{event.childSessionId}
+							</span>
+						) : null}
+						<span className="min-w-0 break-words text-text-default" title={event.toolName}>
+							{event.toolName}
+						</span>
+					</li>
+				))}
+			</ul>
+			{activity.truncated ? (
+				<span className="text-text-muted tr-text-metadata">Earlier activity omitted</span>
+			) : null}
 		</div>
 	);
 }
