@@ -5,7 +5,7 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 ## Finish existing behavior
 
 - **UI acceptance.** Keep repeatable desktop/narrow-screen checks for commit selection, reconnects, tab closing, streaming, dialogs and file/image previews. Include keyboard use, overflow and interaction timing; state tests alone are insufficient.
-- **Dormant surfaces.** Connect retained `skill.list` and extension-dialog hooks where upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
+- **Dormant surfaces.** Connect the retained extension-dialog hooks when upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
 
 ## Session continuity and integration
 
