@@ -65,6 +65,44 @@ func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
 	}
 }
 
+func TestPendingToolPreviewsAreSafeStableAndDetached(t *testing.T) {
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	applySessionUpdate(entry, "tool_call", summonToolStart("z-call", "delegate"), false)
+	update := subagentToolUpdate("z-call", "child", "developer__read")
+	update["rawOutput"] = map[string]any{"nested": []any{map[string]any{"value": "original"}}}
+	applySessionUpdate(entry, "tool_call_update", update, false)
+	applySessionUpdate(entry, "tool_call_update", map[string]any{
+		"toolCallId": "a-call", "status": "in_progress", "rawOutput": "first",
+	}, false)
+	entry.appAttachments = map[string]appAttachmentState{
+		"z-call": {attachment: AppAttachment{ToolName: "apps__show", ExtensionName: "apps", ResourceURI: "ui://apps/view"}},
+		"orphan": {attachment: AppAttachment{ToolName: "private", ExtensionName: "private", ResourceURI: "ui://private/view"}},
+	}
+
+	previews := pendingToolPreviewsLocked(entry)
+	if len(previews) != 2 || mapValue(previews[0])["toolCallId"] != "a-call" || mapValue(previews[1])["toolCallId"] != "z-call" {
+		t.Fatalf("pending previews are not stable or bounded to live tools: %#v", previews)
+	}
+	zPreview := mapValue(previews[1])
+	if !reflect.DeepEqual(zPreview["app"], map[string]any{"toolName": "apps__show", "extensionName": "apps", "resourceUri": "ui://apps/view"}) {
+		t.Fatalf("App projection changed: %#v", zPreview["app"])
+	}
+	activity := mapValue(zPreview["subagentActivity"])
+	activityEvent := mapValue(arrayValue(activity["events"])[0])
+	if len(activityEvent) != 2 || activityEvent["childSessionId"] != "child" || activityEvent["toolName"] != "developer__read" {
+		t.Fatalf("subagent projection leaked or lost fields: %#v", activityEvent)
+	}
+	encoded, _ := json.Marshal(previews)
+	if strings.Contains(string(encoded), "not projected") || strings.Contains(string(encoded), "ui://private/view") {
+		t.Fatalf("pending projection leaked internal data: %s", encoded)
+	}
+	mapValue(arrayValue(mapValue(zPreview["output"])["nested"])[0])["value"] = "changed"
+	stored := mapValue(arrayValue(mapValue(entry.pendingToolOutputs["z-call"].Raw)["nested"])[0])["value"]
+	if stored != "original" {
+		t.Fatal("pending projection shares mutable output with session state")
+	}
+}
+
 func TestAvailableCommandsUpdateProjectsOneBoundedSafeCatalog(t *testing.T) {
 	raw := []any{
 		map[string]any{

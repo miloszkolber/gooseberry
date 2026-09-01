@@ -400,21 +400,48 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 }
 
 func (m *SessionManager) Messages(ctx context.Context, sessionID, projectID, cwd, clientKey string) (map[string]any, error) {
-	entry, err := m.EnsureAttached(ctx, sessionID, projectID, cwd)
+	result, release, err := m.messageSnapshot(ctx, sessionID, projectID, cwd, clientKey, true)
+	if release != nil {
+		release()
+	}
+	return result, err
+}
+
+func (m *SessionManager) messageResponse(ctx context.Context, sessionID, projectID, cwd, clientKey string) (any, error) {
+	result, release, err := m.messageSnapshot(ctx, sessionID, projectID, cwd, clientKey, false)
 	if err != nil {
 		return nil, err
 	}
-	defer m.releaseEntry(entry)
+	return deferredResponse{result: result, after: release}, nil
+}
+
+func (m *SessionManager) messageSnapshot(ctx context.Context, sessionID, projectID, cwd, clientKey string, detach bool) (map[string]any, func(), error) {
+	entry, err := m.EnsureAttached(ctx, sessionID, projectID, cwd)
+	if err != nil {
+		return nil, nil, err
+	}
 	m.mu.Lock()
 	m.retainSessionLocked(clientKey, sessionID, projectID)
 	m.mu.Unlock()
 	entry.state.Lock()
-	// Detach mutable containers, sharing immutable text/image strings. The
-	// response encoder can serialize a long history without holding state.
-	messages := cloneJSON(entry.messages)
-	entry.state.Unlock()
-	summary := m.summary(sessionID, entry)
-	return map[string]any{"summary": summary, "messages": messages}, nil
+	// Keep state locked until the WebSocket response is queued. Session updates
+	// therefore fall wholly before or after the reload snapshot instead of
+	// crossing it in transit. Direct callers receive an owned copy; the wire path
+	// avoids duplicating a long transcript before encoding it under this lock.
+	var messages any = entry.messages
+	if detach {
+		messages = cloneJSON(entry.messages)
+	}
+	pendingTools := pendingToolPreviewsLocked(entry)
+	summary := m.summaryLocked(sessionID, entry)
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			entry.state.Unlock()
+			m.releaseEntry(entry)
+		})
+	}
+	return map[string]any{"summary": summary, "messages": messages, "pendingTools": pendingTools}, release, nil
 }
 
 func (m *SessionManager) SetModel(ctx context.Context, sessionID string, model WireModel) error {
@@ -662,6 +689,10 @@ func (m *SessionManager) ReleaseProject(projectID string) {
 func (m *SessionManager) summary(sessionID string, entry *sessionEntry) SessionSummary {
 	entry.state.Lock()
 	defer entry.state.Unlock()
+	return m.summaryLocked(sessionID, entry)
+}
+
+func (m *SessionManager) summaryLocked(sessionID string, entry *sessionEntry) SessionSummary {
 	queue := SessionQueue{Revision: entry.queue.Revision, Steering: append([]string{}, entry.queue.Steering...), FollowUp: append([]string{}, entry.queue.FollowUp...)}
 	return SessionSummary{SessionID: sessionID, ProjectID: entry.projectID, CWD: entry.cwd, ParentSessionID: entry.parentSessionID, Title: entry.title, Model: entry.model, ThinkingLevel: entry.thinkingLevel, IsStreaming: entry.streaming, MessageCount: len(entry.messages), UpdatedAt: m.now().UnixMilli(), Live: true, Archived: false, LastSettlement: entry.settlement, Queue: &queue}
 }

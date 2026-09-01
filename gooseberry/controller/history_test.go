@@ -253,4 +253,129 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 			<-done
 		}
 	})
+	t.Run("reload snapshots linearize with live updates", func(t *testing.T) {
+		entry, err := manager.entry(child.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { manager.releaseEntry(entry) })
+		t.Cleanup(func() { manager.publish = nil })
+
+		type responseResult struct {
+			value any
+			err   error
+		}
+		updateStarted := make(chan struct{})
+		publishStarted := make(chan struct{}, 1)
+		publishGate := make(chan struct{})
+		published := make(chan map[string]any)
+		manager.publish = func(channel string, data any) {
+			if channel != "agent.event" {
+				return
+			}
+			publishStarted <- struct{}{}
+			<-publishGate
+			published <- mapValue(data)
+		}
+		updateDone := make(chan error, 1)
+		go func() {
+			close(updateStarted)
+			updateDone <- manager.applyUpdate(context.Background(), map[string]any{
+				"sessionId": child.SessionID,
+				"update": map[string]any{
+					"sessionUpdate": "agent_message_chunk",
+					"content":       map[string]any{"type": "text", "text": "before-snapshot"},
+				},
+			}, false)
+		}()
+		<-updateStarted
+		<-publishStarted
+		if entry.state.TryLock() {
+			entry.state.Unlock()
+			close(publishGate)
+			<-published
+			<-updateDone
+			t.Fatal("live update unlocked before publishing its event")
+		}
+		responseStarted := make(chan struct{})
+		responseDone := make(chan responseResult, 1)
+		go func() {
+			close(responseStarted)
+			value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client")
+			responseDone <- responseResult{value: value, err: err}
+		}()
+		<-responseStarted
+		close(publishGate)
+		<-published
+		if err := <-updateDone; err != nil {
+			t.Fatal(err)
+		}
+		result := <-responseDone
+		deferred, ok := result.value.(deferredResponse)
+		if result.err != nil || !ok {
+			t.Fatalf("message response was not deferred: %#v, %v", result.value, result.err)
+		}
+		t.Cleanup(deferred.after)
+		encoded, _ := json.Marshal(mapValue(deferred.result)["messages"])
+		if !strings.Contains(string(encoded), "before-snapshot") {
+			t.Fatalf("update-first snapshot was incomplete: %s", encoded)
+		}
+		if entry.state.TryLock() {
+			entry.state.Unlock()
+			t.Fatal("update-first snapshot unlocked before its response boundary")
+		}
+		deferred.after()
+
+		published = make(chan map[string]any)
+		manager.publish = func(channel string, data any) {
+			if channel == "agent.event" {
+				published <- mapValue(data)
+			}
+		}
+		value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client")
+		deferred, ok = value.(deferredResponse)
+		if err != nil || !ok {
+			t.Fatalf("snapshot-first response was not holding the update boundary: %#v, %v", value, err)
+		}
+		t.Cleanup(deferred.after)
+		if entry.state.TryLock() {
+			entry.state.Unlock()
+			deferred.after()
+			t.Fatal("snapshot-first response unlocked before its response boundary")
+		}
+		encoded, _ = json.Marshal(mapValue(deferred.result)["messages"])
+		secondStarted := make(chan struct{})
+		updateDone = make(chan error, 1)
+		go func() {
+			close(secondStarted)
+			updateDone <- manager.applyUpdate(context.Background(), map[string]any{
+				"sessionId": child.SessionID,
+				"update": map[string]any{
+					"sessionUpdate": "agent_message_chunk",
+					"content":       map[string]any{"type": "text", "text": "after-snapshot"},
+				},
+			}, false)
+		}()
+		<-secondStarted
+		crossed := false
+		select {
+		case event := <-published:
+			crossed = true
+			t.Logf("post-snapshot event crossed the deferred response: %#v", event)
+		default:
+		}
+		deferred.after()
+		if !crossed {
+			<-published
+		}
+		if err := <-updateDone; err != nil {
+			t.Fatal(err)
+		}
+		if crossed {
+			t.Fatal("post-snapshot event was published before the response boundary")
+		}
+		if strings.Contains(string(encoded), "after-snapshot") {
+			t.Fatalf("snapshot included a later update: %s", encoded)
+		}
+	})
 }
