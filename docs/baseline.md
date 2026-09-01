@@ -16,7 +16,7 @@ Concurrent persistent chats support streaming replies and thinking, tool results
 
 Each chat has a user-set goal and ordered agent-managed tasks: `pending`, `active` or `done`. Session-scoped MCP lets agents update tasks and ask questions. Browser MCP provides automation and screenshots. Completed Goose App tools can open an interactive view in an isolated browser-origin sandbox.
 
-Goose stores transcripts. Gooseberry stores ordered follow-up queues and resumes them after browser or controller restarts. A delivery interrupted at the ACP boundary is reconciled from the transcript or held for explicit retry or removal.
+Goose stores transcripts. The Web UI opens each chat at its newest bounded page, loads earlier user rounds on demand and refreshes open chats after reconnect. Gooseberry stores ordered follow-up queues and resumes them after browser or controller restarts. A delivery interrupted at the ACP boundary is reconciled from the transcript or held for explicit retry or removal.
 
 ## Settings
 

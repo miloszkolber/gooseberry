@@ -6,7 +6,9 @@ The controller connects to `ws://127.0.0.1:3284/acp`, sending `GOOSEBERRY_GOOSE_
 
 Every session has a project and admitted working directory. Goose owns its transcript, rename/archive state and forks; Gooseberry records project placement and immediate-parent lineage.
 
-The controller checks empty sessions individually when Goose omits them from the catalog. Archive waits for settled sessions and blocks competing operations. Reconnects and lifecycle notifications reload the catalog; connection generations reject stale replies.
+The controller checks empty sessions individually when Goose omits them from the catalog. Archive waits for settled sessions and blocks competing operations. Reconnects and lifecycle notifications reload the catalog; reconnects also refresh open chats, and connection generations reject stale replies.
+
+Goose ACP supplies a complete replay rather than ranges. `session.getMessages` therefore returns the newest bounded user-round page from the controller projection. Earlier requests carry its projection identity and starting index; stale identities are rejected so pages from different replays cannot be combined. Older immutable pages are copied under the session lock and encoded after it is released, while the newest snapshot remains ordered with live events through response queuing.
 
 Queued follow-ups are durable controller state and become ordinary ACP prompts in order when the current turn settles. Safe pending work resumes after restart. If delivery may already have begun, the controller checks Goose's replay and otherwise waits for an explicit retry or removal. Steering uses Goose's session-steer method.
 

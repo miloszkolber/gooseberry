@@ -25,13 +25,15 @@ Coder's ACP SDK and WebSocket library handle Goose communication; the MCP Go SDK
 
 ## State and concurrency
 
-Goose stores transcripts. Gooseberry stores project/session associations, follow-up queues, mutation receipts, objectives and presentation settings. JSON writes use atomic replacement and last-valid backups; execution queues fail closed rather than running a stale backup. Cached project metadata requires matching freshly read bytes. Path authorization remains fresh.
+Goose stores transcripts. ACP replay has no range request, so the controller receives the complete authoritative transcript and exposes a bounded browser projection. The first response contains the newest user-round page; older pages load on demand. A projection identity prevents the browser from combining pages from different replays.
+
+Gooseberry stores project/session associations, follow-up queues, mutation receipts, objectives and presentation settings. JSON writes use atomic replacement and last-valid backups; execution queues fail closed rather than running a stale backup. Cached project metadata requires matching freshly read bytes. Path authorization remains fresh.
 
 Each Web UI client reports its open chats as a revisioned lease snapshot. Closing one client's tab preserves other clients' leases. Disconnect cleanup waits for reconnect grace and replay work; project closure checks for concurrent reopening.
 
-Active work and pending replies prevent eviction. Durable queued or blocked work may shed its inactive transcript projection; inactive copies have count/memory limits and cache their encoded size until changed.
+Active work and pending replies prevent eviction. Durable queued or blocked work may shed its inactive transcript projection; inactive copies have count/memory limits and cache their encoded size until changed. A late update to an idle projection immediately reapplies those limits.
 
-Connection generations, shared hydration, deletion markers, replay IDs and tab-close checks reject stale or duplicate work. Bounded output queues isolate slow clients.
+Connection generations, shared hydration, deletion markers, replay IDs and tab-close checks reject stale or duplicate work. Open chats refresh after reconnect. The newest transcript response stays ordered with live events until it is queued; immutable older pages release the session lock before encoding. Bounded output queues isolate slow clients.
 
 ## Frontend and images
 
