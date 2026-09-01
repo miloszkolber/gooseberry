@@ -138,9 +138,10 @@ func TestCorePreservesStateAndPathBoundaries(t *testing.T) {
 	}
 
 	// Reusing decoded JSON must not make state or path admission stale.
+	expectedRoot := got.Roots[0]
 	got.Roots[0] = outside
 	got, err = reloaded.Get(project.ID)
-	if err != nil || got.Roots[0] != root {
+	if err != nil || got.Roots[0] != expectedRoot {
 		t.Fatalf("returned roots mutated cached state: %#v, %v", got, err)
 	}
 	file := filepath.Join(projects.store.Dir, "projects.json")
