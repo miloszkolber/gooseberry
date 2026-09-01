@@ -37,6 +37,7 @@ import { SessionGoalControl } from "./session-goal-control";
 import { SessionLineageControl } from "./session-lineage-control";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./stream-indicator";
 import "./tools/register";
+import { McpAppSessionProvider } from "./tools/apps/mcp-app-context";
 import { ChatTurnView } from "./turns";
 import type { ChatAttachment, ChatTurn } from "./types";
 import { useChatScroll } from "./use-chat-scroll";
@@ -572,47 +573,49 @@ export default function ChatView({
 							</DialogContent>
 						) : null}
 					</Dialog>
-					<div
-						data-testid="chat-scroll"
-						className="relative flex min-h-0 flex-1 flex-col"
-						{...containerProps}
-					>
-						<Virtuoso<ChatRow, ChatListContext>
-							ref={virtuosoRef}
-							data={rows}
-							context={listContext}
-							components={CHAT_LIST_COMPONENTS}
-							className="min-h-0 flex-1 overflow-x-hidden"
-							initialTopMostItemIndex={{ index: Math.max(rows.length - 1, 0), align: "end" }}
-							followOutput={followOutput}
-							atBottomStateChange={handleAtBottom}
-							atBottomThreshold={50}
-							computeItemKey={(_, row) => row.id}
-							itemContent={(_, row) => (
-								<div
-									data-flash={row.id === flashRowId || undefined}
-									className="mx-auto max-w-3xl rounded-[var(--radius-sm)] px-md py-xs transition-colors data-[flash]:bg-primary-subtle"
+					<McpAppSessionProvider projectId={projectId} sessionId={sessionId}>
+						<div
+							data-testid="chat-scroll"
+							className="relative flex min-h-0 flex-1 flex-col"
+							{...containerProps}
+						>
+							<Virtuoso<ChatRow, ChatListContext>
+								ref={virtuosoRef}
+								data={rows}
+								context={listContext}
+								components={CHAT_LIST_COMPONENTS}
+								className="min-h-0 flex-1 overflow-x-hidden"
+								initialTopMostItemIndex={{ index: Math.max(rows.length - 1, 0), align: "end" }}
+								followOutput={followOutput}
+								atBottomStateChange={handleAtBottom}
+								atBottomThreshold={50}
+								computeItemKey={(_, row) => row.id}
+								itemContent={(_, row) => (
+									<div
+										data-flash={row.id === flashRowId || undefined}
+										className="mx-auto max-w-3xl rounded-[var(--radius-sm)] px-md py-xs transition-colors data-[flash]:bg-primary-subtle"
+									>
+										<ChatTurnView
+											row={row}
+											projectAreaRoot={projectAreaRoot}
+											onOpenChange={onOpenChange}
+										/>
+									</div>
+								)}
+							/>
+							{showScrollButton ? (
+								<button
+									type="button"
+									data-testid="scroll-to-bottom"
+									onClick={scrollToBottom}
+									className="-translate-x-1/2 absolute bottom-md left-1/2 flex items-center gap-xs rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-sm py-xs text-text-muted tr-text-metadata shadow-[var(--shadow-md)] hover:bg-control-bg-hovered hover:text-text-default"
 								>
-									<ChatTurnView
-										row={row}
-										projectAreaRoot={projectAreaRoot}
-										onOpenChange={onOpenChange}
-									/>
-								</div>
-							)}
-						/>
-						{showScrollButton ? (
-							<button
-								type="button"
-								data-testid="scroll-to-bottom"
-								onClick={scrollToBottom}
-								className="-translate-x-1/2 absolute bottom-md left-1/2 flex items-center gap-xs rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-sm py-xs text-text-muted tr-text-metadata shadow-[var(--shadow-md)] hover:bg-control-bg-hovered hover:text-text-default"
-							>
-								<ArrowDown className="size-3" />
-								New messages
-							</button>
-						) : null}
-					</div>
+									<ArrowDown className="size-3" />
+									New messages
+								</button>
+							) : null}
+						</div>
+					</McpAppSessionProvider>
 					<div className="relative shrink-0">
 						<HistoryOverlay
 							state={historyState}

@@ -31,8 +31,7 @@
 		"typescript": "catalog:"
 	},
 	"trustedDependencies": [
-		"@biomejs/biome",
-		"esbuild"
+		"@biomejs/biome"
 	],
 	"overrides": {
 		"nanoid": "3.3.18",

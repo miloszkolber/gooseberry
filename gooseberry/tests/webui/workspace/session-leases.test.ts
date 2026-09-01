@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import type { WsParams, WsResult } from "@gooseberry/contracts";
+import { PROTOCOL_VERSION, type WsParams, type WsResult } from "@gooseberry/contracts";
 import { initTransport, resetTransport } from "@/connection";
 import { WsTransport } from "@/connection/transport";
 import { projectArea, useAppStore } from "@/store";
@@ -17,7 +17,7 @@ test("leases derive from open tabs, restore after reconnect and stop with their 
 		slug: "project",
 		lastOpened: 1,
 	};
-	useAppStore.getState().installWelcomeSnapshot(67, [project], [project]);
+	useAppStore.getState().installWelcomeSnapshot(PROTOCOL_VERSION, [project], [project]);
 	useAppStore.getState().setStatus("connected");
 	useAppStore.setState({
 		projectAreas: { project: [projectArea(project), { ...projectArea(project), id: "alias" }] },
@@ -72,7 +72,7 @@ test("leases derive from open tabs, restore after reconnect and stop with their 
 
 test("an older failed snapshot cannot report an error for the current open tabs", async () => {
 	useAppStore.setState(useAppStore.getInitialState(), true);
-	useAppStore.getState().installWelcomeSnapshot(67, [], []);
+	useAppStore.getState().installWelcomeSnapshot(PROTOCOL_VERSION, [], []);
 	useAppStore.getState().setStatus("connected");
 	const failures: ((error: Error) => void)[] = [];
 	const transport = {
@@ -115,7 +115,7 @@ test("late hydration respects chat and project closure while allowing an explici
 		slug: "project",
 		lastOpened: 1,
 	};
-	useAppStore.getState().installWelcomeSnapshot(67, [project], [project]);
+	useAppStore.getState().installWelcomeSnapshot(PROTOCOL_VERSION, [project], [project]);
 	useAppStore.getState().setStatus("connected");
 	useAppStore
 		.getState()

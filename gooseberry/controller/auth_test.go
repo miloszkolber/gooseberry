@@ -64,3 +64,34 @@ func TestBrowserProxyConfigurationKeepsCredentialsAtTrustedOrigin(t *testing.T) 
 		})
 	}
 }
+
+func TestBrowserPublicOriginRequiresIsolationAndAuthentication(t *testing.T) {
+	token := "browser-token-0123456789abcdef0123456789"
+	for name, test := range map[string]struct {
+		values map[string]string
+		valid  bool
+	}{
+		"distinct authenticated origins": {values: map[string]string{
+			"GOOSEBERRY_BROWSER_AUTH": "true", "GOOSEBERRY_BROWSER_TOKEN": token,
+			"GOOSEBERRY_PUBLIC_ORIGIN": "https://gooseberry.example:443", "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://sandbox.example:443",
+		}, valid: true},
+		"same public origin": {values: map[string]string{
+			"GOOSEBERRY_BROWSER_AUTH": "true", "GOOSEBERRY_BROWSER_TOKEN": token,
+			"GOOSEBERRY_PUBLIC_ORIGIN": "https://same.example", "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://same.example",
+		}},
+		"unauthenticated sandbox": {values: map[string]string{"GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://sandbox.example"}},
+		"sandbox path": {values: map[string]string{
+			"GOOSEBERRY_BROWSER_AUTH": "true", "GOOSEBERRY_BROWSER_TOKEN": token, "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://sandbox.example/app",
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config, err := ReadAuthConfig(func(key string) string { return test.values[key] })
+			if (err == nil) != test.valid {
+				t.Fatalf("configuration %#v, error %v", config, err)
+			}
+			if test.valid && config.BrowserPublicOrigin != "https://sandbox.example" {
+				t.Fatalf("browser public origin was not retained: %q", config.BrowserPublicOrigin)
+			}
+		})
+	}
+}

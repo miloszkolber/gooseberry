@@ -10,7 +10,7 @@ Extensions run in Goose. Settings lists the extensions Goose advertises, manages
 | --- | --- |
 | Extension Manager | Tool-driven extension management and resource results. |
 | analyze | Code-analysis results. |
-| apps | App-management results; interactive app windows are not hosted yet. |
+| apps | App-management results and sandboxed interactive views. |
 | chatrecall | Recall results. Goose controls the search scope. |
 | code_execution | Code execution and tool-discovery results. |
 | developer | File edits, writes, shell output, trees and image previews. Live shell output is bounded and marked when truncated. |
@@ -24,7 +24,7 @@ Extensions run in Goose. Settings lists the extensions Goose advertises, manages
 
 These names and behaviors follow the [pinned Goose registry](https://github.com/aaif-goose/goose/blob/25021517f12cab87c94bed0874fe7d28168dc264/crates/goose/src/agents/platform_extensions/mod.rs). Goose hides scheduler and orchestrator from its normal extension catalogs. Summon children run in Auto mode because [upstream child approval forwarding is unfinished](https://github.com/aaif-goose/goose/blob/25021517f12cab87c94bed0874fe7d28168dc264/crates/goose/src/agents/platform_extensions/summon.rs#L1376). Parent permission controls do not establish child permission parity.
 
-Apps need a sandboxed resource host and mediated tool access. HTML resources are currently shown as source text, never executed. This and nested-agent presentation are tracked in the [roadmap](roadmap.md).
+Interactive Apps use trusted metadata projected by Goose. Gooseberry reads the attached `ui://` resource and mediates resource reads and tool calls through the same session and extension. Resource HTML runs only in the separate browser sandbox origin. Nested-agent presentation remains in the [roadmap](roadmap.md).
 
 ## Session and settings controls
 

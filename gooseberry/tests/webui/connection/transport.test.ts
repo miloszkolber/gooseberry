@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { APP_CLOSE_TIMEOUT_MS, revokeMcpAppView } from "@/chat/tools/apps/mcp-app-client";
 import { WsTransport } from "@/connection/transport";
 
 class TestWebSocket {
@@ -62,6 +63,31 @@ const acksIn = (sent: readonly string[]): string[] =>
 const resumesIn = (sent: readonly string[]): string[][] =>
 	sent.map(parse).flatMap((frame) => (frame.resume === undefined ? [] : [frame.resume]));
 
+function trackedAbortSignal(controller = new AbortController()): {
+	signal: AbortSignal;
+	activeListeners: () => number;
+} {
+	let activeListeners = 0;
+	const signal = new Proxy(controller.signal, {
+		get(target, property) {
+			if (property === "addEventListener") {
+				return (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+					if (type === "abort") activeListeners += 1;
+					target.addEventListener(type, listener, options as AddEventListenerOptions);
+				};
+			}
+			if (property === "removeEventListener") {
+				return (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+					if (type === "abort") activeListeners -= 1;
+					target.removeEventListener(type, listener, options as EventListenerOptions);
+				};
+			}
+			return Reflect.get(target, property, target);
+		},
+	});
+	return { signal, activeListeners: () => activeListeners };
+}
+
 beforeEach(() => {
 	TestWebSocket.instances = [];
 	globalThis.WebSocket = TestWebSocket as unknown as typeof WebSocket;
@@ -86,6 +112,84 @@ describe("WsTransport channel replay", () => {
 });
 
 describe("WsTransport reconnect delivery", () => {
+	test("keeps an App close live across an outage for longer than controller cleanup", async () => {
+		expect(APP_CLOSE_TIMEOUT_MS).toBeGreaterThan(60_000);
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
+		transport.connect();
+		const first = TestWebSocket.instances[0];
+		first?.open();
+
+		const closing = revokeMcpAppView("a".repeat(64), transport);
+		const originalFrame = first?.sent.find((frame) => parse(frame).method === "session.appClose");
+		if (!originalFrame) throw new Error("App close frame missing");
+		const id = parse(originalFrame).id;
+		first?.close();
+		await tick(520);
+		const replacement = TestWebSocket.instances[1];
+		replacement?.open();
+
+		expect(replacement?.sent).toEqual([JSON.stringify({ resume: [id] }), originalFrame]);
+		replacement?.message(JSON.stringify({ id, ok: true, result: { ok: true } }));
+		await closing;
+		transport.stop();
+	});
+
+	test("aborting a request rejects it and excludes it from reconnect replay", async () => {
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
+		transport.connect();
+		const first = TestWebSocket.instances[0];
+		first?.open();
+		const controller = new AbortController();
+		const tracked = trackedAbortSignal(controller);
+		const reason = new Error("view closed");
+		const result = transport.request("project.list", {}, { signal: tracked.signal });
+		expect(requestsIn(first?.sent ?? [])).toHaveLength(1);
+		expect(tracked.activeListeners()).toBe(1);
+
+		controller.abort(reason);
+		await expect(result).rejects.toBe(reason);
+		expect(tracked.activeListeners()).toBe(0);
+		first?.close();
+		await tick(520);
+		const replacement = TestWebSocket.instances[1];
+		replacement?.open();
+		expect(resumesIn(replacement?.sent ?? [])).toEqual([[]]);
+		expect(requestsIn(replacement?.sent ?? [])).toEqual([]);
+		transport.stop();
+	});
+
+	test("cleans abort listeners after responses, timeouts, and transport stop", async () => {
+		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
+		transport.connect();
+		const socket = TestWebSocket.instances[0];
+		socket?.open();
+
+		const completed = trackedAbortSignal();
+		const result = transport.request("project.list", {}, { signal: completed.signal });
+		const id = requestsIn(socket?.sent ?? []).at(-1)?.id;
+		socket?.message(JSON.stringify({ id, ok: true, result: [] }));
+		expect(await result).toEqual([]);
+		expect(completed.activeListeners()).toBe(0);
+
+		const timedOut = trackedAbortSignal();
+		const timeout = transport.request(
+			"project.list",
+			{},
+			{
+				signal: timedOut.signal,
+				timeoutMs: 1,
+			},
+		);
+		await expect(timeout).rejects.toThrow('request "project.list" timed out');
+		expect(timedOut.activeListeners()).toBe(0);
+
+		const stopped = trackedAbortSignal();
+		const stop = transport.request("project.list", {}, { signal: stopped.signal });
+		transport.stop();
+		await expect(stop).rejects.toThrow("transport stopped");
+		expect(stopped.activeListeners()).toBe(0);
+	});
+
 	test("does not reuse pending request IDs after replacing an authenticated transport", async () => {
 		const first = new WsTransport({ url: "ws://localhost:7312/ws" });
 		first.connect();

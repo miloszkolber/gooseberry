@@ -68,27 +68,57 @@ func normalizedBrowserOrigin(value string) (string, bool) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return "", false
 	}
-	if port := parsed.Port(); port != "" {
+	port := parsed.Port()
+	if port != "" {
 		number, err := strconv.Atoi(port)
 		if err != nil || number < 1 || number > 65535 {
 			return "", false
 		}
 	}
-	return parsed.Scheme + "://" + strings.ToLower(parsed.Host), true
+	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	host := hostname
+	if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	}
+	return scheme + "://" + host, true
 }
 
 func (a *app) expectedMCPHost(request *http.Request) bool {
-	host := strings.ToLower(request.Host)
 	if a.config.PublicOrigin != "" {
 		public, _ := url.Parse(a.config.PublicOrigin)
-		if host == public.Host {
+		candidate, ok := normalizedBrowserOrigin(public.Scheme + "://" + request.Host)
+		if ok && candidate == a.config.PublicOrigin {
 			return true
 		}
 	}
-	name, port, err := net.SplitHostPort(host)
-	if err != nil || port != strconv.Itoa(a.config.Port) {
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	origin, ok := normalizedBrowserOrigin(scheme + "://" + request.Host)
+	if !ok {
 		return false
 	}
+	parsed, _ := url.Parse(origin)
+	port := parsed.Port()
+	if port == "" {
+		if parsed.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	if port != strconv.Itoa(a.config.Port) {
+		return false
+	}
+	name := parsed.Hostname()
 	bind, candidate := net.ParseIP(a.config.Host), net.ParseIP(name)
 	if a.config.Host == "localhost" || bind.IsLoopback() {
 		return name == "localhost" || candidate.IsLoopback()
@@ -114,7 +144,7 @@ func (a *app) serveMCP(response http.ResponseWriter, request *http.Request) {
 			if request.TLS != nil {
 				scheme = "https"
 			}
-			expected = scheme + "://" + strings.ToLower(request.Host)
+			expected, _ = normalizedBrowserOrigin(scheme + "://" + request.Host)
 		}
 		if len(origins) != 1 || !ok || origin != expected {
 			writeJSON(response, http.StatusForbidden, map[string]any{"outcome": "rejected", "code": "forbidden_origin"}, nil)
