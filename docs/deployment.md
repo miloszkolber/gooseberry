@@ -166,7 +166,7 @@ Run `systemctl --user daemon-reload` and `systemctl --user enable --now goose.se
 
 ## Updates and backups
 
-Back up Goose's configuration/state, the complete `GOOSEBERRY_DATA_PATH` and private environment files. Let active work settle; queued follow-ups are memory-only.
+Back up Goose's configuration/state, the complete `GOOSEBERRY_DATA_PATH` and private environment files after active work settles. Restore Goose and Gooseberry state from the same backup point.
 
 Update Goose independently after checking compatibility. Update the checkout and rebuild images, or pull and recreate the containers. Preserve the existing state paths. Image builds run on relevant pushes and Sundays at 04:37 UTC; deployment updates are manual.
 
