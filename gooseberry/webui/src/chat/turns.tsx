@@ -26,6 +26,7 @@ import type { ChatRow, TurnDividerData } from "./rows";
 import { formatTokens } from "./session-stats-bar";
 import { ToolCard } from "./tool-card";
 import { getToolChrome, getToolRenderer } from "./tool-registry";
+import { McpAppView } from "./tools/apps/mcp-app-view";
 import type { CompactionState } from "./types";
 
 export function ChatTurnView({
@@ -227,17 +228,20 @@ function ToolRow({
 }) {
 	if (getToolChrome(row.toolName) === "bare") {
 		const Renderer = getToolRenderer(row.toolName);
+		const renderProps = {
+			toolCallId: row.toolCallId,
+			toolName: row.toolName,
+			args: row.args,
+			result: row.tool?.raw,
+			app: row.tool?.app,
+			status: row.tool?.status ?? (row.dead ? "error" : "running"),
+			projectAreaRoot,
+			streaming: row.streaming,
+		};
 		return (
-			<div className="tr-text-ui text-text-default">
-				<Renderer
-					toolCallId={row.toolCallId}
-					toolName={row.toolName}
-					args={row.args}
-					result={row.tool?.raw}
-					status={row.tool?.status ?? (row.dead ? "error" : "running")}
-					projectAreaRoot={projectAreaRoot}
-					streaming={row.streaming}
-				/>
+			<div className="flex flex-col items-start gap-sm tr-text-ui text-text-default">
+				<Renderer {...renderProps} />
+				<McpAppView {...renderProps} />
 			</div>
 		);
 	}

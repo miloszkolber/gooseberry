@@ -2,6 +2,7 @@ import type {
 	AssistantMessage,
 	ExtUiRequest,
 	ImageContent,
+	McpAppAttachment,
 	UserMessage,
 } from "@gooseberry/contracts";
 
@@ -44,4 +45,5 @@ export type ToolStatus = "running" | "done" | "error";
 export interface ToolResultState {
 	status: ToolStatus;
 	raw: unknown;
+	app?: McpAppAttachment;
 }
