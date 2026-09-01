@@ -14,13 +14,13 @@ import {
 } from "../store";
 import { useProjectRead } from "../workspace/use-project-read";
 import { ChangeRowActions } from "./change-row-actions";
-import { scopeKey, splitPath, statusNameClass } from "./changes-model";
+import { branchName, scopeKey, splitPath, statusNameClass } from "./changes-model";
 import { ChangesTree } from "./changes-tree";
 import { DiffStatBadge } from "./diff-stat-badge";
 import { GitScopeMenu } from "./git-scope-menu";
 import { openDiffInTab } from "./open-tabs";
 
-const SCOPE: GitDiffScope = { kind: "uncommitted" };
+const UNCOMMITTED_SCOPE: GitDiffScope = { kind: "uncommitted" };
 
 export function ChangesPanel({
 	projectAreaId,
@@ -39,8 +39,7 @@ export function ChangesPanel({
 		repositories.find((repository) => repository.root === selectedRepository) ??
 		repositories[0] ??
 		null;
-	const selectedScope = useAppStore((state) => selectDiffScope(state, projectAreaId));
-	const scope = selectedScope.kind === "branch" ? SCOPE : selectedScope;
+	const scope = useAppStore((state) => selectDiffScope(state, projectAreaId));
 	const setDiffScope = useAppStore((state) => state.setDiffScope);
 	const readKey = tupleKey(projectAreaId, repository?.root ?? "", scopeKey(scope));
 	const [scoped, setScoped] = useState<{
@@ -82,7 +81,8 @@ export function ChangesPanel({
 				)
 					? selectedRepository
 					: (result.repositories[0]?.root ?? null);
-				if (selectedRepository !== null && next !== selectedRepository) setDiffScope(id, SCOPE);
+				if (selectedRepository !== null && next !== selectedRepository)
+					setDiffScope(id, UNCOMMITTED_SCOPE);
 				setSelectedRepository(next);
 				setError(null);
 				warnedRef.current = false;
@@ -145,7 +145,7 @@ export function ChangesPanel({
 		if (changesRequest?.projectAreaId !== projectAreaId) return;
 		if (useAppStore.getState().changesRequest !== changesRequest) return;
 		if (scope.kind !== "uncommitted") {
-			setDiffScope(projectAreaId, SCOPE);
+			setDiffScope(projectAreaId, UNCOMMITTED_SCOPE);
 			return;
 		}
 		if (!status) return;
@@ -175,7 +175,7 @@ export function ChangesPanel({
 							value={repository?.root ?? ""}
 							onChange={(event) => {
 								setSelectedRepository(event.target.value);
-								setDiffScope(projectAreaId, SCOPE);
+								setDiffScope(projectAreaId, UNCOMMITTED_SCOPE);
 							}}
 							className="min-w-0 bg-transparent text-text-muted"
 						>
@@ -189,7 +189,7 @@ export function ChangesPanel({
 						<span className="truncate">
 							{repository
 								? repository.head.kind === "branch"
-									? repository.head.name
+									? branchName(`refs/heads/${repository.head.name}`)
 									: repository.head.kind === "detached"
 										? repository.head.oid.slice(0, 8)
 										: "Unborn repository"
@@ -225,6 +225,7 @@ export function ChangesPanel({
 						key={tupleKey(projectAreaId, repository.root)}
 						projectAreaId={projectAreaId}
 						repository={repository.root}
+						head={repository.head}
 						scope={scope}
 						onSelect={(next) => setDiffScope(projectAreaId, next)}
 					/>
@@ -264,7 +265,9 @@ export function ChangesPanel({
 							? "Working tree is clean."
 							: scope.kind === "commit"
 								? "No file changes in this commit."
-								: "No changes since this commit."}
+								: scope.kind === "branch"
+									? `No committed changes from ${branchName(scope.baseRef)}.`
+									: "No changes since this commit."}
 					</p>
 				) : changesView === "tree" ? (
 					<ChangesTree changes={status.changes} onOpen={openDiff} isActive={isActive} />

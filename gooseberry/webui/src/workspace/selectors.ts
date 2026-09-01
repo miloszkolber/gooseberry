@@ -109,24 +109,22 @@ export function selectProjectAreaSessionIds(
 	return [...sessionIds];
 }
 
-export const BRANCH_SCOPE: GitDiffScope = { kind: "branch" };
+export const UNCOMMITTED_SCOPE: GitDiffScope = { kind: "uncommitted" };
 
 export function selectDiffScope(
 	state: { diffScopeByProjectArea: Record<string, GitDiffScope> },
 	projectAreaId: string,
 ): GitDiffScope {
-	return state.diffScopeByProjectArea[projectAreaId] ?? BRANCH_SCOPE;
-}
-
-export function selectDiffBaseRef(state: ActiveProjectAreaState, projectAreaId: string): string {
-	return selectProjectAreaById(state, projectAreaId) ? "HEAD" : "";
+	return state.diffScopeByProjectArea[projectAreaId] ?? UNCOMMITTED_SCOPE;
 }
 
 export function selectDiffTabTargetRef(
 	state: ActiveProjectAreaState,
 	tab: { projectAreaId: string; scope: GitDiffScope },
 ): string {
-	return tab.scope.kind === "branch" ? selectDiffBaseRef(state, tab.projectAreaId) : "";
+	return tab.scope.kind === "branch" && selectProjectAreaById(state, tab.projectAreaId)
+		? tab.scope.baseRef
+		: "";
 }
 
 export function matchesChangePath(reported: string, rel: string): boolean {

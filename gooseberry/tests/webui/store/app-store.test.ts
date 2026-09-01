@@ -79,7 +79,27 @@ test("content identity keeps same-path files and diffs isolated by their owning 
 		},
 		"keep",
 	);
-	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(4);
+	for (const [id, baseRef] of [
+		["diff-main", "refs/heads/main"],
+		["diff-release", "refs/heads/release"],
+	] as const) {
+		state.openTab(
+			{
+				kind: "diff",
+				id,
+				projectAreaId: "p1",
+				repository: "/tmp/project/repo",
+				name: "file.ts",
+				path: "src/file.ts",
+				scope: { kind: "branch", baseRef },
+				loadedTarget: baseRef,
+				original: "before",
+				modified: "after",
+			},
+			"keep",
+		);
+	}
+	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(6);
 });
 
 beforeEach(() => {
