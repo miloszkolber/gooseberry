@@ -142,9 +142,19 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 	if m.closed {
 		entry = nil
 	}
+	retainUntilScheduled := entry != nil && kind == "status_message" && terminalStatusKind(textValue(mapValue(update["status"])["type"]))
+	if retainUntilScheduled {
+		// A terminal notification wakes durable queued work after releasing the
+		// projection lock. Keep the projection alive across that handoff so lease
+		// reconciliation cannot evict it before scheduler admission.
+		entry.refs++
+	}
 	m.mu.Unlock()
 	if entry == nil {
 		return nil
+	}
+	if retainUntilScheduled {
+		defer m.releaseEntry(entry)
 	}
 	entry.state.Lock()
 	target := entry
@@ -160,17 +170,22 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 		return nil
 	}
 	events := applySessionUpdate(target, kind, update, gooseOnly)
+	wakeQueue := false
 	if publish {
 		for _, event := range events {
 			if event["type"] == "message_start" {
 				event["message"] = cloneJSON(event["message"])
 			}
+			wakeQueue = wakeQueue || event["type"] == "complete" || event["type"] == "error"
 		}
 		for _, event := range events {
 			m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": event})
 		}
 	}
 	entry.state.Unlock()
+	if wakeQueue {
+		m.scheduleFollowUp(sessionID, entry)
+	}
 	return nil
 }
 
@@ -527,18 +542,30 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 		status := mapValue(update["status"])
 		kind := textValue(status["type"])
 		message := textValue(status["message"])
-		if strings.Contains(strings.ToLower(kind), "error") || strings.Contains(strings.ToLower(kind), "fail") {
+		// Goose may publish a terminal status before session/prompt returns.
+		// Keep the browser busy until that RPC supplies the authoritative result;
+		// otherwise a second optimistic prompt can be admitted and then rejected.
+		if entry.promptActive {
+			return nil
+		}
+		lowerKind := strings.ToLower(kind)
+		if strings.Contains(lowerKind, "error") || strings.Contains(lowerKind, "fail") {
 			entry.streaming = false
 			entry.settlement = &SessionSettlement{StopReason: "error", ErrorMessage: message}
 			return []map[string]any{{"type": "error", "error": message}}
 		}
-		if strings.Contains(strings.ToLower(kind), "complete") || strings.Contains(strings.ToLower(kind), "idle") || strings.Contains(strings.ToLower(kind), "done") || strings.Contains(strings.ToLower(kind), "cancel") {
+		if terminalStatusKind(lowerKind) {
 			entry.streaming = false
 			entry.settlement = &SessionSettlement{StopReason: kind}
 			return []map[string]any{{"type": "complete", "status": kind}}
 		}
 	}
 	return nil
+}
+
+func terminalStatusKind(kind string) bool {
+	kind = strings.ToLower(kind)
+	return strings.Contains(kind, "error") || strings.Contains(kind, "fail") || strings.Contains(kind, "complete") || strings.Contains(kind, "idle") || strings.Contains(kind, "done") || strings.Contains(kind, "cancel")
 }
 
 func appendMessageBlock(entry *sessionEntry, role string, block map[string]any) {
@@ -606,6 +633,7 @@ func consumeEchoText(entry *sessionEntry, text string) bool {
 	}
 	echo.offset += len(text)
 	if echoComplete(echo) {
+		entry.promptAcknowledged = true
 		entry.pendingEcho = nil
 	}
 	return true
@@ -620,6 +648,7 @@ func consumeEchoImage(entry *sessionEntry, image map[string]any) bool {
 		if !echo.matched[index] && expected["data"] == image["data"] && expected["mimeType"] == image["mimeType"] {
 			echo.matched[index] = true
 			if echoComplete(echo) {
+				entry.promptAcknowledged = true
 				entry.pendingEcho = nil
 			}
 			return true

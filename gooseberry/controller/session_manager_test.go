@@ -378,7 +378,7 @@ func TestMCPAppProjectionRequiresTrustedGooseAttachment(t *testing.T) {
 func TestQueueRevisionRejectsStaleAndConcurrentMutations(t *testing.T) {
 	manager := &SessionManager{sessions: map[string]*sessionEntry{}, now: time.Now}
 	entry := newSessionEntry("session", "project", "/project", "", "token")
-	entry.queue.FollowUp = []string{"same", "same"}
+	entry.queue.FollowUp = []queuedFollowUp{{ID: randomID(), Text: "same"}, {ID: randomID(), Text: "same"}}
 	manager.sessions["session"] = entry
 	handler := CoreHandler{Sessions: manager}
 	for _, method := range []string{"session.queueEdit", "session.queueRemove"} {
@@ -387,21 +387,21 @@ func TestQueueRevisionRejectsStaleAndConcurrentMutations(t *testing.T) {
 			t.Fatalf("old client did not receive a reload instruction: %v", err)
 		}
 	}
-	if len(entry.queue.FollowUp) != 2 || entry.queue.FollowUp[0] != "same" {
+	if len(entry.queue.FollowUp) != 2 || entry.queue.FollowUp[0].Text != "same" {
 		t.Fatal("a request without a revision changed the queue")
 	}
 	original := entry.queue.Revision
-	if err := manager.RemoveQueue("session", "followUp", 0, original); err != nil {
+	if err := manager.RemoveQueue(context.Background(), "session", "followUp", 0, original); err != nil {
 		t.Fatal(err)
 	}
 	if entry.queue.Revision == original || len(entry.queue.FollowUp) != 1 {
 		t.Fatal("removing an entry did not advance the queue revision")
 	}
 	// Index and text match again, but this is a different queued message.
-	if err := manager.EditQueue("session", "followUp", 0, "stale edit", original); err == nil {
+	if err := manager.EditQueue(context.Background(), "session", "followUp", 0, "stale edit", original); err == nil {
 		t.Fatal("a stale edit replaced the next identical message")
 	}
-	if err := manager.RemoveQueue("session", "followUp", 0, original); err == nil {
+	if err := manager.RemoveQueue(context.Background(), "session", "followUp", 0, original); err == nil {
 		t.Fatal("a stale removal deleted the next identical message")
 	}
 	revision := entry.queue.Revision
@@ -410,7 +410,7 @@ func TestQueueRevisionRejectsStaleAndConcurrentMutations(t *testing.T) {
 	for _, text := range []string{"first edit", "second edit"} {
 		go func() {
 			<-start
-			results <- manager.EditQueue("session", "followUp", 0, text, revision)
+			results <- manager.EditQueue(context.Background(), "session", "followUp", 0, text, revision)
 		}()
 	}
 	close(start)
@@ -458,7 +458,7 @@ func TestPromptImagesAndQuestionRepliesRejectMalformedBoundaries(t *testing.T) {
 	}
 	manager := &SessionManager{sessions: map[string]*sessionEntry{}, now: time.Now}
 	entry := newSessionEntry("session", "project", "/project", "", "token")
-	entry.queue.FollowUp = []string{"Keep this queued message"}
+	entry.queue.FollowUp = []queuedFollowUp{{ID: randomID(), Text: "Keep this queued message"}}
 	manager.sessions["session"] = entry
 	handler := CoreHandler{Sessions: manager}
 	for _, malformed := range []string{
@@ -493,7 +493,7 @@ func TestPromptImagesAndQuestionRepliesRejectMalformedBoundaries(t *testing.T) {
 	if err := manager.ResolvePermission("session", "permission", ""); err == nil || len(manager.PendingPermissions()) != 0 {
 		t.Fatal("permission accepted a second reply or remained in reconnect snapshot")
 	}
-	manager.cancelAll(context.Background())
+	manager.shutdown(context.Background())
 	if _, err := manager.entry("session"); err == nil {
 		t.Fatal("shutdown admitted a new session operation")
 	}

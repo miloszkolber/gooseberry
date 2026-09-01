@@ -542,7 +542,12 @@ test("session hydration restores controller queues and question replies", () => 
 			live: true,
 			archived: false,
 			parentSessionId: "parent-session",
-			queue: { revision: "loaded", steering: [], followUp: ["continue after refresh"] },
+			queue: {
+				revision: "loaded",
+				steering: [],
+				followUp: ["continue after refresh"],
+				blocked: { lane: "followUp", index: 0, reason: "delivery-uncertain" },
+			},
 		},
 		{ turns: [], toolResults: {}, askAnswers: {}, turnIdByMessageIndex: [] },
 	);
@@ -550,6 +555,7 @@ test("session hydration restores controller queues and question replies", () => 
 	useAppStore.getState().setAskAnswer("s1", "question-1", result);
 	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual(["continue after refresh"]);
 	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("loaded");
+	expect(useAppStore.getState().sessions.s1?.queue.blocked?.reason).toBe("delivery-uncertain");
 	useAppStore.getState().handleAgentEvent(
 		{
 			type: "queue_update",
@@ -560,6 +566,7 @@ test("session hydration restores controller queues and question replies", () => 
 		"s1",
 	);
 	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("changed");
+	expect(useAppStore.getState().sessions.s1?.queue.blocked).toBeUndefined();
 	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
 	expect(useAppStore.getState().sessions.s1?.askAnswers["question-1"]).toEqual(result);
 	useAppStore.getState().reconcileProjectAreaSessions(

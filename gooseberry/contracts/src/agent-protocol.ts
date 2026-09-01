@@ -313,6 +313,7 @@ export interface SessionQueueState {
 	revision?: string;
 	steering: readonly string[];
 	followUp: readonly string[];
+	blocked?: { lane: QueueLane; index: number; reason: "delivery-uncertain" };
 }
 
 export type ExtUiRequest =
