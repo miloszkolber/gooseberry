@@ -13,6 +13,7 @@ import (
 type GooseAdmin struct {
 	client           *GooseClient
 	settings         *Settings
+	publish          func(string, any)
 	canonicalSlots   chan struct{}
 	canonicalMu      sync.Mutex
 	canonicalFlights map[canonicalKey]*canonicalFlight

@@ -91,6 +91,7 @@ test("slash completion options retain listbox selection semantics", () => {
 	const command: SlashCommandInfo = {
 		name: "review",
 		description: "Review the change",
+		inputHint: "optional focus",
 		source: "goose",
 		sourceInfo: { path: "builtin", source: "goose", scope: "user", origin: "top-level" },
 	};
@@ -101,4 +102,5 @@ test("slash completion options retain listbox selection semantics", () => {
 	expect(markup).toContain('id="slash-option-0"');
 	expect(markup).toContain('role="option"');
 	expect(markup).toContain('aria-selected="true"');
+	expect(markup).toContain("/review optional focus");
 });

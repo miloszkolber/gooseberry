@@ -84,6 +84,9 @@ export function initTransport(): WsTransport {
 	transport.subscribe(WS_CHANNELS.projectFsChanged, (data) => {
 		useAppStore.getState().noteFsChanged(data as ProjectFsChangedPayload);
 	});
+	transport.subscribe(WS_CHANNELS.commandCatalogChanged, () => {
+		useAppStore.getState().noteCommandCatalogChanged();
+	});
 
 	transport.subscribe(WS_CHANNELS.settingsChanged, (data) => {
 		useAppStore.getState().applyConfig(data as AppConfig);
