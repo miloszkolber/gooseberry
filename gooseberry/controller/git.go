@@ -36,6 +36,7 @@ type GitRepository struct {
 	RelativePath string          `json:"relativePath"`
 	Name         string          `json:"name"`
 	Head         GitHead         `json:"head"`
+	ComparisonID string          `json:"comparisonId,omitempty"`
 	Clean        bool            `json:"clean"`
 	Changes      []GitFileChange `json:"changes"`
 }
@@ -149,7 +150,7 @@ func (g *Git) sharedStatus(ctx context.Context, project Project, repository stri
 	if err := ctx.Err(); err != nil {
 		return GitRepository{}, err
 	}
-	if scope.Kind == "" || scope.Kind == "branch" {
+	if scope.Kind == "" {
 		scope = GitDiffScope{Kind: "uncommitted"}
 	}
 	key := project.ID + "\x00" + repository + "\x00" + scope.Kind + "\x00" + scope.SHA + "\x00" + scope.BaseRef
@@ -330,12 +331,12 @@ func (g *Git) repositoryFor(ctx context.Context, projectID, requested string) (P
 }
 
 func (g *Git) projectRepository(ctx context.Context, project Project, repository string, scope GitDiffScope) (GitRepository, error) {
-	changes, err := g.changes(ctx, repository, scope)
+	changes, comparisonID, err := g.changes(ctx, repository, scope)
 	if err != nil {
 		return GitRepository{}, err
 	}
 	digest := sha256.Sum256([]byte(repository))
-	return GitRepository{ID: hex.EncodeToString(digest[:])[:24], Root: repository, RelativePath: projectRelativePath(project, repository), Name: filepath.Base(repository), Head: gitHead(ctx, repository), Clean: len(changes) == 0, Changes: changes}, nil
+	return GitRepository{ID: hex.EncodeToString(digest[:])[:24], Root: repository, RelativePath: projectRelativePath(project, repository), Name: filepath.Base(repository), Head: gitHead(ctx, repository), ComparisonID: comparisonID, Clean: len(changes) == 0, Changes: changes}, nil
 }
 
 func gitHead(ctx context.Context, repository string) GitHead {
@@ -343,9 +344,10 @@ func gitHead(ctx context.Context, repository string) GitHead {
 	if oid == "" {
 		return GitHead{Kind: "unborn"}
 	}
-	branch := runGit(ctx, repository, []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, gitOutputLimit)
-	if branch.ok && strings.TrimSpace(branch.out) != "" {
-		return GitHead{Kind: "branch", Name: strings.TrimSpace(branch.out)}
+	branch := runGit(ctx, repository, []string{"symbolic-ref", "--quiet", "HEAD"}, gitOutputLimit)
+	ref := strings.TrimSpace(branch.out)
+	if branch.ok && strings.HasPrefix(ref, "refs/heads/") && len(ref) > len("refs/heads/") {
+		return GitHead{Kind: "branch", Name: strings.TrimPrefix(ref, "refs/heads/")}
 	}
 	return GitHead{Kind: "detached", OID: oid}
 }

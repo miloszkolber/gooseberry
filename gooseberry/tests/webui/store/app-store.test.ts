@@ -7,6 +7,7 @@ import {
 	reduceSessionEvent,
 	useAppStore,
 } from "@/store/app-store";
+import { selectDiffTabTargetRef } from "@/workspace/selectors";
 
 const project: Project = {
 	id: "p1",
@@ -79,7 +80,73 @@ test("content identity keeps same-path files and diffs isolated by their owning 
 		},
 		"keep",
 	);
-	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(4);
+	for (const [id, baseRef] of [
+		["diff-main", "refs/heads/main"],
+		["diff-release", "refs/heads/release"],
+	] as const) {
+		state.openTab(
+			{
+				kind: "diff",
+				id,
+				projectAreaId: "p1",
+				repository: "/tmp/project/repo",
+				name: "file.ts",
+				path: "src/file.ts",
+				scope: { kind: "branch", baseRef },
+				loadedTarget: baseRef,
+				original: "before",
+				modified: "after",
+			},
+			"keep",
+		);
+	}
+	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(6);
+});
+
+test("branch diff content follows the resolved comparison instead of the branch label", () => {
+	const state = useAppStore.getState();
+	const scope = { kind: "branch", baseRef: "refs/heads/main" } as const;
+	const first = `${"a".repeat(40)}..${"b".repeat(40)}`;
+	const second = `${"a".repeat(40)}..${"c".repeat(40)}`;
+	state.openTab(
+		{
+			kind: "diff",
+			id: "branch-diff",
+			projectAreaId: "p1",
+			repository: "/tmp/project/repo",
+			name: "file.ts",
+			path: "src/file.ts",
+			scope,
+			loadedTarget: first,
+			targetComparison: first,
+			original: "before",
+			modified: "first",
+		},
+		"keep",
+	);
+
+	state.noteDiffComparison("p1", "/tmp/project/repo", scope, second);
+	let tab = useAppStore
+		.getState()
+		.tabsByProjectArea.p1?.find((candidate) => candidate.id === "branch-diff");
+	expect(tab?.kind).toBe("diff");
+	if (tab?.kind !== "diff") throw new Error("missing branch diff tab");
+	expect(tab.loadedTarget).toBe(first);
+	expect(selectDiffTabTargetRef(useAppStore.getState(), tab)).toBe(second);
+
+	state.updateDiffTabContent(
+		"p1",
+		"branch-diff",
+		{ original: "before", modified: "second", comparisonId: second },
+		1,
+		second,
+	);
+	tab = useAppStore
+		.getState()
+		.tabsByProjectArea.p1?.find((candidate) => candidate.id === "branch-diff");
+	expect(tab?.kind === "diff" ? tab.modified : null).toBe("second");
+	expect(tab?.kind === "diff" ? tab.loadedTarget : null).toBe(second);
+	expect(tab?.kind === "diff" ? tab.targetComparison : null).toBe(second);
 });
 
 beforeEach(() => {

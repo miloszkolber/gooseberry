@@ -14,7 +14,10 @@ import (
 	"unicode"
 )
 
-const gitPreviewMaxBytes = 1024 * 1024
+const (
+	gitPreviewMaxBytes = 1024 * 1024
+	gitBranchLimit     = 200
+)
 
 var gitOIDPattern = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
 
@@ -24,10 +27,21 @@ type GitDiffScope struct {
 	BaseRef string `json:"baseRef,omitempty"`
 }
 
+type GitBranch struct {
+	Ref  string `json:"ref"`
+	Name string `json:"name"`
+}
+
+type GitBranchList struct {
+	Branches  []GitBranch `json:"branches"`
+	Truncated bool        `json:"truncated"`
+}
+
 type GitDiffFile struct {
 	Original     string `json:"original"`
 	Modified     string `json:"modified"`
 	OriginalPath string `json:"originalPath,omitempty"`
+	ComparisonID string `json:"comparisonId,omitempty"`
 	Unavailable  bool   `json:"unavailable,omitempty"`
 	Binary       bool   `json:"binary,omitempty"`
 	TooLarge     bool   `json:"tooLarge,omitempty"`
@@ -43,11 +57,12 @@ type GitCommit struct {
 }
 
 type diffRange struct {
-	prefix      []string
-	revisions   []string
-	untracked   bool
-	originalRef string
-	modifiedRef string
+	prefix       []string
+	revisions    []string
+	untracked    bool
+	originalRef  string
+	modifiedRef  string
+	comparisonID string
 }
 
 func resolveCommit(ctx context.Context, repository, ref string) string {
@@ -58,13 +73,127 @@ func resolveCommit(ctx context.Context, repository, ref string) string {
 	return strings.TrimSpace(result.out)
 }
 
+func unbornHead(ctx context.Context, repository string) bool {
+	head := runGit(ctx, repository, []string{"symbolic-ref", "--quiet", "HEAD"}, gitOutputLimit)
+	ref := strings.TrimSpace(head.out)
+	if !head.ok || !strings.HasPrefix(ref, "refs/heads/") {
+		return false
+	}
+	refs := runGit(ctx, repository, []string{"for-each-ref", "--format=%(refname)", "--", ref}, gitOutputLimit)
+	if !refs.ok {
+		return false
+	}
+	for _, candidate := range strings.Split(strings.TrimSpace(refs.out), "\n") {
+		if candidate == ref {
+			return false
+		}
+	}
+	return true
+}
+
+func branchRef(ref string) bool {
+	if len(ref) > 1024 || strings.ContainsRune(ref, '\x00') {
+		return false
+	}
+	for _, prefix := range []string{"refs/heads/", "refs/remotes/"} {
+		if strings.HasPrefix(ref, prefix) && len(ref) > len(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func branchDisplayName(ref string) string {
+	for _, prefix := range []string{"refs/heads/", "refs/remotes/"} {
+		if strings.HasPrefix(ref, prefix) {
+			return plainGitText(strings.TrimPrefix(ref, prefix))
+		}
+	}
+	return plainGitText(ref)
+}
+
+func resolveBranchRef(ctx context.Context, repository, ref string) (string, error) {
+	if !branchRef(ref) {
+		return "", &codedError{code: "UNKNOWN_BRANCH", message: "Unknown branch reference"}
+	}
+	result := runGit(ctx, repository, []string{
+		"for-each-ref",
+		"--count=2",
+		"--sort=refname",
+		"--format=%(refname)%00%(symref)%00%(objectname)%00%(objecttype)",
+		"--",
+		ref,
+	}, gitOutputLimit)
+	if !result.ok {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("could not resolve branch reference")
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(result.out, "\n"), "\n") {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 4 || fields[0] != ref {
+			continue
+		}
+		if fields[1] != "" {
+			return "", &codedError{code: "SYMBOLIC_BRANCH", message: "Symbolic branch references cannot be compared"}
+		}
+		if fields[3] != "commit" || !fullGitOID(fields[2]) {
+			return "", &codedError{code: "UNKNOWN_BRANCH", message: "Branch reference does not resolve to a commit"}
+		}
+		return fields[2], nil
+	}
+	return "", &codedError{code: "UNKNOWN_BRANCH", message: "Unknown branch reference"}
+}
+
+func fullGitOID(value string) bool {
+	return (len(value) == 40 || len(value) == 64) && gitOIDPattern.MatchString(value)
+}
+
 func resolveDiffRange(ctx context.Context, repository string, scope GitDiffScope) (diffRange, error) {
-	if scope.Kind == "" || scope.Kind == "uncommitted" || scope.Kind == "branch" {
+	if scope.Kind == "" || scope.Kind == "uncommitted" {
 		head := resolveCommit(ctx, repository, "HEAD")
 		if head == "" {
-			return diffRange{prefix: []string{"diff", "--cached"}, untracked: true}, nil
+			if err := ctx.Err(); err != nil {
+				return diffRange{}, err
+			}
+			if unbornHead(ctx, repository) {
+				return diffRange{prefix: []string{"diff", "--cached"}, untracked: true}, nil
+			}
+			return diffRange{}, fmt.Errorf("could not resolve Git HEAD")
 		}
 		return diffRange{prefix: []string{"diff"}, revisions: []string{head}, untracked: true, originalRef: head}, nil
+	}
+	if scope.Kind == "branch" {
+		head := resolveCommit(ctx, repository, "HEAD")
+		if head == "" {
+			if err := ctx.Err(); err != nil {
+				return diffRange{}, err
+			}
+			if unbornHead(ctx, repository) {
+				return diffRange{}, &codedError{code: "UNBORN_HEAD", message: "Cannot compare branches before HEAD has a commit"}
+			}
+			return diffRange{}, fmt.Errorf("could not resolve Git HEAD")
+		}
+		base, err := resolveBranchRef(ctx, repository, scope.BaseRef)
+		if err != nil {
+			return diffRange{}, err
+		}
+		merged := runGit(ctx, repository, []string{"merge-base", "--end-of-options", base, head}, gitOutputLimit)
+		mergeBase := strings.TrimSpace(merged.out)
+		if !merged.ok {
+			if err := ctx.Err(); err != nil {
+				return diffRange{}, err
+			}
+			if merged.failure != "" || merged.err != "" {
+				return diffRange{}, fmt.Errorf("could not compare branches")
+			}
+			return diffRange{}, &codedError{code: "NO_MERGE_BASE", message: "The selected branch and HEAD have no common commit"}
+		}
+		if !fullGitOID(mergeBase) {
+			return diffRange{}, fmt.Errorf("could not compare branches")
+		}
+		return diffRange{prefix: []string{"diff"}, revisions: []string{mergeBase, head}, originalRef: mergeBase, modifiedRef: head, comparisonID: mergeBase + ".." + head}, nil
 	}
 	requested := scope.SHA
 	if scope.Kind == "pinned" {
@@ -101,22 +230,22 @@ func changedArgs(value diffRange, mode string) []string {
 	return append(args, "--")
 }
 
-func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope) ([]GitFileChange, error) {
+func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope) ([]GitFileChange, string, error) {
 	rangeValue, err := resolveDiffRange(ctx, repository, scope)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	countsResult := runGit(ctx, repository, changedArgs(rangeValue, "--numstat"), gitOutputLimit)
 	tracked := runGit(ctx, repository, changedArgs(rangeValue, "--name-status"), gitOutputLimit)
 	if !countsResult.ok || !tracked.ok {
-		return nil, fmt.Errorf("could not read changed files")
+		return nil, "", fmt.Errorf("could not read changed files")
 	}
 	counts := parseNumstat(countsResult.out)
 	result := parseNameStatus(tracked.out, counts)
 	if rangeValue.untracked {
 		untracked := runGit(ctx, repository, []string{"ls-files", "-z", "--others", "--exclude-standard"}, gitOutputLimit)
 		if !untracked.ok {
-			return nil, fmt.Errorf("could not read untracked files: %s", untracked.err)
+			return nil, "", fmt.Errorf("could not read untracked files: %s", untracked.err)
 		}
 		counted := 0
 		for _, name := range strings.Split(untracked.out, "\x00") {
@@ -142,7 +271,7 @@ func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
-	return result, nil
+	return result, rangeValue.comparisonID, nil
 }
 
 func parseNumstat(output string) map[string][2]int {
@@ -250,7 +379,7 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 		// alone would make Git report it as an added file.
 		changed := runGit(ctx, admitted, changedArgs(rangeValue, "--name-status"), gitOutputLimit)
 		if !changed.ok {
-			return unavailableDiff(filePreview{issue: "unavailable"}, ""), nil
+			return unavailableDiff(filePreview{issue: "unavailable"}, "", rangeValue.comparisonID), nil
 		}
 		for _, change := range parseNameStatus(changed.out, nil) {
 			if change.Path == name && change.OriginalPath != "" {
@@ -268,7 +397,7 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 		original = readBlobPreview(ctx, admitted, rangeValue.originalRef, originalName)
 	}
 	if original.issue != "" && original.issue != "missing" {
-		return unavailableDiff(original, originalPath), nil
+		return unavailableDiff(original, originalPath, rangeValue.comparisonID), nil
 	}
 	modified := filePreview{}
 	if rangeValue.modifiedRef != "" {
@@ -278,14 +407,14 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 	}
 	if modified.issue == "missing" {
 		if original.issue == "missing" {
-			return unavailableDiff(modified, originalPath), nil
+			return unavailableDiff(modified, originalPath, rangeValue.comparisonID), nil
 		}
-		return GitDiffFile{Original: original.content, OriginalPath: originalPath}, nil
+		return GitDiffFile{Original: original.content, OriginalPath: originalPath, ComparisonID: rangeValue.comparisonID}, nil
 	}
 	if modified.issue != "" {
-		return unavailableDiff(modified, originalPath), nil
+		return unavailableDiff(modified, originalPath, rangeValue.comparisonID), nil
 	}
-	return GitDiffFile{Original: original.content, Modified: modified.content, OriginalPath: originalPath}, nil
+	return GitDiffFile{Original: original.content, Modified: modified.content, OriginalPath: originalPath, ComparisonID: rangeValue.comparisonID}, nil
 }
 
 func (g *Git) ListCommits(ctx context.Context, projectID, repository string) (map[string]any, error) {
@@ -299,14 +428,9 @@ func (g *Git) ListCommits(ctx context.Context, projectID, repository string) (ma
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// An unborn branch has a symbolic HEAD but no branch ref. A broken
-		// repository, rejected command or output limit is not an empty history.
-		head := runGit(ctx, admitted, []string{"symbolic-ref", "--quiet", "HEAD"}, gitOutputLimit)
-		if head.ok && strings.HasPrefix(strings.TrimSpace(head.out), "refs/heads/") {
-			refs := runGit(ctx, admitted, []string{"for-each-ref", "--format=%(refname)", "--", strings.TrimSpace(head.out)}, gitOutputLimit)
-			if refs.ok && strings.TrimSpace(refs.out) == "" {
-				return map[string]any{"commits": commits}, nil
-			}
+		// A broken repository, rejected command or output limit is not an empty history.
+		if unbornHead(ctx, admitted) {
+			return map[string]any{"commits": commits}, nil
 		}
 		return nil, &codedError{code: "GIT_LOG_UNAVAILABLE", message: "Could not read commit history"}
 	}
@@ -317,6 +441,45 @@ func (g *Git) ListCommits(ctx context.Context, projectID, repository string) (ma
 		}
 	}
 	return map[string]any{"commits": commits}, nil
+}
+
+func (g *Git) ListBranches(ctx context.Context, projectID, repository string) (GitBranchList, error) {
+	_, admitted, err := g.repositoryFor(ctx, projectID, repository)
+	if err != nil {
+		return GitBranchList{}, err
+	}
+	result := runGit(ctx, admitted, []string{
+		"for-each-ref",
+		fmt.Sprintf("--count=%d", gitBranchLimit+1),
+		"--sort=refname",
+		"--format=%(refname)%00%(symref)%00%(objecttype)",
+		"--",
+		"refs/heads",
+		"refs/remotes",
+	}, gitOutputLimit)
+	if !result.ok {
+		if err := ctx.Err(); err != nil {
+			return GitBranchList{}, err
+		}
+		return GitBranchList{}, &codedError{code: "GIT_BRANCHES_UNAVAILABLE", message: "Could not read branches"}
+	}
+	listed := GitBranchList{Branches: []GitBranch{}}
+	records := strings.Split(strings.TrimSuffix(result.out, "\n"), "\n")
+	if len(records) > gitBranchLimit {
+		listed.Truncated = true
+	}
+	for _, line := range records {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 3 || !branchRef(fields[0]) || fields[1] != "" || fields[2] != "commit" {
+			continue
+		}
+		if len(listed.Branches) == gitBranchLimit {
+			listed.Truncated = true
+			break
+		}
+		listed.Branches = append(listed.Branches, GitBranch{Ref: fields[0], Name: branchDisplayName(fields[0])})
+	}
+	return listed, nil
 }
 
 type filePreview struct {
@@ -396,8 +559,8 @@ func readBlobPreview(ctx context.Context, repository, ref, name string) filePrev
 	return filePreview{content: shown.out}
 }
 
-func unavailableDiff(preview filePreview, originalPath string) GitDiffFile {
-	result := GitDiffFile{Unavailable: true, OriginalPath: originalPath}
+func unavailableDiff(preview filePreview, originalPath, comparisonID string) GitDiffFile {
+	result := GitDiffFile{Unavailable: true, OriginalPath: originalPath, ComparisonID: comparisonID}
 	switch preview.issue {
 	case "binary":
 		result.Binary, result.Message = true, "Binary files cannot be previewed"

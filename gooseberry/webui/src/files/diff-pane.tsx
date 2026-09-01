@@ -27,7 +27,13 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 			applyFresh: (preview, tick) =>
 				useAppStore
 					.getState()
-					.updateDiffTabContent(tab.projectAreaId, tab.id, preview, tick, targetRef),
+					.updateDiffTabContent(
+						tab.projectAreaId,
+						tab.id,
+						preview,
+						tick,
+						preview.comparisonId ?? targetRef,
+					),
 			keepCurrent: (tick) =>
 				useAppStore
 					.getState()

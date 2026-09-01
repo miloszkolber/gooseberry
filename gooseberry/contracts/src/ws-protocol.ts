@@ -21,6 +21,7 @@ import type {
 	AppConfigPatch,
 	DirectoryListing,
 	FileListing,
+	GitBranchRef,
 	GitCommit,
 	GitDiffFile,
 	GitDiffScope,
@@ -48,7 +49,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 71;
+export const PROTOCOL_VERSION = 72;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -90,6 +91,7 @@ export const WS_METHODS = {
 	fsReadFile: "fs.readFile",
 	gitStatus: "git.status",
 	gitDiffFile: "git.diffFile",
+	gitListBranches: "git.listBranches",
 	gitListCommits: "git.listCommits",
 	directoryList: "directory.list",
 	skillList: "skill.list",
@@ -229,6 +231,10 @@ export interface WsMethodMap {
 	"git.diffFile": {
 		params: { projectId: string; repository: string; path: string; scope?: GitDiffScope };
 		result: GitDiffFile;
+	};
+	"git.listBranches": {
+		params: { projectId: string; repository: string };
+		result: { branches: GitBranchRef[]; truncated: boolean };
 	};
 	"git.listCommits": {
 		params: { projectId: string; repository: string };
@@ -537,7 +543,13 @@ export interface WsResume {
 
 export type WsClientMessage = WsRequest | WsAck | WsResume;
 
-export type WsErrorCode = "UNKNOWN_COMMIT";
+export type WsErrorCode =
+	| "UNKNOWN_COMMIT"
+	| "UNKNOWN_BRANCH"
+	| "SYMBOLIC_BRANCH"
+	| "UNBORN_HEAD"
+	| "NO_MERGE_BASE"
+	| "GIT_BRANCHES_UNAVAILABLE";
 
 export interface WsResponse {
 	id: string;

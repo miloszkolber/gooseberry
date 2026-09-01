@@ -44,6 +44,20 @@ test("session fork is a typed project-scoped WebSocket method", () => {
 	expect(params).toEqual({ projectId: "project", sessionId: "source" });
 });
 
+test("Git branch comparisons use an explicit typed base", () => {
+	const params: WsParams<"git.listBranches"> = {
+		projectId: "project",
+		repository: "/project",
+	};
+	const result: WsResult<"git.listBranches"> = {
+		branches: [{ ref: "refs/heads/main", name: "main" }],
+		truncated: false,
+	};
+	expect(WS_METHODS.gitListBranches).toBe("git.listBranches");
+	expect(params.repository).toBe("/project");
+	expect(result.branches[0]?.ref).toBe("refs/heads/main");
+});
+
 test("extension and tool administration methods expose only browser-safe typed inputs and results", () => {
 	const add: WsParams<"goose.extensionAdd"> = { name: "developer", enabled: true };
 	const permission: WsParams<"session.toolPermissionSet"> = {
@@ -59,7 +73,7 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(71);
+	expect(PROTOCOL_VERSION).toBe(72);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");

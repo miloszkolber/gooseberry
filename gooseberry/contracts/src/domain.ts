@@ -202,6 +202,7 @@ export interface GitRepository {
 	head: GitHead;
 	clean: boolean;
 	changes: GitFileChange[];
+	comparisonId?: string;
 }
 
 export interface GitRepositoryList {
@@ -210,8 +211,13 @@ export interface GitRepositoryList {
 	warnings: string[];
 }
 
+export interface GitBranchRef {
+	ref: string;
+	name: string;
+}
+
 export type GitDiffScope =
-	| { kind: "branch" }
+	| { kind: "branch"; baseRef: string }
 	| { kind: "uncommitted" }
 	| { kind: "commit"; sha: string }
 	| { kind: "pinned"; baseRef: string };
@@ -221,6 +227,7 @@ export interface GitDiffFile {
 	original: string;
 	modified: string;
 	originalPath?: string;
+	comparisonId?: string;
 	unavailable?: true;
 	binary?: true;
 	tooLarge?: true;

@@ -17,9 +17,33 @@ export function statusNameClass(status: GitFileStatus): string {
 }
 
 export function scopeKey(scope: GitDiffScope): string {
+	if (scope.kind === "branch") return `branch:${scope.baseRef}`;
 	if (scope.kind === "commit") return `commit:${scope.sha}`;
 	if (scope.kind === "pinned") return `pinned:${scope.baseRef}`;
 	return scope.kind;
+}
+
+export function branchName(ref: string): string {
+	let value = ref;
+	for (const prefix of ["refs/heads/", "refs/remotes/"]) {
+		if (value.startsWith(prefix)) {
+			value = value.slice(prefix.length);
+			break;
+		}
+	}
+	return Array.from(value, (character) => {
+		const code = character.codePointAt(0) ?? 0;
+		const unsafe =
+			code <= 0x1f ||
+			(code >= 0x7f && code <= 0x9f) ||
+			code === 0xad ||
+			code === 0x61c ||
+			(code >= 0x200b && code <= 0x200f) ||
+			(code >= 0x202a && code <= 0x202e) ||
+			(code >= 0x2066 && code <= 0x2069) ||
+			code === 0xfeff;
+		return unsafe ? "" : character;
+	}).join("");
 }
 
 export function diffTabId(
@@ -33,13 +57,13 @@ export function diffTabId(
 
 export function diffTabName(scope: GitDiffScope, path: string): string {
 	const { base } = splitPath(path);
-	if (scope.kind === "branch") return base;
+	if (scope.kind === "branch") return `${base} · ${branchName(scope.baseRef)}`;
 	if (scope.kind === "uncommitted") return `${base} · uncommitted`;
 	return `${base} · ${(scope.kind === "pinned" ? scope.baseRef : scope.sha).slice(0, 7)}`;
 }
 
 export function scopeLabel(scope: GitDiffScope, commits: readonly GitCommit[] = []): string {
-	if (scope.kind === "branch") return "All changes";
+	if (scope.kind === "branch") return `Changes from ${branchName(scope.baseRef)}`;
 	if (scope.kind === "uncommitted") return "Uncommitted";
 	if (scope.kind === "pinned") return `Since ${scope.baseRef.slice(0, 7)}`;
 	const known = commits.find((c) => c.sha === scope.sha);
