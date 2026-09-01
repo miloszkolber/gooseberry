@@ -325,25 +325,33 @@ export default function ChatView({
 		attachments: ChatAttachment[],
 		behavior: Exclude<SubmitBehavior, "interrupt">,
 	) => {
-		if (behavior === "send" && (text || attachments.length > 0))
-			useAppStore.getState().appendUserMessage(sessionId, text, attachments);
-		if (behavior === "queue" && attachments.length > 0) {
-			toast.error("Send or steer image attachments directly.", "Queued messages are text-only");
+		const heldByQueue = behavior === "send" && runtime.queue.followUp.length > 0;
+		const effectiveBehavior = heldByQueue ? "queue" : behavior;
+		if (effectiveBehavior === "queue" && attachments.length > 0) {
+			toast.error(
+				heldByQueue
+					? "Resolve the queued follow-ups before sending images."
+					: "Send or steer image attachments directly.",
+				"Queued messages are text-only",
+			);
 			return false;
 		}
+		if (heldByQueue) toast.info("Queued behind the existing follow-ups.", "Message queued");
+		if (effectiveBehavior === "send" && (text || attachments.length > 0))
+			useAppStore.getState().appendUserMessage(sessionId, text, attachments);
 		const images = attachments.map((a) => a.content);
 		const params = { sessionId, text, ...(images.length > 0 ? { images } : {}) };
 		const method =
-			behavior === "steer"
+			effectiveBehavior === "steer"
 				? "session.steer"
-				: behavior === "queue"
+				: effectiveBehavior === "queue"
 					? "session.queueAdd"
 					: "session.prompt";
 		getTransport()
 			.request(method, params)
 			.catch((err) => {
 				useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
-				if (behavior !== "send") restoreTextToDraft(text);
+				if (effectiveBehavior !== "send") restoreTextToDraft(text);
 			});
 		return true;
 	};
@@ -394,6 +402,14 @@ export default function ChatView({
 		void getTransport()
 			.request("session.queueRemove", { sessionId, lane, index, revision })
 			.catch((error) => toast.error(errorText(error), "Couldn't remove queued message"));
+	};
+
+	const retryQueuedMessage = (lane: "steering" | "followUp", index: number) => {
+		const revision = runtime.queue.revision;
+		if (!revision) return;
+		void getTransport()
+			.request("session.queueRetry", { sessionId, lane, index, revision })
+			.catch((error) => toast.error(errorText(error), "Couldn't retry queued message"));
 	};
 
 	const onSubmit = (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => {
@@ -630,6 +646,7 @@ export default function ChatView({
 							queue={runtime.queue}
 							onEdit={editQueuedMessage}
 							onRemove={removeQueuedMessage}
+							onRetry={retryQueuedMessage}
 						/>
 						<Dialog open={queueEdit !== null} onOpenChange={(open) => !open && setQueueEdit(null)}>
 							{queueEdit ? (
@@ -637,7 +654,10 @@ export default function ChatView({
 									<DialogHeader>
 										<DialogTitle>Edit queued message</DialogTitle>
 										<DialogDescription>
-											Update the text that Goose will receive later.
+											{runtime.queue.blocked?.lane === queueEdit.lane &&
+											runtime.queue.blocked.index === queueEdit.index
+												? "This may already be in the transcript. Editing changes the text used if you retry it."
+												: "Update the text that Goose will receive later."}
 										</DialogDescription>
 									</DialogHeader>
 									<textarea

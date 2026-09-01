@@ -88,7 +88,7 @@ func TestAgentEditingAndCompletionsKeepAuthorityAndBoundaries(t *testing.T) {
 	}
 	admin := NewGooseAdmin(client, NewSettings(store, nil))
 	defer admin.logins.Close()
-	admin.sessions = NewSessionManager(projects, policy, records, NewObjectives(store), nil)
+	admin.sessions = NewSessionManager(projects, policy, records, NewSessionQueues(store), NewObjectives(store), nil)
 	admin.sessions.SetClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

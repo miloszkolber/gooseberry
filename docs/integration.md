@@ -8,7 +8,7 @@ Every session has a project and admitted working directory. Goose owns its trans
 
 The controller checks empty sessions individually when Goose omits them from the catalog. Archive waits for settled sessions and blocks competing operations. Reconnects and lifecycle notifications reload the catalog; connection generations reject stale replies.
 
-Queued follow-ups live in controller memory and become ordinary ACP prompts when the current turn settles. Steering uses Goose's session-steer method.
+Queued follow-ups are durable controller state and become ordinary ACP prompts in order when the current turn settles. Safe pending work resumes after restart. If delivery may already have begun, the controller checks Goose's replay and otherwise waits for an explicit retry or removal. Steering uses Goose's session-steer method.
 
 ## MCP
 

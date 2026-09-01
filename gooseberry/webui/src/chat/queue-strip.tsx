@@ -1,14 +1,16 @@
 import type { QueueLane, SessionQueueState } from "@gooseberry/contracts";
-import { Pencil, X } from "lucide-react";
+import { Pencil, RotateCcw, X } from "lucide-react";
 
 export function QueueStrip({
 	queue,
 	onEdit,
 	onRemove,
+	onRetry,
 }: {
 	queue: SessionQueueState;
 	onEdit: (kind: QueueLane, index: number) => void;
 	onRemove: (kind: QueueLane, index: number) => void;
+	onRetry: (kind: QueueLane, index: number) => void;
 }) {
 	const items = [
 		...queue.steering.map((text, index) => ({
@@ -25,7 +27,16 @@ export function QueueStrip({
 			hint: "runs after the agent finishes",
 			text,
 		})),
-	];
+	].map((item) => {
+		const blocked = queue.blocked?.lane === item.kind && queue.blocked.index === item.index;
+		return {
+			...item,
+			blocked,
+			hint: blocked
+				? "may already have been delivered; check the transcript before retrying"
+				: item.hint,
+		};
+	});
 	if (items.length === 0) return null;
 	return (
 		<div
@@ -39,11 +50,27 @@ export function QueueStrip({
 					data-kind={item.kind}
 					data-index={item.index}
 					title={`${item.text} — ${item.hint}`}
-					className="flex w-full items-center gap-sm"
+					className={`flex w-full items-center gap-sm rounded-[var(--radius-xs)] ${item.blocked ? "bg-feedback-warning-subtle px-xs py-2xs" : ""}`}
 				>
 					<span className="min-w-0 flex-1 truncate">
-						<span className="text-text-default">{item.label}:</span> {item.text}
+						<span className="text-text-default">
+							{item.label}
+							{item.blocked ? " — may already be sent" : ""}:
+						</span>{" "}
+						{item.text}
 					</span>
+					{item.blocked ? (
+						<button
+							type="button"
+							data-testid="queue-item-retry"
+							aria-label={`Send queued message again (may duplicate): ${item.text}`}
+							disabled={!queue.revision}
+							onClick={() => onRetry(item.kind, item.index)}
+							className="flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-xs)] hover:bg-control-bg-hovered hover:text-text-default"
+						>
+							<RotateCcw className="size-3" />
+						</button>
+					) : null}
 					<button
 						type="button"
 						data-testid="queue-item-edit"

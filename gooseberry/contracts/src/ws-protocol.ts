@@ -50,7 +50,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 74;
+export const PROTOCOL_VERSION = 75;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -103,6 +103,7 @@ export const WS_METHODS = {
 	sessionQueueAdd: "session.queueAdd",
 	sessionQueueEdit: "session.queueEdit",
 	sessionQueueRemove: "session.queueRemove",
+	sessionQueueRetry: "session.queueRetry",
 	sessionAbort: "session.abort",
 	sessionPermissionReply: "session.permissionReply",
 	sessionDelete: "session.delete",
@@ -269,6 +270,10 @@ export interface WsMethodMap {
 		result: Ack;
 	};
 	"session.queueRemove": {
+		params: { sessionId: string; lane: QueueLane; index: number; revision: string };
+		result: Ack;
+	};
+	"session.queueRetry": {
 		params: { sessionId: string; lane: QueueLane; index: number; revision: string };
 		result: Ack;
 	};

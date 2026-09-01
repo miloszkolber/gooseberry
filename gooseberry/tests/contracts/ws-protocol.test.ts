@@ -44,6 +44,22 @@ test("session fork is a typed project-scoped WebSocket method", () => {
 	expect(params).toEqual({ projectId: "project", sessionId: "source" });
 });
 
+test("uncertain queued delivery has an atomic typed retry", () => {
+	const params: WsParams<"session.queueRetry"> = {
+		sessionId: "session",
+		lane: "followUp",
+		index: 0,
+		revision: "queue-revision",
+	};
+	expect(WS_METHODS.sessionQueueRetry).toBe("session.queueRetry");
+	expect(params).toEqual({
+		sessionId: "session",
+		lane: "followUp",
+		index: 0,
+		revision: "queue-revision",
+	});
+});
+
 test("Git branch comparisons use an explicit typed base", () => {
 	const params: WsParams<"git.listBranches"> = {
 		projectId: "project",
@@ -73,7 +89,7 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(74);
+	expect(PROTOCOL_VERSION).toBe(75);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");

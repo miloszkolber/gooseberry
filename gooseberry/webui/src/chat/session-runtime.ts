@@ -337,6 +337,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 					steering: event.steering,
 					followUp: event.followUp,
 					...(event.revision ? { revision: event.revision } : {}),
+					...(event.blocked ? { blocked: event.blocked } : {}),
 				},
 			};
 		case "message_start": {
