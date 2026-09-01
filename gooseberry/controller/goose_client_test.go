@@ -70,9 +70,20 @@ func TestGooseClientFramesACPAndOrdersNotifications(t *testing.T) {
 			switch rpc.Method {
 			case "initialize":
 				var params struct {
-					ProtocolVersion int `json:"protocolVersion"`
+					ProtocolVersion    int `json:"protocolVersion"`
+					ClientCapabilities struct {
+						Meta map[string]any `json:"_meta"`
+					} `json:"clientCapabilities"`
 				}
 				if json.Unmarshal(rpc.Params, &params) != nil || params.ProtocolVersion != 1 {
+					serverErrors <- errUnsupportedACPClientMethod
+					return
+				}
+				goose := mapValue(params.ClientCapabilities.Meta["goose"])
+				extensions := mapValue(mapValue(goose["mcpHostCapabilities"])["extensions"])
+				ui := mapValue(extensions["io.modelcontextprotocol/ui"])
+				mimeTypes := stringValues(ui["mimeTypes"])
+				if goose["customNotifications"] != true || len(mimeTypes) != 1 || mimeTypes[0] != "text/html;profile=mcp-app" {
 					serverErrors <- errUnsupportedACPClientMethod
 					return
 				}
@@ -112,6 +123,30 @@ func TestGooseClientFramesACPAndOrdersNotifications(t *testing.T) {
 	case err := <-serverErrors:
 		t.Fatal(err)
 	default:
+	}
+}
+
+func TestGooseReadLimitFitsWorstCaseAppResourceFrame(t *testing.T) {
+	html := strings.Repeat("\x00", maxAppViewHTMLBytes)
+	frame, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"contents": []any{map[string]any{
+				"uri":      "ui://fixture/app.html",
+				"mimeType": appViewMediaType,
+				"text":     html,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frame) > gooseReadLimit {
+		t.Fatalf("maximally escaped App frame is %d bytes; read limit is %d", len(frame), gooseReadLimit)
+	}
+	if remaining := gooseReadLimit - len(frame); remaining < 1024*1024 {
+		t.Fatalf("App frame leaves only %d bytes for metadata", remaining)
 	}
 }
 

@@ -1,6 +1,10 @@
 import type {
 	AskUserQuestionResult,
 	ImageContent,
+	McpAppContentChunk,
+	McpAppOpenResult,
+	McpAppResourceResult,
+	McpAppToolResult,
 	PermissionRequest,
 	QueueLane,
 	RefreshedModels,
@@ -44,7 +48,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 67;
+export const PROTOCOL_VERSION = 70;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -115,6 +119,13 @@ export const WS_METHODS = {
 	sessionGetMessages: "session.getMessages",
 	sessionSetLeases: "session.setLeases",
 	sessionRelease: "session.release",
+	sessionAppOpen: "session.appOpen",
+	sessionAppContentRead: "session.appContentRead",
+	sessionAppKeepAlive: "session.appKeepAlive",
+	sessionAppClose: "session.appClose",
+	sessionAppResourceRead: "session.appResourceRead",
+	sessionAppToolCall: "session.appToolCall",
+	sessionAppOperationCancel: "session.appOperationCancel",
 	modelList: "model.list",
 	modelRefresh: "model.refresh",
 	modelDefault: "model.default",
@@ -298,6 +309,52 @@ export interface WsMethodMap {
 		result: { summary: SessionSummary; messages: TranscriptMessage[] };
 	};
 	"session.release": { params: { sessionId: string; projectId: string }; result: Ack };
+	"session.appOpen": {
+		params: { projectId: string; sessionId: string; toolCallId: string; parentOrigin: string };
+		result: McpAppOpenResult;
+	};
+	"session.appContentRead": {
+		params: {
+			projectId: string;
+			sessionId: string;
+			toolCallId: string;
+			viewId: string;
+			offset: number;
+		};
+		result: McpAppContentChunk;
+	};
+	"session.appKeepAlive": {
+		params: { projectId: string; sessionId: string; toolCallId: string; viewId: string };
+		result: Ack;
+	};
+	"session.appClose": { params: { viewId: string }; result: Ack };
+	"session.appResourceRead": {
+		params: {
+			projectId: string;
+			sessionId: string;
+			toolCallId: string;
+			viewId: string;
+			operationId: string;
+			uri: string;
+		};
+		result: McpAppResourceResult;
+	};
+	"session.appToolCall": {
+		params: {
+			projectId: string;
+			sessionId: string;
+			toolCallId: string;
+			viewId: string;
+			operationId: string;
+			name: string;
+			arguments?: Record<string, unknown>;
+		};
+		result: McpAppToolResult;
+	};
+	"session.appOperationCancel": {
+		params: { viewId: string; operationId: string };
+		result: Ack;
+	};
 	/** Complete open-tab snapshot for this browser; older revisions are ignored. */
 	"session.setLeases": {
 		params: { revision: number; sessions: { projectId: string; sessionId: string }[] };

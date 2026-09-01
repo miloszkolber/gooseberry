@@ -37,6 +37,7 @@ type Runtime struct {
 	listener net.Listener
 	client   *GooseClient
 	sessions *SessionManager
+	apps     *AppViews
 	socket   *WebSocketServer
 	logins   *ProviderLogins
 	watches  *ProjectWatches
@@ -94,7 +95,8 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	sessions.deviceCode = admin.logins.DeviceCode
 	git := NewGit(projects, config.Policy)
 	watches := NewProjectWatches(projects, git, publish)
-	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Settings: settings, Admin: admin, Git: git, Watches: watches}
+	apps := NewAppViews(sessions, authConfig, config.Port)
+	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Apps: apps, Settings: settings, Admin: admin, Git: git, Watches: watches}
 	welcome := func(ctx context.Context) (any, error) {
 		recent, err := projects.List(true)
 		if err != nil {
@@ -121,7 +123,10 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 		return nil, err
 	}
 	socket.LoginSnapshot = admin.logins.Snapshot
-	socket.ClientReaped = sessions.ReleaseClient
+	socket.ClientReaped = func(clientKey string) {
+		apps.ReleaseClient(clientKey)
+		sessions.ReleaseClient(clientKey)
+	}
 	ready := func(response http.ResponseWriter, request *http.Request) {
 		status := runtimeGooseStatus(request.Context(), client)
 		code := http.StatusOK
@@ -134,7 +139,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{config: config, auth: authConfig, server: &http.Server{Handler: httpHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}, client: client, sessions: sessions, socket: socket, logins: admin.logins, watches: watches}, nil
+	return &Runtime{config: config, auth: authConfig, server: &http.Server{Handler: httpHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}, client: client, sessions: sessions, apps: apps, socket: socket, logins: admin.logins, watches: watches}, nil
 }
 
 func (r *Runtime) Start() (string, error) {
@@ -153,8 +158,9 @@ func (r *Runtime) Errors() <-chan error { return r.errors }
 func (r *Runtime) Shutdown(ctx context.Context) error {
 	r.logins.Close()
 	r.watches.Close()
+	r.socket.Close(ctx)
+	r.apps.CloseAll(ctx)
 	r.sessions.cancelAll(ctx)
-	r.socket.Close()
 	r.client.Close()
 	return r.server.Shutdown(ctx)
 }

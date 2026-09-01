@@ -80,14 +80,15 @@ func ExpiredSessionCookie(secure bool) string {
 }
 
 type AuthConfig struct {
-	Enabled            bool
-	BrowserEnabled     bool
-	ControllerToken    string
-	BrowserToken       string
-	BrowserURL         string
-	ControllerHost     string
-	PublicOrigin       string
-	AllowRemoteWithout bool
+	Enabled             bool
+	BrowserEnabled      bool
+	ControllerToken     string
+	BrowserToken        string
+	BrowserURL          string
+	BrowserPublicOrigin string
+	ControllerHost      string
+	PublicOrigin        string
+	AllowRemoteWithout  bool
 }
 
 func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
@@ -146,7 +147,20 @@ func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
 	if !browserEnabled && parsedBrowser.Hostname() != "localhost" && !net.ParseIP(parsedBrowser.Hostname()).IsLoopback() {
 		return AuthConfig{}, fmt.Errorf("a non-loopback GOOSEBERRY_BROWSER_URL requires browser authentication")
 	}
-	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, BrowserURL: browserURL, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil
+	browserPublicOrigin := strings.TrimSpace(getenv("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN"))
+	if browserPublicOrigin != "" {
+		if !browserEnabled {
+			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN requires browser authentication")
+		}
+		browserPublicOrigin, err = normalizeOrigin(browserPublicOrigin)
+		if err != nil {
+			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN must be an absolute http(s) origin without credentials or a path")
+		}
+		if publicOrigin != "" && sameAppViewOrigin(browserPublicOrigin, publicOrigin) {
+			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN must differ from GOOSEBERRY_PUBLIC_ORIGIN")
+		}
+	}
+	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, BrowserURL: browserURL, BrowserPublicOrigin: browserPublicOrigin, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil
 }
 
 func (c AuthConfig) ExpectedOrigin(request *http.Request) (string, error) {
@@ -220,7 +234,19 @@ func normalizeOrigin(value string) (string, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.Hostname() == "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("invalid origin")
 	}
-	return parsed.Scheme + "://" + strings.ToLower(parsed.Host), nil
+	hostname := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	if (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
+		port = ""
+	}
+	host := hostname
+	if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	}
+	return parsed.Scheme + "://" + host, nil
 }
 
 func strictBool(value string, fallback bool, name string) (bool, error) {

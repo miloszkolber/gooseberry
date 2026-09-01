@@ -24,6 +24,63 @@ export interface ToolCall {
 	name: string;
 	arguments: unknown;
 }
+
+/** Trusted MCP Apps metadata projected from Goose for one completed tool call. */
+export interface McpAppAttachment {
+	toolName: string;
+	extensionName: string;
+	resourceUri: string;
+}
+
+export interface McpAppCsp {
+	connectDomains?: string[];
+	resourceDomains?: string[];
+	frameDomains?: string[];
+	baseUriDomains?: string[];
+}
+
+export interface McpAppPermissions {
+	camera?: Record<string, never>;
+	microphone?: Record<string, never>;
+	geolocation?: Record<string, never>;
+	clipboardWrite?: Record<string, never>;
+}
+
+export interface McpAppResourceContent {
+	uri: string;
+	mimeType?: string;
+	text?: string;
+	blob?: string;
+	_meta?: Record<string, unknown>;
+}
+
+export interface McpAppResourceResult {
+	contents: McpAppResourceContent[];
+	_meta?: Record<string, unknown>;
+}
+
+export interface McpAppOpenResult {
+	viewId: string;
+	url: string;
+	resource: {
+		byteLength: number;
+		csp?: McpAppCsp;
+		permissions?: McpAppPermissions;
+	};
+}
+
+export interface McpAppContentChunk {
+	offset: number;
+	data: string;
+	nextOffset: number;
+}
+
+export interface McpAppToolResult {
+	content: unknown[];
+	structuredContent?: Record<string, unknown>;
+	isError?: boolean;
+	_meta?: Record<string, unknown>;
+}
 export type StopReason = string;
 
 export interface UserMessage {
@@ -47,6 +104,7 @@ export interface ToolResultMessage {
 	isError?: boolean;
 	content?: unknown;
 	details?: unknown;
+	app?: McpAppAttachment;
 }
 export interface PermissionRequest {
 	id: string;
@@ -176,6 +234,7 @@ export type AgentEvent =
 			title?: string;
 			error?: string;
 			tool?: unknown;
+			app?: McpAppAttachment;
 	  }
 	| { type: "agent_start" }
 	| ({ type: "queue_update" } & SessionQueueState)

@@ -59,12 +59,48 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(67);
+	expect(PROTOCOL_VERSION).toBe(70);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");
 	expect(JSON.stringify(catalog)).not.toContain("raw");
 	expect(JSON.stringify(catalog)).not.toContain("warning text");
+});
+
+test("interactive App operations are view-scoped and cancellable", () => {
+	const content: WsParams<"session.appContentRead"> = {
+		projectId: "project",
+		sessionId: "chat",
+		toolCallId: "call",
+		viewId: "view",
+		offset: 0,
+	};
+	const resource: WsParams<"session.appResourceRead"> = {
+		projectId: "project",
+		sessionId: "chat",
+		toolCallId: "call",
+		viewId: "view",
+		operationId: "operation",
+		uri: "ui://example/resource",
+	};
+	const tool: WsParams<"session.appToolCall"> = {
+		projectId: "project",
+		sessionId: "chat",
+		toolCallId: "call",
+		viewId: "view",
+		operationId: "operation",
+		name: "example__tool",
+	};
+	const cancel: WsParams<"session.appOperationCancel"> = {
+		viewId: "view",
+		operationId: "operation",
+	};
+
+	expect(WS_METHODS.sessionAppOperationCancel).toBe("session.appOperationCancel");
+	expect(WS_METHODS.sessionAppContentRead).toBe("session.appContentRead");
+	expect(content.offset).toBe(0);
+	expect(resource).toMatchObject(cancel);
+	expect(tool).toMatchObject(cancel);
 });
 
 test("agent mentions and provider readiness use browser-safe typed protocol surfaces", () => {
