@@ -31,6 +31,7 @@ export function ToolCard({
 		args,
 		result: tool?.raw,
 		app: tool?.app,
+		subagentActivity: tool?.subagentActivity,
 		status,
 		projectAreaRoot,
 		streaming,

@@ -1,4 +1,4 @@
-import type { McpAppAttachment } from "@gooseberry/contracts";
+import type { McpAppAttachment, SubagentActivity } from "@gooseberry/contracts";
 import type { ReactNode } from "react";
 import { toText } from "./tools/tool-helpers";
 import { ToolOutput } from "./tools/tool-output";
@@ -10,6 +10,7 @@ export interface ToolRenderProps {
 	args: Record<string, unknown>;
 	result: unknown;
 	app?: McpAppAttachment | undefined;
+	subagentActivity?: SubagentActivity | undefined;
 	status: ToolStatus;
 	projectAreaRoot?: string | undefined;
 	streaming: boolean;

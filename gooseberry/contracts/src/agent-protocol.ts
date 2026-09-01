@@ -81,6 +81,17 @@ export interface McpAppToolResult {
 	isError?: boolean;
 	_meta?: Record<string, unknown>;
 }
+
+/** Best-effort child tool requests reported by Goose for an outer Summon call. */
+export interface SubagentActivityEvent {
+	childSessionId: string;
+	toolName: string;
+}
+
+export interface SubagentActivity {
+	events: readonly SubagentActivityEvent[];
+	truncated?: boolean;
+}
 export type StopReason = string;
 
 export interface UserMessage {
@@ -105,6 +116,7 @@ export interface ToolResultMessage {
 	content?: unknown;
 	details?: unknown;
 	app?: McpAppAttachment;
+	subagentActivity?: SubagentActivity;
 }
 export interface PermissionRequest {
 	id: string;
@@ -235,6 +247,7 @@ export type AgentEvent =
 			error?: string;
 			tool?: unknown;
 			app?: McpAppAttachment;
+			subagentActivity?: SubagentActivity;
 	  }
 	| { type: "agent_start" }
 	| ({ type: "queue_update" } & SessionQueueState)

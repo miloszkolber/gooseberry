@@ -14,17 +14,19 @@ Extensions run in Goose. Settings lists the extensions Goose advertises, manages
 | chatrecall | Recall results. Goose controls the search scope. |
 | code_execution | Code execution and tool-discovery results. |
 | developer | File edits, writes, shell output, trees and image previews. Live shell output is bounded and marked when truncated. |
-| orchestrator | Text results when enabled in Goose; nested activity and child approvals are incomplete. |
+| orchestrator | Text results when enabled in Goose; Goose does not report nested activity. |
 | scheduler | Schedule tools and Settings controls; start Goose with `--enable-scheduler`. |
 | skills | Skill loading, slash commands and source/agent mentions. |
 | summarize | File and directory summaries. |
-| summon | Agent loading and delegation results; nested activity and child approvals are incomplete. |
+| summon | Agent loading and delegation results, with recent child tool requests when Goose reports them. |
 | todo | Checklist input/results, separate from Gooseberry goals and tasks. |
 | tom | Context injection inside Goose; no UI control is needed. |
 
 These names and behaviors follow the [pinned Goose registry](https://github.com/aaif-goose/goose/blob/25021517f12cab87c94bed0874fe7d28168dc264/crates/goose/src/agents/platform_extensions/mod.rs). Goose hides scheduler and orchestrator from its normal extension catalogs. Summon children run in Auto mode because [upstream child approval forwarding is unfinished](https://github.com/aaif-goose/goose/blob/25021517f12cab87c94bed0874fe7d28168dc264/crates/goose/src/agents/platform_extensions/summon.rs#L1376). Parent permission controls do not establish child permission parity.
 
-Interactive Apps use trusted metadata projected by Goose. Gooseberry reads the attached `ui://` resource and mediates resource reads and tool calls through the same session and extension. Resource HTML runs only in the separate browser sandbox origin. Nested-agent presentation remains in the [roadmap](roadmap.md).
+Interactive Apps use trusted metadata projected by Goose. Gooseberry reads the attached `ui://` resource and mediates resource reads and tool calls through the same session and extension. Resource HTML runs only in the separate browser sandbox origin.
+
+Summon child activity is transient and best-effort. Gooseberry keeps the latest 32 reported tool requests on the outer call and sends the same projection to every connected browser. It does not infer completion, keep child transcripts or restore activity that Goose does not replay.
 
 ## Session and settings controls
 

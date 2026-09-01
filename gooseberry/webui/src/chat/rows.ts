@@ -80,9 +80,10 @@ export function deriveRows(
 					flushRun();
 					rows.push({ kind: "image", id: `${turn.id}:image:${b}`, image: block });
 				} else if (block.type === "toolCall") {
+					const toolName = block.toolName ?? block.name;
 					const data: ToolCallData = {
 						toolCallId: block.id,
-						toolName: block.name,
+						toolName,
 						args: (typeof block.arguments === "object" && block.arguments !== null
 							? block.arguments
 							: {}) as Record<string, unknown>,
@@ -90,7 +91,7 @@ export function deriveRows(
 						dead,
 						streaming: turn.streaming,
 					};
-					if (resolveProminence(block.name).prominence === "primary") {
+					if (resolveProminence(toolName).prominence === "primary") {
 						flushRun();
 						rows.push({ kind: "tool", id: block.id, ...data });
 					} else {
