@@ -4,8 +4,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Finish existing behavior
 
-- **Performance acceptance.** Run the [comparison probe](performance.md#run-a-comparison) against the unchanged 5% controller p95 gate on the deployment host with separate application/browser containers, concurrent clients and Chromium activity. Include reconnect-to-interactive time and long histories. Workstation measurements are not deployment acceptance. Repeat browser checks on native x86-64.
-- **Interactive Apps.** Host Goose's `ui://` resources in a sandbox with explicit resource access, mediated tool calls and lifecycle handling. Preserve ordinary app-management results. Do not inject resource HTML into the main UI.
 - **Nested agents.** Show supported summon/orchestrator activity without creating another conversation store. Verify child cancellation, permissions and concurrent observation against upstream behavior; child approval forwarding is not complete in pinned Goose.
 - **Git branch comparison.** Compare against an explicit branch base. Keep linked-worktree, submodule, unusual-filename and unborn-branch coverage. Git views remain read-only.
 - **UI acceptance.** Keep repeatable desktop/narrow-screen checks for commit selection, reconnects, tab closing, streaming, dialogs and file/image previews. Include keyboard use, overflow and interaction timing; state tests alone are insufficient.
@@ -25,3 +23,7 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 - Consider browser egress controls for private networks and cloud-metadata endpoints, plus optional TLS/identity setup for remote access.
 - Extend protocol tests when upstream payloads change. Keep tests focused on persistence, reconnect/replay, concurrent chats, permissions, path isolation and fragile interactions.
 - Keep frontend code grouped by responsibility. Generate duplicated wire types or change frameworks only when this clearly reduces maintenance.
+
+## Deferred
+
+- **Deployment acceptance.** Run the [comparison probe](performance.md#run-a-comparison) on the deployment host before enforcing the unchanged 5% controller p95 gate. Include separate application/browser containers, concurrent clients, Chromium activity, reconnect-to-interactive time and long histories. Workstation measurements remain reference evidence. Repeat browser checks on native x86-64.
