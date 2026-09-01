@@ -3,6 +3,7 @@ import type {
 	ExtUiRequest,
 	ImageContent,
 	McpAppAttachment,
+	SubagentActivity,
 	UserMessage,
 } from "@gooseberry/contracts";
 
@@ -46,4 +47,5 @@ export interface ToolResultState {
 	status: ToolStatus;
 	raw: unknown;
 	app?: McpAppAttachment;
+	subagentActivity?: SubagentActivity;
 }
