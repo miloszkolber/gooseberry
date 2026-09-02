@@ -35,7 +35,7 @@ Each Web UI client reports its open chats as a revisioned lease snapshot. Closin
 
 Active work and pending replies prevent eviction. Durable queued or blocked work may shed its inactive transcript projection; inactive copies have count/memory limits and cache their encoded size until changed. A late update to an idle projection immediately reapplies those limits.
 
-Connection generations, shared hydration, deletion markers, replay IDs and tab-close checks reject stale or duplicate work. Open chats refresh after reconnect. The newest transcript response stays ordered with live events until it is queued; immutable older pages release the session lock before encoding. Bounded output queues isolate slow clients.
+Connection generations, shared hydration, deletion markers, replay IDs and tab-close checks reject stale or duplicate work. Open chats refresh after reconnect. A small fixed worker pool bounds transcript loads during startup queue recovery; live follow-ups remain immediate. The newest transcript response stays ordered with live events until it is queued; immutable older pages release the session lock before encoding. Bounded output queues isolate slow clients.
 
 ## Frontend and images
 
