@@ -168,6 +168,9 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 }
 
 func (r *Runtime) Start() (string, error) {
+	if err := r.sessions.recoverDeletions(context.Background()); err != nil {
+		return "", fmt.Errorf("resume session deletions: %w", err)
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(r.config.Host, strconv.Itoa(r.config.Port)))
 	if err != nil {
 		return "", err
@@ -197,7 +200,7 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 }
 
 func runtimeGooseStatus(ctx context.Context, client *GooseClient) map[string]any {
-	if client.requireSecret && client.SecretKey == "" {
+	if client.scope.requireSecret && client.scope.secret == "" {
 		return map[string]any{"configured": false, "reachable": false, "error": "GOOSEBERRY_GOOSE_SECRET_KEY is not configured"}
 	}
 	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)

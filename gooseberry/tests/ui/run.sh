@@ -164,7 +164,8 @@ assert_eval "document.querySelector('[data-testid=system-card-browser]')?.textCo
 browser screenshot /artifacts/narrow-system.png >/dev/null
 browser press Escape >/dev/null
 browser wait --fn "document.querySelector('[data-testid=settings-dialog]') === null" >/dev/null
-assert_eval "document.activeElement?.getAttribute('data-testid') === 'open-settings' && document.documentElement.scrollWidth === document.documentElement.clientWidth"
+browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'open-settings'" >/dev/null
+assert_eval "document.documentElement.scrollWidth === document.documentElement.clientWidth"
 browser screenshot /artifacts/narrow-workspace.png >/dev/null
 
 echo "UI acceptance passed"
