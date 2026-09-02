@@ -5,6 +5,7 @@ import {
 	ArchiveSessionDialog,
 	RenameSessionDialog,
 	type SessionLifecycleTarget,
+	unsupportedLifecycleReason,
 } from "../chat/session-lifecycle-controls";
 import {
 	DropdownMenu,
@@ -29,6 +30,22 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 	);
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
 	const status = useAppStore((state) => state.status);
+	const agentProfile = useAppStore((state) => state.agentProfile);
+	const canRename = agentProfile?.operations.renameSession === true;
+	const canArchive = agentProfile?.operations.archiveSession === true;
+	const canDelete = agentProfile?.operations.deleteSession === true;
+	const renameUnavailable = canRename
+		? undefined
+		: unsupportedLifecycleReason(agentProfile?.name, "renaming");
+	const archiveUnavailable = canArchive
+		? undefined
+		: unsupportedLifecycleReason(agentProfile?.name, "archiving");
+	const deleteUnavailable = canDelete
+		? undefined
+		: unsupportedLifecycleReason(agentProfile?.name, "deleting");
+	const unavailableActions = [renameUnavailable, archiveUnavailable, deleteUnavailable].filter(
+		(reason): reason is string => !!reason,
+	);
 	const [open, setOpen] = useState(false);
 	const [archived, setArchived] = useState<SessionSummary[]>([]);
 	const [archivedLoading, setArchivedLoading] = useState(false);
@@ -37,8 +54,13 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 	const [renameTarget, setRenameTarget] = useState<SessionLifecycleTarget | null>(null);
 	const [archiveTarget, setArchiveTarget] = useState<SessionLifecycleTarget | null>(null);
 	const loadSequence = useRef(0);
+	useEffect(() => {
+		if (!canRename) setRenameTarget(null);
+		if (!canArchive) setArchiveTarget(null);
+	}, [canArchive, canRename]);
 
 	const loadArchived = useCallback(async () => {
+		if (!canArchive) return;
 		const sequence = ++loadSequence.current;
 		setArchivedLoading(true);
 		try {
@@ -54,15 +76,16 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 		} finally {
 			if (sequence === loadSequence.current) setArchivedLoading(false);
 		}
-	}, [projectAreaId]);
+	}, [canArchive, projectAreaId]);
 
 	useEffect(() => {
 		void catalogVersion;
 		void connectionGeneration;
-		if (open && status === "connected") void loadArchived();
-	}, [catalogVersion, connectionGeneration, loadArchived, open, status]);
+		if (open && status === "connected" && canArchive) void loadArchived();
+	}, [canArchive, catalogVersion, connectionGeneration, loadArchived, open, status]);
 
 	const restore = (sessionId: string) => {
+		if (!canArchive) return;
 		setRestoring(sessionId);
 		void getTransport()
 			.request("session.unarchive", { projectId: projectAreaId, sessionId })
@@ -113,8 +136,13 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 									<RotateCcw className="size-3.5 shrink-0 text-text-muted" />
 								</DropdownMenuItem>
 								<DropdownMenuItem
-									aria-label={`Rename ${chat.title}`}
-									title="Rename chat"
+									aria-label={
+										renameUnavailable
+											? `Rename ${chat.title}: ${renameUnavailable}`
+											: `Rename ${chat.title}`
+									}
+									disabled={!canRename}
+									title={renameUnavailable ?? "Rename chat"}
 									onSelect={() =>
 										setRenameTarget({
 											projectId: projectAreaId,
@@ -127,8 +155,13 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 									<Pencil className="size-3.5" />
 								</DropdownMenuItem>
 								<DropdownMenuItem
-									aria-label={`Archive ${chat.title}`}
-									title="Archive chat"
+									aria-label={
+										archiveUnavailable
+											? `Archive ${chat.title}: ${archiveUnavailable}`
+											: `Archive ${chat.title}`
+									}
+									disabled={!canArchive}
+									title={archiveUnavailable ?? "Archive chat"}
 									onSelect={() =>
 										setArchiveTarget({
 											projectId: projectAreaId,
@@ -142,9 +175,15 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									data-testid="closed-chat-delete"
-									aria-label={`Move ${chat.title} to trash`}
-									title="Move chat to trash"
+									aria-label={
+										deleteUnavailable
+											? `Move ${chat.title} to trash: ${deleteUnavailable}`
+											: `Move ${chat.title} to trash`
+									}
+									disabled={!canDelete}
+									title={deleteUnavailable ?? "Move chat to trash"}
 									onSelect={() => {
+										if (!canDelete) return;
 										void getTransport()
 											.request("session.delete", {
 												projectId: projectAreaId,
@@ -168,9 +207,18 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 							</DropdownMenuGroup>
 						))
 					)}
+					{unavailableActions.map((reason) => (
+						<p key={reason} className="max-w-[18rem] px-sm py-xs text-text-muted tr-text-metadata">
+							{reason}
+						</p>
+					))}
 					<DropdownMenuSeparator />
 					<DropdownMenuLabel>Archived</DropdownMenuLabel>
-					{archivedLoading ? (
+					{!canArchive ? (
+						<p className="max-w-[18rem] px-sm py-xs text-text-muted tr-text-metadata">
+							{archiveUnavailable}
+						</p>
+					) : archivedLoading ? (
 						<p
 							role="status"
 							aria-live="polite"

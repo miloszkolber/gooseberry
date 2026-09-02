@@ -36,7 +36,7 @@ export function WelcomePanel() {
 						primary
 						icon={House}
 						title="Continue project"
-						subtitle="Open the project directory and its persistent Goose sessions."
+						subtitle="Open the project directory and its persistent agent sessions."
 						onClick={() => void enterDefaultProjectArea(project.id)}
 					/>
 				) : (

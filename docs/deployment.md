@@ -118,7 +118,7 @@ Open **http://127.0.0.1:7312**, configure a provider and create a project.
 | Request | Checks |
 | --- | --- |
 | `curl -fsS http://127.0.0.1:7312/livez` | Application liveness. |
-| `curl -fsS http://127.0.0.1:7312/readyz` | Goose ACP connection, not provider readiness. |
+| `curl -fsS http://127.0.0.1:7312/readyz` | ACP connection and required session capabilities, not provider readiness. |
 | `curl -fsS http://127.0.0.1:8787/health` | Browser liveness without starting Chromium. |
 
 For status and logs:

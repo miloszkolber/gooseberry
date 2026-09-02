@@ -18,6 +18,7 @@ import type {
 } from "./agent-protocol";
 import type {
 	AgentMentionInfo,
+	AgentProfile,
 	AppConfig,
 	AppConfigPatch,
 	DirectoryListing,
@@ -50,7 +51,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 76;
+export const PROTOCOL_VERSION = 77;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -62,6 +63,7 @@ export const MAX_SERIALIZED_WS_REQUEST_BYTES = 32 * 1024 * 1024;
 export interface ServerWelcome {
 	protocolVersion: number;
 	appVersion?: string;
+	agentProfile?: AgentProfile;
 	projects: Project[];
 	recentProjects: Project[];
 	config: AppConfig;
@@ -183,6 +185,7 @@ export const WS_METHODS = {
 
 export const WS_CHANNELS = {
 	serverWelcome: "server.welcome",
+	agentProfileChanged: "agent.profileChanged",
 	projectUpdated: "project.updated",
 	agentEvent: "agent.event",
 	sessionDeleted: "session.deleted",
@@ -219,6 +222,7 @@ export type SessionMessagesResult =
 			summary: SessionSummary;
 			messages: TranscriptMessage[];
 			pendingTools: PendingToolPreview[];
+			commands: SlashCommandInfo[];
 			page: TranscriptPage;
 	  }
 	| {
@@ -270,7 +274,12 @@ export interface WsMethodMap {
 	"skill.list": { params: { projectId: string }; result: SlashCommandInfo[] };
 	"session.create": {
 		params: { projectId: string; cwd?: string; model?: WireModel; thinkingLevel?: ThinkingLevel };
-		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
+		result: {
+			sessionId: string;
+			model: WireModel | null;
+			thinkingLevel: ThinkingLevel;
+			commands: SlashCommandInfo[];
+		};
 	};
 	"session.fork": {
 		params: { projectId: string; sessionId: string };
@@ -516,7 +525,13 @@ export interface WsMethodMap {
 	};
 	"goose.status": {
 		params: Record<string, never>;
-		result: { configured: boolean; reachable: boolean; error?: string; version?: string };
+		result: {
+			configured: boolean;
+			reachable: boolean;
+			error?: string;
+			version?: string;
+			agentProfile?: AgentProfile;
+		};
 	};
 	"goose.extensionList": { params: Record<string, never>; result: GooseExtensionCatalog };
 	"goose.extensionAdd": {
@@ -583,6 +598,7 @@ export type WsErrorCode =
 	| "UNBORN_HEAD"
 	| "NO_MERGE_BASE"
 	| "GIT_BRANCHES_UNAVAILABLE"
+	| "UNSUPPORTED_AGENT_CAPABILITY"
 	| "STALE_TRANSCRIPT_PROJECTION";
 
 export interface WsResponse {

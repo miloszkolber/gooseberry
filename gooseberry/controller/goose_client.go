@@ -3,21 +3,27 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/coder/websocket"
 )
 
 const (
-	defaultGooseURL     = "ws://127.0.0.1:3284/acp"
-	defaultGooseTimeout = 30 * time.Second
+	defaultGooseURL      = "ws://127.0.0.1:3284/acp"
+	defaultGooseTimeout  = 30 * time.Second
+	maxAgentNameRunes    = 128
+	maxAgentVersionRunes = 64
 	// Matches the Web UI socket ceiling and accommodates a maximally escaped
 	// App resource plus its bounded JSON-RPC envelope.
 	gooseReadLimit = 32 * 1024 * 1024
@@ -30,17 +36,23 @@ type GooseEvents interface {
 }
 
 type GooseClient struct {
-	URL       string
-	SecretKey string
-	Version   string
-	Timeout   time.Duration
-	Events    GooseEvents
+	URL            string
+	SecretKey      string
+	Version        string
+	Timeout        time.Duration
+	Events         GooseEvents
+	requireSecret  bool
+	requireGoose   bool
+	profileChanged func(AgentProfile)
 
 	mu         sync.Mutex
 	connection *gooseConnection
 	connecting *gooseConnectAttempt
 	closed     bool
 	generation uint64
+
+	notificationMu     sync.Mutex
+	notifiedGeneration uint64
 }
 
 type gooseConnectAttempt struct {
@@ -50,29 +62,41 @@ type gooseConnectAttempt struct {
 }
 
 type gooseConnection struct {
-	client *acp.ClientSideConnection
-	stream *acpWebSocketStream
-	cancel context.CancelFunc
+	client  *acp.ClientSideConnection
+	stream  *acpWebSocketStream
+	cancel  context.CancelFunc
+	sink    *gooseSink
+	profile AgentProfile
 }
 
 func NewGooseClient(url, secret, version string, events GooseEvents) *GooseClient {
+	requireSecret := url == ""
+	requireGoose := url == ""
 	if url == "" {
 		url = defaultGooseURL
 	}
-	return &GooseClient{URL: url, SecretKey: secret, Version: version, Timeout: defaultGooseTimeout, Events: events}
+	return &GooseClient{URL: url, SecretKey: secret, Version: version, Timeout: defaultGooseTimeout, Events: events, requireSecret: requireSecret, requireGoose: requireGoose}
 }
 
 func (c *GooseClient) Ready(ctx context.Context) (uint64, error) {
+	generation, _, err := c.Profile(ctx)
+	return generation, err
+}
+
+// Profile returns the connection generation and the capabilities negotiated
+// by that same connection. The returned profile does not share mutable storage
+// with the connection.
+func (c *GooseClient) Profile(ctx context.Context) (generation uint64, profile AgentProfile, err error) {
 	connection, generation, err := c.ready(ctx)
 	if err != nil {
-		return 0, err
+		return 0, AgentProfile{}, err
 	}
 	select {
 	case <-connection.client.Done():
 		c.drop(connection)
-		return 0, fmt.Errorf("Goose ACP connection closed")
+		return 0, AgentProfile{}, fmt.Errorf("ACP agent connection closed")
 	default:
-		return generation, nil
+		return generation, cloneAgentProfile(connection.profile), nil
 	}
 }
 
@@ -85,12 +109,12 @@ func (c *GooseClient) ready(ctx context.Context) (*gooseConnection, uint64, erro
 		c.mu.Lock()
 		if c.closed {
 			c.mu.Unlock()
-			return nil, 0, fmt.Errorf("Goose client has been shut down")
+			return nil, 0, fmt.Errorf("ACP client has been shut down")
 		}
 		if expected, attached := ctx.Value(connectionGenerationKey{}).(uint64); attached {
 			if expected == 0 || c.connection == nil || c.generation != expected || isDone(c.connection) {
 				c.mu.Unlock()
-				return nil, 0, fmt.Errorf("Goose ACP connection changed; reload the chat before retrying")
+				return nil, 0, fmt.Errorf("ACP connection changed; reload the chat before retrying")
 			}
 		}
 		previous := c.connection
@@ -104,7 +128,7 @@ func (c *GooseClient) ready(ctx context.Context) (*gooseConnection, uint64, erro
 			if previous != nil {
 				c.drop(previous)
 			}
-			return nil, 0, fmt.Errorf("Goose ACP connection closed during setup")
+			return nil, 0, fmt.Errorf("ACP connection closed during setup")
 		}
 		c.connection = nil
 		attempt := c.connecting
@@ -143,17 +167,24 @@ func (c *GooseClient) connect(ctx context.Context, attempt *gooseConnectAttempt,
 		// The SDK writes before waiting on the request context. Closing the stream
 		// also interrupts a blocked initialize write on cancellation or shutdown.
 		stop := context.AfterFunc(ctx, connection.close)
-		err = c.initialize(ctx, connection)
+		connection.profile, err = c.initialize(ctx, connection)
 		stop()
+		if err == nil {
+			connection.sink.goose.Store(connection.profile.Goose)
+		}
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
 	}
+	var profileChanged func(AgentProfile)
+	var profile AgentProfile
 	c.mu.Lock()
 	if c.connecting == attempt {
 		c.connecting = nil
 		if err == nil {
 			c.connection = connection
+			profileChanged = c.profileChanged
+			profile = cloneAgentProfile(connection.profile)
 		}
 		attempt.err = err
 		close(attempt.done)
@@ -165,9 +196,22 @@ func (c *GooseClient) connect(ctx context.Context, attempt *gooseConnectAttempt,
 	if err != nil && connection != nil {
 		connection.close()
 	}
+	if err == nil && profileChanged != nil {
+		c.publishProfile(generation, profileChanged, profile)
+	}
 }
 
-func (c *GooseClient) initialize(ctx context.Context, connection *gooseConnection) error {
+func (c *GooseClient) publishProfile(generation uint64, publish func(AgentProfile), profile AgentProfile) {
+	c.notificationMu.Lock()
+	defer c.notificationMu.Unlock()
+	if generation <= c.notifiedGeneration {
+		return
+	}
+	c.notifiedGeneration = generation
+	publish(profile)
+}
+
+func (c *GooseClient) initialize(ctx context.Context, connection *gooseConnection) (AgentProfile, error) {
 	version := c.Version
 	if version == "" {
 		version = "0.0.0"
@@ -189,24 +233,96 @@ func (c *GooseClient) initialize(ctx context.Context, connection *gooseConnectio
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("initialize Goose ACP: %w", err)
+		return AgentProfile{}, fmt.Errorf("initialize ACP agent: %w", err)
 	}
 	if response.ProtocolVersion != acp.ProtocolVersionNumber {
-		return fmt.Errorf("unsupported Goose ACP protocol version %d (expected %d)", response.ProtocolVersion, acp.ProtocolVersionNumber)
+		return AgentProfile{}, fmt.Errorf("unsupported ACP protocol version %d (expected %d)", response.ProtocolVersion, acp.ProtocolVersionNumber)
 	}
-	return nil
+	profile := agentProfile(response)
+	if c.requireGoose && !profile.Goose {
+		return AgentProfile{}, fmt.Errorf("the packaged ACP endpoint must be recognized Goose")
+	}
+	return profile, nil
 }
 
-func (c *GooseClient) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func agentProfile(response acp.InitializeResponse) AgentProfile {
+	capabilities := response.AgentCapabilities
+	profile := AgentProfile{MissingRequired: []string{}}
+	rawName, rawVersion := "", ""
+	if response.AgentInfo != nil {
+		rawName = response.AgentInfo.Name
+		rawVersion = response.AgentInfo.Version
+		profile.Name = boundedAgentText(rawName, maxAgentNameRunes)
+		profile.Version = boundedAgentText(rawVersion, maxAgentVersionRunes)
+	}
+	_, gooseMetadata := capabilities.Meta["goose"]
+	profile.Goose = response.AgentInfo != nil && response.AgentInfo.Name == "goose" && gooseMetadata && capabilities.Meta["goose"] != nil
+	profile.Operations = AgentOperations{
+		DeleteSession:  capabilities.SessionCapabilities.Delete != nil,
+		ForkSession:    capabilities.SessionCapabilities.Fork != nil || profile.Goose,
+		PromptImage:    capabilities.PromptCapabilities.Image,
+		HTTPMCP:        capabilities.McpCapabilities.Http,
+		Steer:          profile.Goose,
+		RenameSession:  profile.Goose,
+		ArchiveSession: profile.Goose,
+		Administration: profile.Goose,
+	}
+	if !profile.Goose && profile.Name != "" {
+		profile.identity = agentProfileIdentityDigest(rawName, rawVersion, profile.Operations)
+	}
+	if !capabilities.LoadSession {
+		profile.MissingRequired = append(profile.MissingRequired, "session/load")
+	}
+	if capabilities.SessionCapabilities.List == nil {
+		profile.MissingRequired = append(profile.MissingRequired, "session/list")
+	}
+	profile.Compatible = len(profile.MissingRequired) == 0
+	return profile
+}
+
+func cloneAgentProfile(profile AgentProfile) AgentProfile {
+	profile.MissingRequired = append([]string{}, profile.MissingRequired...)
+	return profile
+}
+
+func boundedAgentText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	runes := make([]rune, 0, min(len(value), limit))
+	for _, character := range value {
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+			continue
+		}
+		runes = append(runes, character)
+		if len(runes) == limit {
+			break
+		}
+	}
+	return string(runes)
+}
+
+func agentProfileIdentityDigest(name, version string, operations AgentOperations) string {
+	encoded, _ := json.Marshal(struct {
+		Name       string          `json:"name"`
+		Version    string          `json:"version"`
+		Operations AgentOperations `json:"operations"`
+	}{Name: name, Version: version, Operations: operations})
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest)
+}
+
+func (c *GooseClient) CallGoose(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	bounded, cancel := c.bounded(ctx)
 	defer cancel()
-	return c.CallUntilDone(bounded, method, params)
+	return c.CallGooseUntilDone(bounded, method, params)
 }
 
-func (c *GooseClient) CallUntilDone(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func (c *GooseClient) CallGooseUntilDone(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	connection, _, err := c.ready(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if !connection.profile.Operations.Administration {
+		return nil, unsupportedAgentCapability("Goose-specific operations")
 	}
 	result, err := connection.client.CallExtension(ctx, method, params)
 	if err != nil {
@@ -226,6 +342,9 @@ func (c *GooseClient) ListSessions(ctx context.Context, request acp.ListSessions
 	connection, _, err := c.ready(ctx)
 	if err != nil {
 		return acp.ListSessionsResponse{}, err
+	}
+	if !hasAgentCapability(connection.profile, "session/list") {
+		return acp.ListSessionsResponse{}, unsupportedAgentCapability("session/list")
 	}
 	bounded, cancel := c.bounded(ctx)
 	defer cancel()
@@ -247,6 +366,9 @@ func (c *GooseClient) LoadSession(ctx context.Context, request acp.LoadSessionRe
 	if err != nil {
 		return acp.LoadSessionResponse{}, err
 	}
+	if !hasAgentCapability(connection.profile, "session/load") {
+		return acp.LoadSessionResponse{}, unsupportedAgentCapability("session/load")
+	}
 	bounded, cancel := c.bounded(ctx)
 	defer cancel()
 	return connection.client.LoadSession(bounded, request)
@@ -257,6 +379,9 @@ func (c *GooseClient) ForkSession(ctx context.Context, request acp.UnstableForkS
 	if err != nil {
 		return acp.UnstableForkSessionResponse{}, err
 	}
+	if !connection.profile.Operations.ForkSession {
+		return acp.UnstableForkSessionResponse{}, unsupportedAgentCapability("session/fork")
+	}
 	bounded, cancel := c.bounded(ctx)
 	defer cancel()
 	return connection.client.UnstableForkSession(bounded, request)
@@ -266,6 +391,9 @@ func (c *GooseClient) DeleteSession(ctx context.Context, sessionID string) error
 	connection, _, err := c.ready(ctx)
 	if err != nil {
 		return err
+	}
+	if !connection.profile.Operations.DeleteSession {
+		return unsupportedAgentCapability("session/delete")
 	}
 	bounded, cancel := c.bounded(ctx)
 	defer cancel()
@@ -278,7 +406,32 @@ func (c *GooseClient) Prompt(ctx context.Context, request acp.PromptRequest) (ac
 	if err != nil {
 		return acp.PromptResponse{}, err
 	}
+	if promptContainsImage(request) && !connection.profile.Operations.PromptImage {
+		return acp.PromptResponse{}, unsupportedAgentCapability("image prompts")
+	}
 	return connection.client.Prompt(ctx, request)
+}
+
+func hasAgentCapability(profile AgentProfile, method string) bool {
+	for _, missing := range profile.MissingRequired {
+		if missing == method {
+			return false
+		}
+	}
+	return true
+}
+
+func promptContainsImage(request acp.PromptRequest) bool {
+	for _, block := range request.Prompt {
+		if block.Image != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func unsupportedAgentCapability(capability string) error {
+	return &codedError{code: "UNSUPPORTED_AGENT_CAPABILITY", message: "Connected agent does not support " + capability}
 }
 
 func (c *GooseClient) Cancel(ctx context.Context, sessionID string) error {
@@ -313,9 +466,9 @@ func (c *GooseClient) disconnect(shutdown bool) {
 	attempt := c.connecting
 	c.connecting = nil
 	if attempt != nil {
-		attempt.err = fmt.Errorf("Goose ACP connection was reset")
+		attempt.err = fmt.Errorf("ACP connection was reset")
 		if c.closed {
-			attempt.err = fmt.Errorf("Goose client has been shut down")
+			attempt.err = fmt.Errorf("ACP client has been shut down")
 		}
 		close(attempt.done)
 	}
@@ -372,7 +525,7 @@ func dialGoose(ctx context.Context, url, secret string, events GooseEvents, gene
 	webSocket.SetReadLimit(gooseReadLimit)
 	stream := &acpWebSocketStream{ctx: connectionContext, connection: webSocket}
 	sink := &gooseSink{events: events, generation: generation}
-	return &gooseConnection{client: acp.NewClientSideConnection(sink, stream, stream), stream: stream, cancel: cancel}, nil
+	return &gooseConnection{client: acp.NewClientSideConnection(sink, stream, stream), stream: stream, cancel: cancel, sink: sink}, nil
 }
 
 type acpWebSocketStream struct {
@@ -419,9 +572,13 @@ func (s *acpWebSocketStream) Close() error {
 type gooseSink struct {
 	events     GooseEvents
 	generation uint64
+	goose      atomic.Bool
 }
 
 func (s *gooseSink) HandleExtensionMethod(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if strings.HasPrefix(method, "_goose/") && !s.goose.Load() {
+		return nil, acp.NewMethodNotFound(method)
+	}
 	if s.events == nil {
 		return nil, acp.NewMethodNotFound(method)
 	}
@@ -435,7 +592,9 @@ func (s *gooseSink) SessionUpdate(ctx context.Context, params acp.SessionNotific
 	if s.events == nil {
 		return nil
 	}
-	return s.events.SessionUpdate(context.WithValue(ctx, connectionGenerationKey{}, s.generation), params)
+	ctx = context.WithValue(ctx, connectionGenerationKey{}, s.generation)
+	ctx = context.WithValue(ctx, recognizedGooseConnectionKey{}, s.goose.Load())
+	return s.events.SessionUpdate(ctx, params)
 }
 
 func (s *gooseSink) RequestPermission(ctx context.Context, params acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {

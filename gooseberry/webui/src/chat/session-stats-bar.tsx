@@ -26,8 +26,14 @@ export function usageParts(stats: SessionStats): string[] {
 		parts.push(`R${formatTokens(stats.tokens.cacheRead)}`);
 	if (isReported(stats, "cacheWrite", stats.tokens.cacheWrite))
 		parts.push(`W${formatTokens(stats.tokens.cacheWrite)}`);
-	if (isReported(stats, "cost", stats.cost)) parts.push(`$${stats.cost.toFixed(3)}`);
+	if (isReported(stats, "cost", stats.cost)) parts.push(formatCost(stats));
 	return parts;
+}
+
+function formatCost(stats: SessionStats): string {
+	return !stats.costCurrency || stats.costCurrency === "USD"
+		? `$${stats.cost.toFixed(3)}`
+		: `${stats.cost.toFixed(3)} ${stats.costCurrency}`;
 }
 
 export function contextPart(usage: ContextUsage): { bar: string; text: string } {
@@ -72,7 +78,7 @@ export function SessionStatsBar({ stats }: { stats: SessionStats | null }) {
 					<div>
 						<div className="tr-text-ui text-text-default">Session usage</div>
 						<div className="text-text-muted tr-text-metadata">
-							Reported by Goose for this controller runtime
+							Reported by the connected agent for this controller runtime
 						</div>
 					</div>
 					{stats.contextUsage ? (
@@ -119,7 +125,7 @@ export function SessionStatsBar({ stats }: { stats: SessionStats | null }) {
 							<UsageRow label="Total" value={`${stats.tokens.total.toLocaleString()} tokens`} />
 						) : null}
 						{isReported(stats, "cost", stats.cost) ? (
-							<UsageRow label="Cost" value={`$${stats.cost.toFixed(4)}`} />
+							<UsageRow label="Cost" value={formatCost(stats)} />
 						) : null}
 					</dl>
 				</div>

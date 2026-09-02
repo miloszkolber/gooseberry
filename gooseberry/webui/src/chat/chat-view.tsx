@@ -42,6 +42,7 @@ import { SessionGoalControl } from "./session-goal-control";
 import { SessionLineageControl } from "./session-lineage-control";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./stream-indicator";
 import "./tools/register";
+import { unsupportedLifecycleReason } from "./session-lifecycle-controls";
 import { McpAppSessionProvider } from "./tools/apps/mcp-app-context";
 import { ChatTurnView } from "./turns";
 import type { ChatAttachment, ChatTurn } from "./types";
@@ -128,6 +129,15 @@ export default function ChatView({
 }) {
 	const runtime = useAppStore((s) => s.sessions[sessionId]) ?? EMPTY_RUNTIME;
 	const connectionGeneration = useAppStore((s) => s.connectionGeneration);
+	const agentProfile = useAppStore((s) => s.agentProfile);
+	const gooseAgent = agentProfile?.goose === true;
+	const canPromptImage = agentProfile ? agentProfile.operations.promptImage : null;
+	const canSteer = agentProfile?.operations.steer === true;
+	const canDelete = agentProfile?.operations.deleteSession === true;
+	const canUseHttpMcp = agentProfile?.operations.httpMcp === true;
+	const deleteUnavailableReason = canDelete
+		? undefined
+		: unsupportedLifecycleReason(agentProfile?.name, "deleting");
 	const parentDeleted = useAppStore(
 		(state) =>
 			runtime.parentSessionId !== undefined &&
@@ -345,6 +355,7 @@ export default function ChatView({
 						isStreaming: snapshot.summary.isStreaming,
 					});
 					useAppStore.getState().replaceTranscriptSnapshot(sessionId, snapshot.summary, hydrated);
+					useAppStore.getState().setCommands(sessionId, snapshot.commands);
 					if (isCurrent()) setTranscriptLoadState("idle");
 					return "reloaded";
 				}
@@ -481,7 +492,7 @@ export default function ChatView({
 	useEffect(() => {
 		const identity = agentMentionIdentity(projectId, sessionId);
 		setLoadedAgentMentions({ identity, mentions: [] });
-		if (!projectId || !identity) {
+		if (!gooseAgent || !projectId || !identity) {
 			return;
 		}
 		let cancelled = false;
@@ -496,7 +507,7 @@ export default function ChatView({
 		return () => {
 			cancelled = true;
 		};
-	}, [projectId, sessionId]);
+	}, [gooseAgent, projectId, sessionId]);
 
 	useEffect(() => {
 		const identity = fileMentionCandidateIdentity(
@@ -572,13 +583,20 @@ export default function ChatView({
 		attachments: ChatAttachment[],
 		behavior: Exclude<SubmitBehavior, "interrupt">,
 	) => {
-		const heldByQueue = behavior === "send" && runtime.queue.followUp.length > 0;
-		const effectiveBehavior = heldByQueue ? "queue" : behavior;
+		const capabilityBehavior = behavior === "steer" && !canSteer ? "queue" : behavior;
+		const heldByQueue = capabilityBehavior === "send" && runtime.queue.followUp.length > 0;
+		const effectiveBehavior = heldByQueue ? "queue" : capabilityBehavior;
+		if (canPromptImage === false && attachments.length > 0) {
+			toast.error(`${agentProfile?.name || "The connected agent"} does not support image prompts.`);
+			return false;
+		}
 		if (effectiveBehavior === "queue" && attachments.length > 0) {
 			toast.error(
 				heldByQueue
 					? "Resolve the queued follow-ups before sending images."
-					: "Send or steer image attachments directly.",
+					: canSteer
+						? "Send or steer image attachments directly."
+						: "Wait for the current response, then send image attachments directly.",
 				"Queued messages are text-only",
 			);
 			return false;
@@ -692,11 +710,15 @@ export default function ChatView({
 	};
 
 	const onInsertAndSendHit = (hit: PromptHit) => {
-		composerRef.current?.insertAndSubmit(hit.text, "send");
+		composerRef.current?.insertAndSubmit(
+			hit.text,
+			isStreaming ? (canSteer ? "steer" : "queue") : "send",
+		);
 		closeHistory();
 	};
 
 	const onDeleteHistoryChat = async (targetProjectAreaId: string, targetSessionId: string) => {
+		if (!canDelete) return;
 		try {
 			await getTransport().request("session.delete", {
 				projectId: targetProjectAreaId,
@@ -841,7 +863,12 @@ export default function ChatView({
 										parentSessionId={runtime.parentSessionId}
 										parentDeleted={parentDeleted}
 									/>
-									<SessionGoalControl projectAreaId={projectAreaId} sessionId={sessionId} />
+									<SessionGoalControl
+										projectAreaId={projectAreaId}
+										sessionId={sessionId}
+										agentCanAccessGoal={canUseHttpMcp}
+										agentName={agentProfile?.name}
+									/>
 								</div>
 							}
 						/>
@@ -855,7 +882,7 @@ export default function ChatView({
 								<DialogHeader>
 									<DialogTitle>Allow {permission.title}?</DialogTitle>
 									<DialogDescription>
-										Choose how Goose may continue with this tool request.
+										Choose how the agent may continue with this tool request.
 									</DialogDescription>
 								</DialogHeader>
 								<div className="flex flex-wrap gap-xs">
@@ -947,6 +974,7 @@ export default function ChatView({
 							onInsertAndSend={onInsertAndSendHit}
 							onOpenMessage={openMessage}
 							onDeleteChat={(wsId, id) => void onDeleteHistoryChat(wsId, id)}
+							deleteUnavailableReason={deleteUnavailableReason}
 						/>
 						<QueueStrip
 							queue={runtime.queue}
@@ -963,7 +991,7 @@ export default function ChatView({
 											{runtime.queue.blocked?.lane === queueEdit.lane &&
 											runtime.queue.blocked.index === queueEdit.index
 												? "This may already be in the transcript. Editing changes the text used if you retry it."
-												: "Update the text that Goose will receive later."}
+												: "Update the text that the agent will receive later."}
 										</DialogDescription>
 									</DialogHeader>
 									<textarea
@@ -1011,6 +1039,8 @@ export default function ChatView({
 							onSubmit={onSubmit}
 							onAbort={onAbort}
 							onHistoryOpen={onHistoryOpen}
+							supportsImages={canPromptImage}
+							supportsSteer={canSteer}
 						/>
 					</div>
 				</div>

@@ -46,8 +46,7 @@ export function SignetSettings() {
 			<div>
 				<h2 className="tr-title-entity text-text-default">Signet memory</h2>
 				<p className="mt-xs tr-text-ui text-text-muted">
-					Optional durable memory for Goose sessions. All other gooseberry integrations are fixed
-					and always available.
+					Optional durable memory for agent sessions.
 				</p>
 			</div>
 			<label className="flex items-center justify-between gap-md rounded-[var(--radius-sm)] border border-border-default p-md">

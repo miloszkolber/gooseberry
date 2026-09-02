@@ -228,7 +228,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.ProjectID == "" {
 			return nil, fmt.Errorf("malformed session request")
 		}
-		return h.Sessions.Create(ctx, request.ProjectID, request.CWD, request.Model, request.ThinkingLevel, clientKey)
+		return h.Sessions.CreateDeferred(ctx, request.ProjectID, request.CWD, request.Model, request.ThinkingLevel, clientKey)
 	case "session.fork":
 		var request sessionOwnerRequest
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {

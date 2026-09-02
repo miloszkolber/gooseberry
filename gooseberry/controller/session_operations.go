@@ -7,6 +7,7 @@ import (
 )
 
 type connectionGenerationKey struct{}
+type recognizedGooseConnectionKey struct{}
 
 // sessionOperationGate keeps Goose calls serialized per session while allowing
 // a request that has not entered the session yet to stop waiting when canceled.

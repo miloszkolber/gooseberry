@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { Project } from "@gooseberry/contracts";
+import type { AgentProfile, Project } from "@gooseberry/contracts";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { shallow } from "zustand/shallow";
@@ -12,7 +12,7 @@ import {
 } from "@/store";
 import { hasConfiguredProvider, NoProviderWelcome } from "@/workspace/no-provider-welcome";
 import { selectTabSessionStreaming } from "@/workspace/project-work-area";
-import { ShellLayout } from "@/workspace/shell";
+import { resolveShellAvailability, ShellLayout } from "@/workspace/shell";
 
 const project: Project = {
 	id: "project-1",
@@ -24,6 +24,24 @@ const project: Project = {
 
 const area: ProjectArea = projectArea(project);
 
+const genericProfile: AgentProfile = {
+	name: "Example ACP agent",
+	version: "1.2.3",
+	goose: false,
+	compatible: true,
+	missingRequired: [],
+	operations: {
+		deleteSession: false,
+		forkSession: false,
+		promptImage: false,
+		httpMcp: false,
+		steer: false,
+		renameSession: false,
+		archiveSession: false,
+		administration: false,
+	},
+};
+
 beforeEach(() => {
 	useAppStore.setState({
 		status: "connected",
@@ -33,6 +51,7 @@ beforeEach(() => {
 		selectedProjectId: project.id,
 		activeProjectAreaId: area.id,
 		providerConfigured: null,
+		agentProfile: null,
 		settingsOpen: false,
 		settingsSection: SettingsSection.Models,
 	});
@@ -77,6 +96,7 @@ function expectBlockedShell(markup: string): void {
 
 test("Shell keeps projects and hotkey targets inaccessible while provider status is loading", () => {
 	const markup = shellMarkup(null);
+	expect(resolveShellAvailability("connected", null, null, true)).toBe("error");
 	expect(markup).toContain('data-testid="provider-status-loading"');
 	expectBlockedShell(markup);
 });
@@ -104,6 +124,46 @@ test("Shell replaces existing project UI with provider setup when no provider is
 	(connect.props.onClick as () => void)();
 	expect(useAppStore.getState().settingsOpen).toBeTrue();
 	expect(useAppStore.getState().settingsSection).toBe(SettingsSection.Providers);
+});
+
+test("a compatible generic ACP agent enters the workspace without Goose provider status", () => {
+	expect(resolveShellAvailability("connected", genericProfile, null, false)).toBe("ready");
+	const markup = renderToStaticMarkup(
+		<ShellLayout
+			status="connected"
+			agentProfile={genericProfile}
+			providerConfigured={null}
+			activeProjectAreaId={area.id}
+			activeProjectArea={area}
+			contextProject={project}
+		/>,
+	);
+	expect(markup).toContain('data-testid="project-shell"');
+	expect(markup).not.toContain("Checking provider status");
+	expect(markup).not.toContain("Goose unavailable");
+});
+
+test("an incompatible agent names the required ACP capabilities it is missing", () => {
+	const profile = {
+		...genericProfile,
+		compatible: false,
+		missingRequired: ["session/load", "session/list"],
+	};
+	expect(resolveShellAvailability("connected", profile, null, false)).toBe("incompatible");
+	const markup = renderToStaticMarkup(
+		<ShellLayout
+			status="connected"
+			agentProfile={profile}
+			providerConfigured={null}
+			activeProjectAreaId={area.id}
+			activeProjectArea={area}
+			contextProject={project}
+		/>,
+	);
+	expect(markup).toContain("Example ACP agent is not compatible with Gooseberry");
+	expect(markup).toContain("session/load");
+	expect(markup).toContain("session/list");
+	expectBlockedShell(markup);
 });
 
 test("provider configuration reflects the status report", () => {

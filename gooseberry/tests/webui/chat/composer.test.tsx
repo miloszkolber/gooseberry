@@ -10,6 +10,8 @@ import {
 	insertedMention,
 	type MentionCandidate,
 	mentionCompletionKeyAction,
+	streamingSendModes,
+	streamingSubmitBehavior,
 } from "@/chat/composer";
 import { SlashCommandMenu } from "@/chat/slash-command-completion";
 
@@ -85,6 +87,31 @@ test("completion menus expose a coherent combobox and listbox contract", () => {
 	expect(markup).toContain('role="option"');
 	expect(markup).toContain('aria-selected="true"');
 	expect(markup).toContain("aria-activedescendant=");
+});
+
+test("a streaming agent without steer queues text and exposes no image or steer affordance", () => {
+	expect(streamingSubmitBehavior(false)).toBe("queue");
+	expect(streamingSubmitBehavior(true)).toBe("steer");
+	expect(streamingSendModes(false).map((mode) => mode.behavior)).toEqual(["queue", "interrupt"]);
+	const markup = renderToStaticMarkup(
+		<Composer
+			value="follow up"
+			onChange={() => {}}
+			isStreaming
+			commands={[]}
+			mentionCandidates={[]}
+			recentPrompts={[]}
+			onMentionQuery={() => {}}
+			onSubmit={() => true}
+			onAbort={() => {}}
+			supportsImages={false}
+			supportsSteer={false}
+		/>,
+	);
+	expect(markup).toContain('data-image-prompts="false"');
+	expect(markup).toContain('aria-label="Queue follow-up"');
+	expect(markup).not.toContain('data-testid="send-mode-steer"');
+	expect(markup).not.toContain("Enter steers");
 });
 
 test("slash completion options retain listbox selection semantics", () => {

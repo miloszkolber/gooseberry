@@ -324,14 +324,30 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 								total: event.usage.total ?? 0,
 							},
 							cost: event.usage.cost ?? 0,
+							...(event.costCurrency
+								? { costCurrency: event.costCurrency }
+								: rt.stats?.costCurrency
+									? { costCurrency: rt.stats.costCurrency }
+									: {}),
 							...(event.reported ? { reported: event.reported } : {}),
 							...(rt.stats?.contextUsage ? { contextUsage: rt.stats.contextUsage } : {}),
 						},
 					}
 				: rt;
 		case "context":
-			return event.contextUsage && rt.stats
-				? { ...rt, stats: { ...rt.stats, contextUsage: event.contextUsage } }
+			return event.contextUsage
+				? {
+						...rt,
+						stats: rt.stats
+							? { ...rt.stats, contextUsage: event.contextUsage }
+							: {
+									sessionId: "",
+									totalMessages: 0,
+									tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+									cost: 0,
+									contextUsage: event.contextUsage,
+								},
+					}
 				: rt;
 		case "config": {
 			const value = event.configOptions?.find(
@@ -358,7 +374,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				currentAssistantId: null,
 				turns: [
 					...clearTurnStreaming(rt.turns),
-					{ kind: "error", id: crypto.randomUUID(), text: event.error ?? "Goose request failed." },
+					{ kind: "error", id: crypto.randomUUID(), text: event.error ?? "Agent request failed." },
 				],
 			};
 		case "session-info":
