@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/miloszkolber/gooseberry/internal/diagnostics"
 )
 
 type Handler interface {
@@ -11,18 +13,29 @@ type Handler interface {
 }
 
 type CoreHandler struct {
-	Projects *Projects
-	Files    *Files
-	Sessions *SessionManager
-	Apps     *AppViews
-	Settings *Settings
-	Admin    *GooseAdmin
-	Git      *Git
-	Watches  *ProjectWatches
+	Projects      *Projects
+	Files         *Files
+	Sessions      *SessionManager
+	Apps          *AppViews
+	Settings      *Settings
+	Admin         *GooseAdmin
+	Git           *Git
+	Watches       *ProjectWatches
+	Requests      *diagnostics.RequestCounter
+	RuntimeStatus func(context.Context) runtimeStatusReport
 }
 
-func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMessage, clientKey string) (any, error) {
+func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMessage, clientKey string) (result any, err error) {
+	if h.Requests != nil && method != "runtime.status" {
+		started := h.Requests.Begin()
+		defer func() { h.Requests.End(started, err != nil) }()
+	}
 	switch method {
+	case "runtime.status":
+		if h.RuntimeStatus == nil {
+			return nil, fmt.Errorf("runtime status is not configured")
+		}
+		return h.RuntimeStatus(ctx), nil
 	case "history.search":
 		var request map[string]any
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {

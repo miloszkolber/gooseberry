@@ -92,7 +92,7 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(78);
+	expect(PROTOCOL_VERSION).toBe(79);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");
@@ -154,4 +154,22 @@ test("agent mentions and provider readiness use browser-safe typed protocol surf
 	expect(WS_METHODS.providerReadiness).toBe("provider.readiness");
 	expect(JSON.stringify(mentions)).not.toContain("sourcePath");
 	expect(JSON.stringify(readiness)).not.toContain("error");
+});
+
+test("runtime status is a small typed component projection", () => {
+	const status: WsResult<"runtime.status"> = {
+		application: {
+			state: "ready",
+			build: { version: "1.2.3", revision: "0123456789abcdef" },
+			process: { uptimeSeconds: 120, goroutines: 8, heapBytes: 1_048_576, gcCycles: 2 },
+			requests: { total: 40, failures: 1, active: 2, averageMs: 4.5, maxMs: 18 },
+		},
+		agent: { state: "ready", name: "goose", version: "1.48.0" },
+		browser: { state: "unavailable", detail: "Browser service is unavailable." },
+	};
+	expect(PROTOCOL_VERSION).toBe(79);
+	expect(WS_METHODS.runtimeStatus).toBe("runtime.status");
+	expect(status.application.requests?.averageMs).toBe(4.5);
+	expect(JSON.stringify(status)).not.toContain("token");
+	expect(JSON.stringify(status)).not.toContain("path");
 });

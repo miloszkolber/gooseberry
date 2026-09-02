@@ -156,6 +156,12 @@ browser find role tab click --name "Agent" >/dev/null
 browser press ArrowRight >/dev/null
 assert_eval "document.activeElement?.textContent?.trim() === 'Signet' && document.activeElement?.getAttribute('aria-selected') === 'true'"
 browser screenshot /artifacts/narrow-settings.png >/dev/null
+browser find role tab click --name "System" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=system-card-application]') !== null" >/dev/null
+browser wait --text "ui-acceptance" >/dev/null
+browser wait --text "fixture-agent" >/dev/null
+assert_eval "document.querySelector('[data-testid=system-card-browser]')?.textContent?.includes('Unavailable') === true && document.documentElement.scrollWidth === document.documentElement.clientWidth"
+browser screenshot /artifacts/narrow-system.png >/dev/null
 browser press Escape >/dev/null
 browser wait --fn "document.querySelector('[data-testid=settings-dialog]') === null" >/dev/null
 assert_eval "document.activeElement?.getAttribute('data-testid') === 'open-settings' && document.documentElement.scrollWidth === document.documentElement.clientWidth"

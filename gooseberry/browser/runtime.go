@@ -3,21 +3,23 @@ package browser
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/miloszkolber/gooseberry/internal/diagnostics"
 )
 
 // Run serves the browser API until cancellation or an HTTP listener failure.
-func Run(ctx context.Context) error {
+func Run(ctx context.Context, build diagnostics.BuildInfo, logger *slog.Logger) error {
 	config, err := configFromEnvironment(os.LookupEnv)
 	if err != nil {
 		return err
 	}
-	app, err := newApp(config)
+	app, err := newAppWithRuntime(config, build, logger)
 	if err != nil {
 		return err
 	}
@@ -29,7 +31,7 @@ func Run(ctx context.Context) error {
 	}
 	errorsCh := make(chan error, 1)
 	go func() { errorsCh <- server.Serve(listener) }()
-	log.Printf("[gooseberry-browser] listening on %s", listener.Addr())
+	app.logger.Info("browser service listening", "address", listener.Addr().String())
 
 	select {
 	case <-ctx.Done():
