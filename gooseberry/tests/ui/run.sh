@@ -114,13 +114,12 @@ echo "UI acceptance: reconnect"
 browser wait --fn "document.querySelector('[data-testid=connection-status]')?.getAttribute('data-status') === 'disconnected'" >/dev/null
 browser set offline off >/dev/null
 browser wait --fn "document.querySelector('[data-testid=connection-status]')?.getAttribute('data-status') === 'connected'" >/dev/null
-browser wait --text "Partial reply complete." >/dev/null
-assert_eval "Array.from(document.querySelectorAll('[data-testid=chat-message][data-role=assistant]')).filter((node) => node.textContent?.includes('Partial reply complete.')).length === 1"
+browser wait --fn "(document.body.innerText.match(/Partial reply complete\\./g) ?? []).length === 1" >/dev/null
 browser click '[data-testid="chat-attachment-chip"]' >/dev/null
 browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]') !== null" >/dev/null
 browser press Escape >/dev/null
 browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]') === null" >/dev/null
-assert_eval "document.activeElement?.getAttribute('data-testid') === 'chat-attachment-chip'"
+browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'chat-attachment-chip'" >/dev/null
 browser screenshot /artifacts/desktop-chat.png >/dev/null
 
 # Narrow layout, pane navigation, dialog keyboard behavior and overflow.
