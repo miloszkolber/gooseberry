@@ -8,6 +8,7 @@ export function useSessionCommandSync(sessionId: string, projectAreaId: string):
 		state.status === "connected" ? state.connectionGeneration : 0,
 	);
 	const commandCatalogGeneration = useAppStore((state) => state.commandCatalogGeneration);
+	const gooseAgent = useAppStore((state) => state.agentProfile?.goose === true);
 	const skillVersion = useAppStore((state) =>
 		selectSkillsStale(state, projectAreaId, sessionId)
 			? (state.skillChangeTickByProjectArea[projectAreaId] ?? 0)
@@ -15,7 +16,7 @@ export function useSessionCommandSync(sessionId: string, projectAreaId: string):
 	);
 
 	useEffect(() => {
-		if (!sessionReady || connectedGeneration === 0) return;
+		if (!gooseAgent || !sessionReady || connectedGeneration === 0) return;
 		const startingState = useAppStore.getState();
 		const syncedTick = startingState.skillChangeTickByProjectArea[projectAreaId] ?? 0;
 		const commandRevision = startingState.sessions[sessionId]?.commandRevision ?? 0;
@@ -47,5 +48,6 @@ export function useSessionCommandSync(sessionId: string, projectAreaId: string):
 		connectedGeneration,
 		commandCatalogGeneration,
 		skillVersion,
+		gooseAgent,
 	]);
 }

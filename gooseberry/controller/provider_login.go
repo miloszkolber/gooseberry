@@ -181,7 +181,7 @@ func (p *ProviderLogins) save(login *providerLogin) {
 	values := append([]map[string]string{}, login.values...)
 	p.mu.Unlock()
 	p.frame(login, map[string]any{"kind": "progress", "message": "Saving provider configuration…"})
-	_, err := p.admin.client.CallUntilDone(login.ctx, "_goose/unstable/providers/config/save", map[string]any{"providerId": login.providerID, "fields": values})
+	_, err := p.admin.client.CallGooseUntilDone(login.ctx, "_goose/unstable/providers/config/save", map[string]any{"providerId": login.providerID, "fields": values})
 	p.finish(login, err)
 }
 
@@ -193,7 +193,7 @@ func (p *ProviderLogins) authenticate(login *providerLogin) {
 		return
 	}
 	p.mu.Unlock()
-	_, err := p.admin.client.CallUntilDone(login.ctx, "_goose/unstable/providers/config/authenticate", map[string]any{"providerId": login.providerID})
+	_, err := p.admin.client.CallGooseUntilDone(login.ctx, "_goose/unstable/providers/config/authenticate", map[string]any{"providerId": login.providerID})
 	p.finish(login, err)
 }
 

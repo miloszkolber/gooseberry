@@ -1,5 +1,26 @@
 package controller
 
+type AgentOperations struct {
+	DeleteSession  bool `json:"deleteSession"`
+	ForkSession    bool `json:"forkSession"`
+	PromptImage    bool `json:"promptImage"`
+	HTTPMCP        bool `json:"httpMcp"`
+	Steer          bool `json:"steer"`
+	RenameSession  bool `json:"renameSession"`
+	ArchiveSession bool `json:"archiveSession"`
+	Administration bool `json:"administration"`
+}
+
+type AgentProfile struct {
+	Name            string          `json:"name"`
+	Version         string          `json:"version"`
+	Goose           bool            `json:"goose"`
+	Compatible      bool            `json:"compatible"`
+	MissingRequired []string        `json:"missingRequired"`
+	Operations      AgentOperations `json:"operations"`
+	identity        string
+}
+
 type Project struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -93,6 +114,7 @@ type SessionStats struct {
 	TotalMessages int             `json:"totalMessages"`
 	Tokens        SessionTokens   `json:"tokens"`
 	Cost          float64         `json:"cost"`
+	CostCurrency  string          `json:"costCurrency,omitempty"`
 	Reported      map[string]bool `json:"reported,omitempty"`
 	ContextUsage  map[string]any  `json:"contextUsage,omitempty"`
 }

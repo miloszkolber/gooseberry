@@ -140,6 +140,7 @@ test("late hydration respects chat and project closure while allowing an explici
 		},
 		messages: [],
 		pendingTools: [],
+		commands: [],
 		page: { projectionId: "projection", start: 0, total: 0 },
 	};
 	try {

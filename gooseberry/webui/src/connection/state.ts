@@ -1,3 +1,4 @@
+import type { AgentProfile } from "@gooseberry/contracts";
 import type { StateCreator } from "zustand";
 import type { AppState } from "../store/app-store";
 import type { ConnectionStatus } from "./transport";
@@ -15,8 +16,10 @@ export interface ConnectionState {
 	connectionGeneration: number;
 	welcomeGeneration: number;
 	protocolVersion: number | null;
+	agentProfile: AgentProfile | null;
 	setStatus: (status: ConnectionStatus) => void;
 	setAuthenticationEnabled: (enabled: boolean) => void;
+	replaceAgentProfile: (profile: AgentProfile | null) => void;
 }
 
 export const createConnectionState: StateCreator<AppState, [], [], ConnectionState> = (set) => ({
@@ -25,11 +28,14 @@ export const createConnectionState: StateCreator<AppState, [], [], ConnectionSta
 	connectionGeneration: 0,
 	welcomeGeneration: 0,
 	protocolVersion: null,
+	agentProfile: null,
 	setStatus: (status) =>
 		set((state) => ({
 			status,
+			...(status === "connecting" ? { agentProfile: null } : {}),
 			connectionGeneration:
 				status === "connected" ? state.connectionGeneration + 1 : state.connectionGeneration,
 		})),
 	setAuthenticationEnabled: (authenticationEnabled) => set({ authenticationEnabled }),
+	replaceAgentProfile: (agentProfile) => set({ agentProfile }),
 });

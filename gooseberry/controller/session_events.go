@@ -5,12 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
+)
+
+type sessionUpdateOrigin uint8
+
+const (
+	agentACPUpdate sessionUpdateOrigin = iota
+	gooseACPUpdate
+	gooseExtensionUpdate
 )
 
 func (m *SessionManager) SessionUpdate(ctx context.Context, notification acp.SessionNotification) error {
@@ -133,14 +142,33 @@ func (m *SessionManager) PendingPermissions() []map[string]any {
 func (m *SessionManager) applyUpdate(ctx context.Context, notification map[string]any, gooseOnly bool) error {
 	sessionID := textValue(notification["sessionId"])
 	if sessionID == "" {
-		return fmt.Errorf("Goose update is missing sessionId")
+		return fmt.Errorf("ACP update is missing sessionId")
 	}
 	update := mapValue(notification["update"])
 	kind := textValue(update["sessionUpdate"])
+	origin := agentACPUpdate
+	if gooseOnly {
+		origin = gooseExtensionUpdate
+	} else if recognized, _ := ctx.Value(recognizedGooseConnectionKey{}).(bool); recognized {
+		origin = gooseACPUpdate
+	}
 	m.mu.Lock()
 	entry := m.sessions[sessionID]
 	if m.closed {
 		entry = nil
+	}
+	if entry == nil && !m.closed && m.creating > 0 && kind == "available_commands_update" && origin != gooseExtensionUpdate {
+		generation, tagged := ctx.Value(connectionGenerationKey{}).(uint64)
+		_, exists := m.pendingCommands[sessionID]
+		if tagged && (exists || len(m.pendingCommands) < maxPendingCommandCatalogs) {
+			if m.pendingCommands == nil {
+				m.pendingCommands = make(map[string]pendingCommandCatalog)
+			}
+			m.pendingCommands[sessionID] = pendingCommandCatalog{
+				generation: generation,
+				commands:   projectAgentSlashCommands(update["availableCommands"], origin == gooseACPUpdate),
+			}
+		}
 	}
 	retainUntilScheduled := entry != nil && kind == "status_message" && terminalStatusKind(textValue(mapValue(update["status"])["type"]))
 	if retainUntilScheduled {
@@ -169,7 +197,7 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 		entry.state.Unlock()
 		return nil
 	}
-	events := applySessionUpdate(target, kind, update, gooseOnly)
+	events := applySessionUpdate(target, kind, update, origin)
 	wakeQueue := false
 	if publish {
 		for _, event := range events {
@@ -199,12 +227,13 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 	return nil
 }
 
-func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any, gooseOnly bool) []map[string]any {
+func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any, origin sessionUpdateOrigin) []map[string]any {
 	// Notifications can change a closed chat without holding an operation ref.
 	entry.inactiveBytes = 0
-	if gooseOnly {
+	if origin == gooseExtensionUpdate {
 		return applyGooseOnlyUpdate(entry, kind, update)
 	}
+	trustedGoose := origin == gooseACPUpdate
 	switch kind {
 	case "agent_message_chunk", "user_message_chunk":
 		role := "assistant"
@@ -240,14 +269,19 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		}
 		return []map[string]any{{"type": "text", "messageId": optionalText(update["messageId"]), "text": text}}
 	case "available_commands_update":
-		return []map[string]any{{"type": "commands", "commands": projectSlashCommands(update["availableCommands"])}}
+		commands := projectAgentSlashCommands(update["availableCommands"], trustedGoose)
+		entry.commands = commands
+		return []map[string]any{{"type": "commands", "commands": cloneSlashCommands(commands)}}
 	case "agent_thought_chunk":
 		text := textValue(mapValue(update["content"])["text"])
 		appendMessageBlock(entry, "assistant", map[string]any{"type": "thinking", "thinking": text})
 		entry.streaming = true
 		return []map[string]any{{"type": "thinking", "messageId": optionalText(update["messageId"]), "text": text}}
 	case "tool_call":
-		trustedTool := mapValue(mapValue(mapValue(update["_meta"])["goose"])["toolCall"])
+		trustedTool := map[string]any{}
+		if trustedGoose {
+			trustedTool = mapValue(mapValue(mapValue(update["_meta"])["goose"])["toolCall"])
+		}
 		toolName := textValue(trustedTool["toolName"])
 		activityTool := textValue(trustedTool["extensionName"]) == "summon" && (toolName == "delegate" || toolName == "load")
 		if toolName == "" {
@@ -279,10 +313,15 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		toolID := textValue(update["toolCallId"])
 		status := textValue(update["status"])
 		finished := status == "completed" || status == "error" || status == "failed"
-		result, activity := projectToolOutputAndActivity(entry, toolID, update, finished)
-		attachment := projectAppAttachment(entry, toolID, update)
+		result, activity := projectToolOutputAndActivity(entry, toolID, update, finished, trustedGoose)
+		var attachment map[string]any
+		if trustedGoose {
+			attachment = projectAppAttachment(entry, toolID, update)
+		} else {
+			delete(entry.appAttachments, toolID)
+		}
 		if finished {
-			message := map[string]any{"role": "toolResult", "toolCallId": toolID, "content": result, "details": toolDetailsWithoutApp(update)}
+			message := map[string]any{"role": "toolResult", "toolCallId": toolID, "content": result, "details": toolDetailsForAgent(update, trustedGoose)}
 			if activity != nil {
 				message["subagentActivity"] = cloneJSON(activity)
 			}
@@ -314,13 +353,68 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		if title := textValue(update["title"]); title != "" {
 			entry.title = title
 		}
-		gooseMeta := mapValue(mapValue(update["_meta"])["goose"])
-		if value, exists := gooseMeta["activeRunId"]; exists {
-			entry.runID = textValue(value)
+		if trustedGoose {
+			gooseMeta := mapValue(mapValue(update["_meta"])["goose"])
+			if value, exists := gooseMeta["activeRunId"]; exists {
+				entry.runID = textValue(value)
+			}
+		} else {
+			entry.runID = ""
 		}
 		return []map[string]any{{"type": "session-info", "title": entry.title}}
+	case "usage_update":
+		return applyStandardUsageUpdate(entry, update)
 	}
 	return nil
+}
+
+func applyStandardUsageUpdate(entry *sessionEntry, update map[string]any) []map[string]any {
+	size := integerValue(update["size"])
+	used := integerValue(update["used"])
+	if size < 0 {
+		size = 0
+	}
+	if used < 0 {
+		used = 0
+	}
+	var percent any
+	if size > 0 {
+		percent = float64(used) / float64(size) * 100
+	}
+	entry.stats.ContextUsage = map[string]any{"tokens": used, "contextWindow": size, "percent": percent}
+	events := []map[string]any{{"type": "context", "contextUsage": entry.stats.ContextUsage}}
+	cost := mapValue(update["cost"])
+	amount, amountOK := cost["amount"].(float64)
+	currency := textValue(cost["currency"])
+	if !amountOK || math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 || !validCurrencyCode(currency) {
+		return events
+	}
+	entry.stats.Cost = amount
+	entry.stats.CostCurrency = currency
+	reported := maps.Clone(entry.stats.Reported)
+	if reported == nil {
+		reported = make(map[string]bool)
+	}
+	reported["cost"] = true
+	entry.stats.Reported = reported
+	return append([]map[string]any{{
+		"type":         "usage",
+		"usage":        map[string]any{"input": entry.stats.Tokens.Input, "output": entry.stats.Tokens.Output, "cacheRead": entry.stats.Tokens.CacheRead, "cacheWrite": entry.stats.Tokens.CacheWrite, "total": entry.stats.Tokens.Total, "cost": entry.stats.Cost},
+		"reported":     entry.stats.Reported,
+		"costCurrency": currency,
+	}}, events...)
+}
+
+func validCurrencyCode(value string) bool {
+	if len(value) != 3 {
+		return false
+	}
+	for _, character := range value {
+		if character < 'A' || character > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 // ACP updates replace only the supplied fields. Keep unfinished output by call
@@ -337,7 +431,7 @@ type toolOutput struct {
 }
 
 func projectToolOutput(entry *sessionEntry, id string, update map[string]any, finished bool) any {
-	result, _ := projectToolOutputAndActivity(entry, id, update, finished)
+	result, _ := projectToolOutputAndActivity(entry, id, update, finished, true)
 	return result
 }
 
@@ -351,7 +445,7 @@ type subagentActivityEvent struct {
 	ToolName       string `json:"toolName"`
 }
 
-func projectToolOutputAndActivity(entry *sessionEntry, id string, update map[string]any, finished bool) (any, map[string]any) {
+func projectToolOutputAndActivity(entry *sessionEntry, id string, update map[string]any, finished, trustedGoose bool) (any, map[string]any) {
 	output := entry.pendingToolOutputs[id]
 	if raw := update["rawOutput"]; raw != nil {
 		output.Raw = raw
@@ -362,8 +456,18 @@ func projectToolOutputAndActivity(entry *sessionEntry, id string, update map[str
 		output.Content = content
 	}
 	// Goose shell output arrives as ordered deltas, not a final result snapshot.
-	notification := mapValue(mapValue(update["_meta"])["toolNotification"])
-	projectSubagentActivity(&output, notification)
+	notification := map[string]any{}
+	if trustedGoose {
+		notification = mapValue(mapValue(update["_meta"])["toolNotification"])
+		projectSubagentActivity(&output, notification)
+	} else {
+		output.LiveText = ""
+		output.Sequence = 0
+		output.Truncated = false
+		output.SubagentActivityTool = false
+		output.SubagentActivityEvents = nil
+		output.SubagentActivityTruncated = false
+	}
 	if notification["type"] == "live_output" {
 		params := mapValue(notification["params"])
 		sequence, _ := params["sequence"].(float64)

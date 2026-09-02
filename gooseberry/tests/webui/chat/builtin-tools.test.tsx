@@ -93,7 +93,7 @@ test("Apps creation and iteration keep their concise saved state", () => {
 			<DefaultToolRenderer {...props(toolName, "Opened in a new window")} />,
 		);
 		expect(markup).toContain("Opened in a new window");
-		expect(markup).toContain("App saved in Goose");
+		expect(markup).toContain("App saved in the agent session");
 		expect(markup).not.toContain("not supported");
 	}
 	for (const toolName of ["apps__list_apps", "other__create_app"]) {

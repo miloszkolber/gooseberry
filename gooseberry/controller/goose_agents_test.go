@@ -40,7 +40,7 @@ func TestAgentEditingAndCompletionsKeepAuthorityAndBoundaries(t *testing.T) {
 			var result any = map[string]any{}
 			switch rpc.Method {
 			case "initialize":
-				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+				result = testGooseInitializeResponse()
 			case "_goose/unstable/sources/list":
 				sourceReads.Add(1)
 				result = map[string]any{"sources": []any{source, map[string]any{"type": "agent", "name": "Check", "description": "", "content": "hidden", "path": "/private/check.md", "global": true, "writable": true, "properties": map[string]any{"kind": "check"}}}}

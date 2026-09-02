@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { Project, SessionGoal } from "@gooseberry/contracts";
+import type { AgentProfile, Project, SessionGoal } from "@gooseberry/contracts";
 import {
 	chatTabId,
 	EMPTY_RUNTIME,
@@ -17,6 +17,23 @@ const project: Project = {
 	lastOpened: 1,
 };
 const area = projectArea(project);
+const genericProfile: AgentProfile = {
+	name: "Example agent",
+	version: "1.0.0",
+	goose: false,
+	compatible: true,
+	missingRequired: [],
+	operations: {
+		deleteSession: false,
+		forkSession: false,
+		promptImage: false,
+		httpMcp: false,
+		steer: false,
+		renameSession: false,
+		archiveSession: false,
+		administration: false,
+	},
+};
 
 test("a project area can select any admitted project root for new chats", () => {
 	const multiRoot = { ...project, roots: ["/tmp/project", "/tmp/other"] };
@@ -268,6 +285,16 @@ test("standard ACP command snapshots replace the session command catalog", () =>
 	expect(runtime.commandRevision).toBe(1);
 });
 
+test("a costless ACP context update is retained before session stats load", () => {
+	const contextUsage = { tokens: 32000, contextWindow: 200000, percent: 16 };
+	const runtime = reduceSessionEvent(EMPTY_RUNTIME, { type: "context", contextUsage });
+	expect(runtime.stats).toMatchObject({
+		tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		cost: 0,
+		contextUsage,
+	});
+});
+
 test("a delayed command refresh cannot overwrite a newer ACP command snapshot", () => {
 	const state = useAppStore.getState();
 	state.openChatSession("p1", "commands", null, "medium");
@@ -359,6 +386,28 @@ test("a welcome snapshot replaces stale permissions and restores pending approva
 			},
 		},
 	});
+});
+
+test("welcome and profile-change snapshots replace connection-scoped agent capabilities", () => {
+	useAppStore
+		.getState()
+		.installWelcomeSnapshot(77, [project], [project], undefined, [], genericProfile);
+	expect(useAppStore.getState().agentProfile).toEqual(genericProfile);
+
+	const changed = {
+		...genericProfile,
+		version: "1.1.0",
+		operations: { ...genericProfile.operations, forkSession: true },
+	};
+	useAppStore.getState().replaceAgentProfile(changed);
+	expect(useAppStore.getState().agentProfile).toEqual(changed);
+
+	useAppStore.getState().setStatus("connecting");
+	expect(useAppStore.getState().agentProfile).toBeNull();
+	useAppStore
+		.getState()
+		.installWelcomeSnapshot(77, [project], [project], undefined, [], genericProfile);
+	expect(useAppStore.getState().agentProfile).toEqual(genericProfile);
 });
 
 test("opening a chat creates and focuses one content tab", () => {

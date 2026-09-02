@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { GooseToolSummary } from "@gooseberry/contracts";
+import type { AgentProfile, GooseToolSummary } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AgentSettings } from "@/settings/agent-settings";
 import {
 	ExtensionWarningCount,
 	GooseToolsSettings,
@@ -19,6 +20,7 @@ beforeEach(() => {
 		activeTabByProjectArea: {},
 		settingsOpen: true,
 		settingsSection: SettingsSection.Tools,
+		agentProfile: null,
 	});
 });
 
@@ -72,6 +74,44 @@ test("settings navigation exposes the Tools tab and scrolls on narrow screens", 
 	expect(markup).toContain(">Tools<");
 	expect(markup).toContain('aria-label="Settings"');
 	expect(markup).toContain("overflow-x-auto");
+});
+
+test("generic agent settings expose only agent identity and Signet", () => {
+	const profile: AgentProfile = {
+		name: "Example agent",
+		version: "1.2.3",
+		goose: false,
+		compatible: true,
+		missingRequired: [],
+		operations: {
+			deleteSession: false,
+			forkSession: true,
+			promptImage: false,
+			httpMcp: false,
+			steer: false,
+			renameSession: false,
+			archiveSession: false,
+			administration: false,
+		},
+	};
+	useAppStore.setState({ agentProfile: profile, settingsOpen: false });
+	useAppStore.getState().openSettings();
+	expect(useAppStore.getState().settingsSection).toBe(SettingsSection.Agent);
+	const markup = renderToStaticMarkup(
+		<>
+			<SettingsNavigation section={SettingsSection.Agent} genericAgent />
+			<AgentSettings profile={profile} />
+		</>,
+	);
+	expect(markup).toContain(">Agent<");
+	expect(markup).toContain(">Signet<");
+	expect(markup).not.toContain(">Goose<");
+	expect(markup).not.toContain(">Automation<");
+	expect(markup).not.toContain(">Providers<");
+	expect(markup).not.toContain(">Models<");
+	expect(markup).not.toContain(">Tools<");
+	expect(markup).toContain("Version 1.2.3");
+	expect(markup).toContain("HTTP MCP servers");
 });
 
 test("session controls are current only after the active target finishes loading", () => {

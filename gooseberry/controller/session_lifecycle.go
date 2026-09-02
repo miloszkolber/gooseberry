@@ -38,9 +38,13 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 		return SessionSummary{}, err
 	}
 	ctx = entry.context(ctx)
+	generation, profile, err := m.client.Profile(ctx)
+	if err != nil {
+		return SessionSummary{}, err
+	}
 	token := randomID()
 	servers := make([]acp.UnstableMcpServer, 0)
-	for _, server := range m.objectiveServers(token) {
+	for _, server := range m.objectiveServers(profile, token) {
 		http := acp.UnstableMcpServerHttp(*server.Http)
 		servers = append(servers, acp.UnstableMcpServer{Http: &http})
 	}
@@ -51,13 +55,13 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 	value := objectValue(response)
 	childID := textValue(value["sessionId"])
 	if childID == "" || childID == sessionID {
-		return SessionSummary{}, fmt.Errorf("Goose returned an invalid session identifier for a fork")
+		return SessionSummary{}, fmt.Errorf("ACP agent returned an invalid session identifier for a fork")
 	}
 	m.mu.Lock()
 	_, exists := m.sessions[childID]
 	m.mu.Unlock()
 	if exists {
-		return SessionSummary{}, fmt.Errorf("Goose returned an existing session identifier for a fork")
+		return SessionSummary{}, fmt.Errorf("ACP agent returned an existing session identifier for a fork")
 	}
 	records, err := m.records.List()
 	if err != nil {
@@ -65,7 +69,7 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 	}
 	for _, record := range records {
 		if record.SessionID == childID {
-			return SessionSummary{}, fmt.Errorf("Goose returned an existing session identifier for a fork")
+			return SessionSummary{}, fmt.Errorf("ACP agent returned an existing session identifier for a fork")
 		}
 	}
 	_, err = m.client.Ready(ctx)
@@ -73,11 +77,12 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 		return SessionSummary{}, err
 	}
 	child := newSessionEntry(childID, projectID, admitted, sessionID, token)
+	child.agentIdentity = agentProfileIdentity(profile, generation)
 	child.configOptions = arrayValue(value["configOptions"])
 	child.thinkingLevel = thinkingFromOptions(child.configOptions)
 	child.model = modelFromSetup(child.configOptions, response.Meta)
-	// Goose creates the child, but this controller has not replayed its inherited
-	// transcript yet. The first read or prompt must load it from Goose.
+	// The agent creates the child, but this controller has not replayed its
+	// inherited transcript yet. The first read or prompt must load it from the agent.
 	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: childID, CWD: admitted, ParentSessionID: sessionID}); err != nil {
 		return SessionSummary{}, err
 	}
@@ -107,7 +112,7 @@ func (m *SessionManager) Rename(ctx context.Context, projectID, sessionID, cwd, 
 		return err
 	}
 	defer entry.op.Unlock()
-	if _, err := m.client.Call(entry.context(ctx), "_goose/unstable/session/rename", map[string]any{"sessionId": sessionID, "title": title}); err != nil {
+	if _, err := m.client.CallGoose(entry.context(ctx), "_goose/unstable/session/rename", map[string]any{"sessionId": sessionID, "title": title}); err != nil {
 		return err
 	}
 	entry.state.Lock()
@@ -149,7 +154,7 @@ func (m *SessionManager) Archive(ctx context.Context, projectID, sessionID, cwd 
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
 		return err
 	}
-	if _, err := m.client.Call(entry.context(ctx), "_goose/unstable/session/archive", map[string]any{"sessionId": sessionID}); err != nil {
+	if _, err := m.client.CallGoose(entry.context(ctx), "_goose/unstable/session/archive", map[string]any{"sessionId": sessionID}); err != nil {
 		return err
 	}
 	m.cancelPermissions(sessionID)
@@ -184,7 +189,7 @@ func (m *SessionManager) Unarchive(ctx context.Context, projectID, sessionID str
 	if !found {
 		return fmt.Errorf("unknown session: %s", sessionID)
 	}
-	if _, err := m.client.Call(ctx, "_goose/unstable/session/unarchive", map[string]any{"sessionId": sessionID}); err != nil {
+	if _, err := m.client.CallGoose(ctx, "_goose/unstable/session/unarchive", map[string]any{"sessionId": sessionID}); err != nil {
 		return err
 	}
 	m.emit("session.lifecycleChanged", map[string]any{"projectId": projectID, "sessionId": sessionID, "operation": "unarchived"})
@@ -321,7 +326,7 @@ func (m *SessionManager) ListWithFallback(ctx context.Context, projectID string,
 }
 
 func (m *SessionManager) info(ctx context.Context, sessionID string) (remoteSession, error) {
-	response, err := m.client.Call(ctx, "_goose/unstable/session/info", map[string]any{"sessionId": sessionID})
+	response, err := m.client.CallGoose(ctx, "_goose/unstable/session/info", map[string]any{"sessionId": sessionID})
 	if err != nil {
 		return remoteSession{}, err
 	}

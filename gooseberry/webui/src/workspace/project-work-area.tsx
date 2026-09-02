@@ -82,8 +82,9 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 				projectId: projectAreaId,
 				...(projectArea?.root ? { cwd: projectArea.root } : {}),
 			})
-			.then(({ sessionId, model, thinkingLevel }) => {
+			.then(({ sessionId, model, thinkingLevel, commands }) => {
 				useAppStore.getState().openChatSession(projectAreaId, sessionId, model, thinkingLevel);
+				useAppStore.getState().setCommands(sessionId, commands);
 			})
 			.catch((error) => {
 				if (!useAppStore.getState().removedProjectAreaIds[projectAreaId]) {

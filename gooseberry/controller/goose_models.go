@@ -95,7 +95,7 @@ func (a *GooseAdmin) lookupCanonical(ctx context.Context, key canonicalKey, flig
 	if generation, err := a.client.Ready(ctx); err != nil || generation != key.generation {
 		return
 	}
-	raw, err := a.client.CallUntilDone(ctx, "_goose/unstable/providers/canonical-model-info", map[string]any{"provider": key.provider, "model": key.model})
+	raw, err := a.client.CallGooseUntilDone(ctx, "_goose/unstable/providers/canonical-model-info", map[string]any{"provider": key.provider, "model": key.model})
 	if err != nil {
 		return
 	}
