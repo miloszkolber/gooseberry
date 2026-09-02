@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/miloszkolber/gooseberry/internal/diagnostics"
 )
 
 const (
@@ -19,11 +21,12 @@ const (
 )
 
 type RuntimeConfig struct {
-	Host       string
-	Port       int
-	DataDir    string
-	StaticDir  string
-	AppVersion string
+	Host        string
+	Port        int
+	DataDir     string
+	StaticDir   string
+	AppVersion  string
+	AppRevision string
 	// Optional embedding/test endpoint; the production entrypoint uses pinned host Goose.
 	GooseURL string
 	Policy   *PathPolicy
@@ -41,6 +44,7 @@ type Runtime struct {
 	socket   *WebSocketServer
 	logins   *ProviderLogins
 	watches  *ProjectWatches
+	status   *runtimeStatusProvider
 	errors   chan error
 }
 
@@ -64,6 +68,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if config.StaticDir == "" {
 		config.StaticDir = DefaultStaticDir
 	}
+	build := diagnostics.NormalizeBuild(config.AppVersion, config.AppRevision)
 	if config.Policy == nil {
 		config.Policy, err = DiscoverPathPolicy()
 		if err != nil {
@@ -98,7 +103,9 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	git := NewGit(projects, config.Policy)
 	watches := NewProjectWatches(projects, git, publish)
 	apps := NewAppViews(sessions, authConfig, config.Port)
-	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Apps: apps, Settings: settings, Admin: admin, Git: git, Watches: watches}
+	requests := &diagnostics.RequestCounter{}
+	statusProvider := newRuntimeStatusProvider(build, requests, projects, settings, config.StaticDir, client, authConfig)
+	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Apps: apps, Settings: settings, Admin: admin, Git: git, Watches: watches, Requests: requests, RuntimeStatus: statusProvider.snapshot}
 	welcome := func(ctx context.Context) (any, error) {
 		recent, err := projects.List(true)
 		if err != nil {
@@ -141,9 +148,14 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	}
 	ready := func(response http.ResponseWriter, request *http.Request) {
 		status := runtimeGooseStatus(request.Context(), client)
+		localReady, localDetail := statusProvider.localReady()
+		status["applicationReady"] = localReady
+		if !localReady {
+			status["applicationError"] = localDetail
+		}
 		code := http.StatusOK
 		profile, _ := status["agentProfile"].(AgentProfile)
-		if status["configured"] != true || status["reachable"] != true || !profile.Compatible {
+		if !localReady || status["configured"] != true || status["reachable"] != true || !profile.Compatible {
 			code = http.StatusServiceUnavailable
 		}
 		writeAuthJSON(response, code, status)
@@ -152,7 +164,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{config: config, auth: authConfig, server: &http.Server{Handler: httpHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}, client: client, sessions: sessions, apps: apps, socket: socket, logins: admin.logins, watches: watches}, nil
+	return &Runtime{config: config, auth: authConfig, server: &http.Server{Handler: httpHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}, client: client, sessions: sessions, apps: apps, socket: socket, logins: admin.logins, watches: watches, status: statusProvider}, nil
 }
 
 func (r *Runtime) Start() (string, error) {
@@ -175,6 +187,7 @@ func (r *Runtime) Start() (string, error) {
 func (r *Runtime) Errors() <-chan error { return r.errors }
 
 func (r *Runtime) Shutdown(ctx context.Context) error {
+	r.status.close()
 	r.logins.Close()
 	r.watches.Close()
 	r.socket.Close(ctx)

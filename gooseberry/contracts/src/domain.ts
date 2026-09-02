@@ -20,6 +20,51 @@ export interface AgentProfile {
 	operations: AgentOperations;
 }
 
+export type RuntimeAvailability = "ready" | "degraded" | "unavailable";
+
+export interface RuntimeBuild {
+	version: string;
+	revision?: string;
+}
+
+export interface RuntimeRequestMetrics {
+	total: number;
+	failures: number;
+	active: number;
+	averageMs: number;
+	maxMs: number;
+}
+
+export interface RuntimeProcessMetrics {
+	uptimeSeconds: number;
+	goroutines: number;
+	heapBytes: number;
+	gcCycles: number;
+}
+
+/** Browser-safe local service status; unavailable services omit runtime metrics. */
+export interface RuntimeServiceStatus {
+	state: RuntimeAvailability;
+	build?: RuntimeBuild;
+	requests?: RuntimeRequestMetrics;
+	process?: RuntimeProcessMetrics;
+	detail?: string;
+}
+
+/** Browser-safe agent identity and availability without upstream diagnostics. */
+export interface RuntimeAgentStatus {
+	state: RuntimeAvailability;
+	name?: string;
+	version?: string;
+	detail?: string;
+}
+
+export interface RuntimeStatusReport {
+	application: RuntimeServiceStatus;
+	agent: RuntimeAgentStatus;
+	browser: RuntimeServiceStatus;
+}
+
 /** Browser-safe projection of Goose's globally persisted tool permission. */
 export type GooseToolPermission = "always_allow" | "ask_before" | "never_allow";
 
