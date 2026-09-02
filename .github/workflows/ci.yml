@@ -90,6 +90,48 @@ jobs:
         env:
           CGO_ENABLED: "0"
         working-directory: gooseberry
+  ui:
+    name: Browser acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+      - name: Build browser acceptance image
+        run: docker build -f gooseberry/Dockerfile --target ui-acceptance -t gooseberry-ui-acceptance .
+      - name: Run browser acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ui
+          chmod 0777 artifacts/ui
+          container=""
+          cleanup() {
+            if [[ -n "$container" ]]; then
+              docker rm -f "$container" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+          container=$(docker create \
+            --network none \
+            --read-only \
+            --shm-size 256m \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,uid=1000,gid=1000 \
+            --tmpfs /home/goose:rw,nosuid,nodev,size=64m,uid=1000,gid=1000 \
+            --mount "type=bind,source=$PWD/artifacts/ui,target=/artifacts" \
+            gooseberry-ui-acceptance)
+          status=0
+          docker start -a "$container" || status=$?
+          exit "$status"
+      - name: Keep browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-acceptance
+          path: artifacts/ui
+          if-no-files-found: warn
+          retention-days: 14
   goose:
     name: Official Goose compatibility (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

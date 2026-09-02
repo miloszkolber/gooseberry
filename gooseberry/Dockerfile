@@ -19,7 +19,7 @@ RUN bun run build:web \
     && find node_modules -type f \( -iname 'license*' -o -iname 'notice*' \) \
         -exec cp --parents '{}' /out/licenses/frontend/ \;
 
-FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-build
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-source
 WORKDIR /work
 COPY gooseberry/go.mod gooseberry/go.sum ./
 RUN go mod download
@@ -27,6 +27,8 @@ COPY gooseberry/main.go ./
 COPY gooseberry/cmd/ cmd/
 COPY gooseberry/controller/ controller/
 COPY gooseberry/browser/ browser/
+
+FROM go-source AS go-build
 ARG TARGETOS
 ARG TARGETARCH
 RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH; \
@@ -47,6 +49,13 @@ RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH; \
                 -exec cp '{}' "/out/licenses/$binary/$module/" \;; \
         done < /tmp/modules; \
     done
+
+FROM go-source AS ui-test-build
+COPY gooseberry/tests/ui/fixture/ tests/ui/fixture/
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags='-s -w' -o /out/gooseberry-ui-fixture ./tests/ui/fixture
 
 FROM ${DEBIAN_IMAGE} AS runtime-base
 RUN apt-get update \
@@ -110,6 +119,22 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/app/gooseberry-browser", "healthcheck"]
 CMD ["/app/gooseberry-browser"]
+
+FROM browser-packages AS ui-acceptance
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/web /artifacts \
+    && chown -R 1000:1000 /artifacts
+COPY --from=ui-test-build /out/gooseberry-ui-fixture /app/gooseberry-ui-fixture
+COPY --from=web-build /work/webui/dist /app/web
+COPY gooseberry/tests/ui/run.sh /app/run-ui-acceptance
+RUN chmod 0755 /app/run-ui-acceptance \
+    && test -x /app/gooseberry-ui-fixture \
+    && test -f /app/web/index.html \
+    && ! command -v bun && ! command -v node && ! command -v go
+USER 1000:1000
+CMD ["/app/run-ui-acceptance"]
 
 # Keep the application last: a build without --target produces only Gooseberry.
 FROM runtime-base AS gooseberry

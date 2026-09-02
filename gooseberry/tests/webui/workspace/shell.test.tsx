@@ -3,6 +3,7 @@ import type { AgentProfile, Project } from "@gooseberry/contracts";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { shallow } from "zustand/shallow";
+import { restoreSettingsFocus } from "@/settings/open-settings";
 import {
 	EMPTY_RUNTIME,
 	type ProjectArea,
@@ -121,9 +122,14 @@ test("Shell replaces existing project UI with provider setup when no provider is
 		(element) => text(element.props.children) === "View Goose providers",
 	);
 	if (!connect) throw new Error("Goose provider button missing");
-	(connect.props.onClick as () => void)();
+	let focused = false;
+	(connect.props.onClick as (event: unknown) => void)({
+		currentTarget: { isConnected: true, focus: () => (focused = true) },
+	});
 	expect(useAppStore.getState().settingsOpen).toBeTrue();
 	expect(useAppStore.getState().settingsSection).toBe(SettingsSection.Providers);
+	expect(restoreSettingsFocus()).toBeTrue();
+	expect(focused).toBeTrue();
 });
 
 test("a compatible generic ACP agent enters the workspace without Goose provider status", () => {

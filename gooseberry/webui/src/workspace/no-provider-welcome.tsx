@@ -1,12 +1,18 @@
 import type { ProviderStatusReport } from "@gooseberry/contracts";
+import type { MouseEvent } from "react";
 import { Button } from "../components/ui/button";
+import { openSettingsFrom } from "../settings/open-settings";
 import { useAppStore } from "../store";
 
 export function hasConfiguredProvider(report: ProviderStatusReport): boolean {
 	return report.providers.some((provider) => provider.configured);
 }
 
-export function openProviderSettings(): void {
+export function openProviderSettings(event?: MouseEvent<HTMLButtonElement>): void {
+	if (event) {
+		openSettingsFrom(event.currentTarget, "providers");
+		return;
+	}
 	useAppStore.getState().openSettings("providers");
 }
 
