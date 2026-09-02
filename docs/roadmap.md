@@ -6,10 +6,11 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 - **UI acceptance.** Keep repeatable desktop/narrow-screen checks for commit selection, reconnects, tab closing, streaming, dialogs and file/image previews. Include keyboard use, overflow and interaction timing; state tests alone are insufficient.
 - **Dormant surfaces.** Connect the retained extension-dialog hooks when upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
+- **Standard ACP plans and modes.** Project plan, plan-update, plan-removed and current-mode updates into small browser-owned views. Keep unstable fields out of persisted Gooseberry state.
 
 ## Session continuity and integration
 
-- Use advertised ACP capabilities to enable controls and explain unavailable operations. Keep Goose-specific methods separate; support other ACP agents where the contract fits, without a fork or generic service framework.
+- Bind persisted sessions and controller-owned queues to a stable agent identity before exposing production agent selection. Explicit generic endpoints currently bind live sessions to the reported name, version and capability profile; unnamed agents fail closed across reconnects, but ACP does not yet distinguish two implementations reporting the same profile. Keep Goose as the optimized default and avoid a generic service framework.
 - Add export/share/import and broader source management only through supported upstream methods and small browser-safe records.
 
 ## Operations and maintenance

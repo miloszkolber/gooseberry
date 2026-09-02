@@ -21,7 +21,7 @@ Paths are relative to `gooseberry/`. Both executables share its Go module.
 | `webui/` | React UI and feature state. |
 | `contracts/` | Frontend wire types and validation. |
 
-Coder's ACP SDK and WebSocket library handle Goose communication; the MCP Go SDK handles browser MCP. The framing adapter stays small. ACP setup shares work while preserving each caller's deadline and rejects unsupported protocol versions.
+Coder's ACP SDK and WebSocket library handle agent communication; the MCP Go SDK handles browser MCP. The framing adapter stays small. ACP setup shares work while preserving each caller's deadline, rejects unsupported protocol versions and owns one immutable capability profile per connection. Standard operations are gated by advertised support; Goose-only calls and notifications require a recognized Goose connection.
 
 ## State and concurrency
 

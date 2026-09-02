@@ -2,6 +2,8 @@
 
 The controller connects to `ws://127.0.0.1:3284/acp`, sending `GOOSEBERRY_GOOSE_SECRET_KEY` as `X-Secret-Key`. It must match Goose's `GOOSE_SERVER__SECRET_KEY`. See [setup](deployment.md) and [supported Goose release](goose.md).
 
+ACP initialization supplies the connection identity and capabilities used by both the controller and Web UI. Loading and listing sessions are required. Delete, fork, image prompts and HTTP MCP are enabled only when supported; Goose-specific administration, steering, lifecycle and App calls require a recognized Goose connection. The objective MCP server is omitted when the agent does not accept HTTP MCP servers.
+
 ## Conversations
 
 Every session has a project and admitted working directory. Goose owns its transcript, rename/archive state and forks; Gooseberry records project placement and immediate-parent lineage.
