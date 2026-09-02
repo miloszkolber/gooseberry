@@ -20,6 +20,7 @@ export const SettingsSection = {
 	Automation: "automation",
 	Tools: "tools",
 	Signet: "signet",
+	System: "system",
 } as const;
 export type SettingsSection = (typeof SettingsSection)[keyof typeof SettingsSection];
 
@@ -111,9 +112,11 @@ export const createSettingsState: StateCreator<AppState, [], [], SettingsState> 
 			settingsOpen: true,
 			settingsSection:
 				section ??
-				(profile && (!profile.goose || !profile.operations.administration)
-					? SettingsSection.Agent
-					: SettingsSection.Providers),
+				(profile === null
+					? SettingsSection.System
+					: !profile.goose || !profile.operations.administration
+						? SettingsSection.Agent
+						: SettingsSection.Providers),
 		});
 	},
 	closeSettings: () => set({ settingsOpen: false }),

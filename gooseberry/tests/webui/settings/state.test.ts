@@ -82,3 +82,12 @@ test("provider login keeps the active flow when late frames arrive for another l
 		status: "success",
 	});
 });
+
+test("settings opens System while agent capabilities are unavailable", () => {
+	useAppStore.setState({ agentProfile: null });
+	useAppStore.getState().openSettings();
+	expect(useAppStore.getState()).toMatchObject({
+		settingsOpen: true,
+		settingsSection: "system",
+	});
+});
