@@ -9,6 +9,8 @@ import type {
 	PermissionRequest,
 	QueueLane,
 	RefreshedModels,
+	SessionModeState,
+	SessionPlanState,
 	SessionStats,
 	SessionSummary,
 	SlashCommandInfo,
@@ -51,7 +53,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 77;
+export const PROTOCOL_VERSION = 78;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -114,6 +116,7 @@ export const WS_METHODS = {
 	sessionUnarchive: "session.unarchive",
 	sessionSetModel: "session.setModel",
 	sessionSetThinkingLevel: "session.setThinkingLevel",
+	sessionSetMode: "session.setMode",
 	sessionGetStats: "session.getStats",
 	sessionGetCommands: "session.getCommands",
 	sessionGetAgentMentions: "session.getAgentMentions",
@@ -223,6 +226,8 @@ export type SessionMessagesResult =
 			messages: TranscriptMessage[];
 			pendingTools: PendingToolPreview[];
 			commands: SlashCommandInfo[];
+			modes: SessionModeState | null;
+			planState: SessionPlanState | null;
 			page: TranscriptPage;
 	  }
 	| {
@@ -279,6 +284,7 @@ export interface WsMethodMap {
 			model: WireModel | null;
 			thinkingLevel: ThinkingLevel;
 			commands: SlashCommandInfo[];
+			modes: SessionModeState | null;
 		};
 	};
 	"session.fork": {
@@ -320,6 +326,7 @@ export interface WsMethodMap {
 	"session.unarchive": { params: { projectId: string; sessionId: string }; result: Ack };
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
+	"session.setMode": { params: { sessionId: string; modeId: string }; result: Ack };
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };
 	"session.getCommands": { params: { sessionId: string }; result: SlashCommandInfo[] };
 	"session.getAgentMentions": {

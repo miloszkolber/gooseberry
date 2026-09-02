@@ -454,6 +454,17 @@ func (c *GooseClient) SetConfig(ctx context.Context, request acp.SetSessionConfi
 	return connection.client.SetSessionConfigOption(bounded, request)
 }
 
+func (c *GooseClient) SetMode(ctx context.Context, request acp.SetSessionModeRequest) error {
+	connection, _, err := c.ready(ctx)
+	if err != nil {
+		return err
+	}
+	bounded, cancel := c.bounded(ctx)
+	defer cancel()
+	_, err = connection.client.SetSessionMode(bounded, request)
+	return err
+}
+
 func (c *GooseClient) Close() {
 	c.disconnect(true)
 }

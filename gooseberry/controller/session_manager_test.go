@@ -113,6 +113,76 @@ func TestPendingToolPreviewsAreSafeStableAndDetached(t *testing.T) {
 	}
 }
 
+func TestPlanAndModeProjectionsAreBoundedOwnedAndReplace(t *testing.T) {
+	description := "Use the safest available tools"
+	modes := projectSessionModes(&acp.SessionModeState{
+		CurrentModeId: "default",
+		AvailableModes: []acp.SessionMode{
+			{Id: "default", Name: "Default", Description: &description},
+			{Id: "default", Name: "Duplicate"},
+			{Id: "review", Name: "Review"},
+		},
+	})
+	if modes == nil || modes.CurrentModeID != "default" || len(modes.AvailableModes) != 2 || modes.AvailableModes[0].Description == nil {
+		t.Fatalf("mode projection: %#v", modes)
+	}
+	manyModes := make([]acp.SessionMode, maxSessionModes+1)
+	for index := range manyModes {
+		manyModes[index] = acp.SessionMode{Id: acp.SessionModeId(fmt.Sprintf("mode-%d", index)), Name: fmt.Sprintf("Mode %d", index)}
+	}
+	boundedModes := projectSessionModes(&acp.SessionModeState{CurrentModeId: manyModes[len(manyModes)-1].Id, AvailableModes: manyModes})
+	if boundedModes == nil || len(boundedModes.AvailableModes) != maxSessionModes || boundedModes.AvailableModes[len(boundedModes.AvailableModes)-1].ID != "mode-64" {
+		t.Fatalf("bounded modes did not retain the current mode: %#v", boundedModes)
+	}
+	unscannedModes := make([]acp.SessionMode, maxSessionModeScan+1)
+	for index := range unscannedModes {
+		unscannedModes[index] = acp.SessionMode{Id: acp.SessionModeId(fmt.Sprintf("scan-%d", index)), Name: "Mode"}
+	}
+	if projected := projectSessionModes(&acp.SessionModeState{CurrentModeId: unscannedModes[len(unscannedModes)-1].Id, AvailableModes: unscannedModes}); projected != nil {
+		t.Fatalf("mode projection inspected beyond its raw-input bound: %#v", projected)
+	}
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	entry.modes = modes
+	events := applySessionUpdate(entry, "current_mode_update", map[string]any{"currentModeId": "review"}, agentACPUpdate)
+	if len(events) != 1 || events[0]["type"] != "current-mode" || entry.modes.CurrentModeID != "review" {
+		t.Fatalf("current mode projection: %#v, %#v", events, entry.modes)
+	}
+	if events := applySessionUpdate(entry, "current_mode_update", map[string]any{"currentModeId": "unknown"}, agentACPUpdate); len(events) != 0 || entry.modes.CurrentModeID != "review" {
+		t.Fatalf("unadvertised current mode changed state: %#v, %#v", events, entry.modes)
+	}
+
+	entries := make([]any, maxSessionPlanEntries+1)
+	for index := range entries {
+		entries[index] = map[string]any{"content": fmt.Sprintf("Step %d", index), "priority": "medium", "status": "pending"}
+	}
+	events = applySessionUpdate(entry, "plan", map[string]any{"entries": entries}, agentACPUpdate)
+	plan := events[0]["planState"].(*SessionPlanState)
+	if len(plan.Entries) != maxSessionPlanEntries || !plan.Truncated || len(entry.planState.Entries) != maxSessionPlanEntries {
+		t.Fatalf("bounded plan projection: %#v", plan)
+	}
+	plan.Entries[0].Content = "mutated event"
+	if entry.planState.Entries[0].Content != "Step 0" {
+		t.Fatal("plan event shares mutable state with the session")
+	}
+	replacement := applySessionUpdate(entry, "plan", map[string]any{"entries": []any{map[string]any{"content": "Done", "priority": "high", "status": "completed"}}}, agentACPUpdate)[0]["planState"].(*SessionPlanState)
+	if len(entry.planState.Entries) != 1 || entry.planState.Entries[0].Content != "Done" || len(replacement.Entries) != 1 {
+		t.Fatalf("plan update did not fully replace state: %#v", entry.planState)
+	}
+	oversized := strings.Repeat("🙂", maxSessionPlanContentRunes+1000)
+	boundedPlan := projectSessionPlan([]any{map[string]any{"content": oversized, "priority": "low", "status": "pending"}})
+	if !boundedPlan.Truncated || len(boundedPlan.Entries) != 1 || utf8.RuneCountInString(boundedPlan.Entries[0].Content) != maxSessionPlanContentRunes {
+		t.Fatalf("oversized plan content was not safely clipped: %#v", boundedPlan)
+	}
+	invalid := make([]any, maxSessionPlanScanEntries+50)
+	for index := range invalid {
+		invalid[index] = map[string]any{"content": "invalid", "priority": "urgent", "status": "unknown"}
+	}
+	boundedPlan = projectSessionPlan(invalid)
+	if !boundedPlan.Truncated || len(boundedPlan.Entries) != 0 {
+		t.Fatalf("invalid raw plan input escaped its inspection bound: %#v", boundedPlan)
+	}
+}
+
 func TestAvailableCommandsUpdateProjectsOneBoundedSafeCatalog(t *testing.T) {
 	raw := []any{
 		map[string]any{
