@@ -108,6 +108,7 @@ type SessionManager struct {
 	records         *SessionRecords
 	queues          *SessionQueues
 	objectives      *Objectives
+	deletions       *SessionDeletions
 	objectiveURL    string
 	sessions        map[string]*sessionEntry
 	leases          map[string]*clientSessionLeases
@@ -128,7 +129,11 @@ type pendingCommandCatalog struct {
 }
 
 func NewSessionManager(projects *Projects, policy *PathPolicy, records *SessionRecords, queues *SessionQueues, objectives *Objectives, publish SessionPublisher) *SessionManager {
-	manager := &SessionManager{projects: projects, policy: policy, records: records, queues: queues, objectives: objectives, sessions: make(map[string]*sessionEntry), permissions: make(map[string]*pendingPermission), questions: make(map[string]*pendingQuestion), publish: publish, now: time.Now}
+	var deletions *SessionDeletions
+	if records != nil {
+		deletions = NewSessionDeletions(records.store)
+	}
+	manager := &SessionManager{projects: projects, policy: policy, records: records, queues: queues, objectives: objectives, deletions: deletions, sessions: make(map[string]*sessionEntry), permissions: make(map[string]*pendingPermission), questions: make(map[string]*pendingQuestion), publish: publish, now: time.Now}
 	manager.history = newHistoryIndex(manager)
 	return manager
 }

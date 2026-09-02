@@ -39,6 +39,7 @@ func TestSessionManagerHonorsAgentCapabilitiesBeforeMutation(t *testing.T) {
 	var withHTTPMCP atomic.Int32
 	var loadCalls atomic.Int32
 	var promptCalls atomic.Int32
+	var deleteCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		connection, err := websocket.Accept(response, request, nil)
 		if err != nil {
@@ -95,6 +96,9 @@ func TestSessionManagerHonorsAgentCapabilitiesBeforeMutation(t *testing.T) {
 				postInitialize.Add(1)
 				promptCalls.Add(1)
 				result = map[string]any{"stopReason": "end_turn"}
+			case "session/delete":
+				postInitialize.Add(1)
+				deleteCalls.Add(1)
 			default:
 				postInitialize.Add(1)
 				if strings.HasPrefix(rpc.Method, "_goose/") {
@@ -154,6 +158,18 @@ func TestSessionManagerHonorsAgentCapabilitiesBeforeMutation(t *testing.T) {
 	genericEntry.state.Unlock()
 	if promptCalls.Load() != 0 || mutatedPrompt {
 		t.Fatalf("unsupported image prompt mutated the session or reached the agent: requests=%d mutated=%v", promptCalls.Load(), mutatedPrompt)
+	}
+	if err := manager.Delete(ctx, project.ID, "generic-no-http", project.Roots[0]); !errors.As(err, &coded) || coded.code != "UNSUPPORTED_AGENT_CAPABILITY" || !strings.Contains(err.Error(), "session/delete") {
+		t.Fatalf("unsupported delete error: %v", err)
+	}
+	if pending, err := manager.deletions.List(); err != nil || len(pending) != 0 {
+		t.Fatalf("unsupported delete wrote a recovery marker: %#v, %v", pending, err)
+	}
+	manager.mu.Lock()
+	deleteReleased := !manager.lifecycle["generic-no-http"] && manager.sessions["generic-no-http"] != nil
+	manager.mu.Unlock()
+	if deleteCalls.Load() != 0 || !deleteReleased {
+		t.Fatalf("unsupported delete reached the agent or mutated lifecycle state: requests=%d released=%v", deleteCalls.Load(), deleteReleased)
 	}
 
 	mode.Store(2)
@@ -762,11 +778,38 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() { result <- manager.Delete(ctx, project.ID, "chat", root) }()
-	deletion := take("session/delete")
+	uncertainDeletion := take("session/delete")
+	pendingDeletions, err := manager.deletions.List()
+	if err != nil || len(pendingDeletions) != 1 || pendingDeletions[0].SessionID != "chat" || pendingDeletions[0].Phase != deletionRequested {
+		t.Fatalf("delete reached ACP before its journal entry: %#v, %v", pendingDeletions, err)
+	}
 	if loaded, err := manager.EnsureAttached(ctx, "chat", project.ID, root); err == nil {
 		manager.releaseEntry(loaded)
 		t.Fatal("loaded a chat during deletion")
 	}
+	if err := writeTestRPC(uncertainDeletion.connection, map[string]any{"jsonrpc": "2.0", "id": uncertainDeletion.id, "error": map[string]any{"code": -32602, "message": "fixture rejected deletion"}}); err != nil {
+		t.Fatal(err)
+	}
+	uncertainErr := <-result
+	if uncertainErr == nil {
+		t.Fatal("an ACP error made a dispatched deletion look definitely rejected")
+	}
+	pendingDeletions, err = manager.deletions.List()
+	if err != nil || len(pendingDeletions) != 1 || pendingDeletions[0].Phase != deletionRequested {
+		t.Fatalf("uncertain deletion lost its recovery marker: %#v, journal=%v, delete=%v", pendingDeletions, err, uncertainErr)
+	}
+	if err := manager.Queue(ctx, "chat", "must not run"); err == nil {
+		t.Fatal("uncertain deletion accepted queued work")
+	}
+	if _, err := manager.Objective(ctx, project.ID, "chat"); err == nil {
+		t.Fatal("uncertain deletion allowed objective access")
+	}
+	restarted := NewSessionManager(projects, policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), nil)
+	restartedClient := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "fixture", "test", restarted)
+	defer restartedClient.Close()
+	restarted.SetClient(restartedClient)
+	go func() { result <- restarted.recoverDeletions(ctx) }()
+	deletion := take("session/delete")
 	respond(deletion, map[string]any{})
 	if err := <-result; err != nil {
 		t.Fatal(err)
@@ -776,6 +819,9 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	}
 	if _, found, err := manager.queues.Get(project.ID, "chat"); err != nil || found {
 		t.Fatalf("deleted chat retained its durable queue: found=%v err=%v", found, err)
+	}
+	if pendingDeletions, err := manager.deletions.List(); err != nil || len(pendingDeletions) != 0 {
+		t.Fatalf("completed chat deletion retained its journal entry: %#v, %v", pendingDeletions, err)
 	}
 	select {
 	case unexpected := <-requests:

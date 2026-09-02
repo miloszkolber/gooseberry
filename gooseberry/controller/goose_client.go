@@ -36,13 +36,10 @@ type GooseEvents interface {
 }
 
 type GooseClient struct {
-	URL            string
-	SecretKey      string
 	Version        string
 	Timeout        time.Duration
 	Events         GooseEvents
-	requireSecret  bool
-	requireGoose   bool
+	scope          gooseConnectionScope
 	profileChanged func(AgentProfile)
 
 	mu         sync.Mutex
@@ -53,6 +50,16 @@ type GooseClient struct {
 
 	notificationMu     sync.Mutex
 	notifiedGeneration uint64
+}
+
+// gooseConnectionScope is resolved once at construction and then used for
+// both dialing and durable deletion identity. Keeping it private prevents a
+// live connection and its recovery authority from observing different config.
+type gooseConnectionScope struct {
+	endpoint      string
+	secret        string
+	requireSecret bool
+	requireGoose  bool
 }
 
 type gooseConnectAttempt struct {
@@ -75,7 +82,17 @@ func NewGooseClient(url, secret, version string, events GooseEvents) *GooseClien
 	if url == "" {
 		url = defaultGooseURL
 	}
-	return &GooseClient{URL: url, SecretKey: secret, Version: version, Timeout: defaultGooseTimeout, Events: events, requireSecret: requireSecret, requireGoose: requireGoose}
+	return &GooseClient{
+		Version: version,
+		Timeout: defaultGooseTimeout,
+		Events:  events,
+		scope: gooseConnectionScope{
+			endpoint:      url,
+			secret:        secret,
+			requireSecret: requireSecret,
+			requireGoose:  requireGoose,
+		},
+	}
 }
 
 func (c *GooseClient) Ready(ctx context.Context) (uint64, error) {
@@ -162,7 +179,7 @@ func (c *GooseClient) ready(ctx context.Context) (*gooseConnection, uint64, erro
 
 func (c *GooseClient) connect(ctx context.Context, attempt *gooseConnectAttempt, generation uint64) {
 	defer attempt.cancel()
-	connection, err := dialGoose(ctx, c.URL, c.SecretKey, c.Events, generation)
+	connection, err := dialGoose(ctx, c.scope.endpoint, c.scope.secret, c.Events, generation)
 	if err == nil {
 		// The SDK writes before waiting on the request context. Closing the stream
 		// also interrupts a blocked initialize write on cancellation or shutdown.
@@ -239,7 +256,7 @@ func (c *GooseClient) initialize(ctx context.Context, connection *gooseConnectio
 		return AgentProfile{}, fmt.Errorf("unsupported ACP protocol version %d (expected %d)", response.ProtocolVersion, acp.ProtocolVersionNumber)
 	}
 	profile := agentProfile(response)
-	if c.requireGoose && !profile.Goose {
+	if c.scope.requireGoose && !profile.Goose {
 		return AgentProfile{}, fmt.Errorf("the packaged ACP endpoint must be recognized Goose")
 	}
 	return profile, nil
@@ -308,6 +325,25 @@ func agentProfileIdentityDigest(name, version string, operations AgentOperations
 	}{Name: name, Version: version, Operations: operations})
 	digest := sha256.Sum256(encoded)
 	return fmt.Sprintf("%x", digest)
+}
+
+// deletionAgentBinding binds a recoverable delete to both the logical agent
+// and the exact endpoint configuration that authenticated it. Only the digest
+// is persisted; endpoint credentials never leave GooseClient.
+func (c *GooseClient) deletionAgentBinding(agentIdentity string) (string, error) {
+	if !stableDeletionAgentIdentity(agentIdentity) {
+		return "", fmt.Errorf("connected ACP agent has no stable identity for recoverable session deletion")
+	}
+	encoded, _ := json.Marshal([]any{
+		"gooseberry/session-deletion-agent-binding/v1",
+		agentIdentity,
+		c.scope.endpoint,
+		c.scope.secret,
+		c.scope.requireGoose,
+		c.scope.requireSecret,
+	})
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("sha256:%x", digest), nil
 }
 
 func (c *GooseClient) CallGoose(ctx context.Context, method string, params any) (json.RawMessage, error) {
