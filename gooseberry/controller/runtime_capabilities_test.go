@@ -40,7 +40,7 @@ func TestRuntimeReadinessAndWelcomeExposeAgentProfile(t *testing.T) {
 				Port:      17312,
 				DataDir:   root,
 				StaticDir: root,
-				GooseURL:  fixture.URL,
+				GooseURL:  fixture.scope.endpoint,
 				Policy:    policy,
 				Getenv:    func(string) string { return "" },
 			})
@@ -110,7 +110,7 @@ func TestRuntimeReadinessAndWelcomeExposeAgentProfile(t *testing.T) {
 	defer defaultClient.Close()
 	explicitClient := NewGooseClient("ws://127.0.0.1:1/acp", "", "test", nil)
 	defer explicitClient.Close()
-	if !defaultClient.requireGoose || explicitClient.requireGoose {
+	if !defaultClient.scope.requireGoose || explicitClient.scope.requireGoose {
 		t.Fatal("packaged and explicit ACP endpoints use the same agent-identity policy")
 	}
 	status := runtimeGooseStatus(t.Context(), defaultClient)

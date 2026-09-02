@@ -197,9 +197,11 @@ func (queues *SessionQueues) Forget(projectID, sessionID string) error {
 			filtered = append(filtered, record)
 		}
 	}
-	if len(filtered) == len(records) {
-		return nil
+	if err := queues.save(filtered); err != nil {
+		return err
 	}
+	// Queue backups are never execution input, but scrub the rollback
+	// generation before completing a durable session deletion.
 	return queues.save(filtered)
 }
 

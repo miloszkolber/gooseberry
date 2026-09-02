@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,6 +108,10 @@ func (s *SessionRecords) filter(keep func(ProjectSessionRecord) bool) error {
 			filtered = append(filtered, record)
 		}
 	}
+	if err := s.save(filtered); err != nil {
+		return err
+	}
+	// A deletion is not complete while the rollback generation can restore it.
 	return s.save(filtered)
 }
 
@@ -242,12 +247,24 @@ func (o *Objectives) ClearGoal(projectID, sessionID string) error {
 		return o.write(*current)
 	}
 	path := filepath.Join(o.store.Dir, objectiveName(projectID, sessionID))
-	for _, candidate := range []string{path, path + ".bak"} {
-		if removeErr := os.Remove(candidate); removeErr != nil && !os.IsNotExist(removeErr) {
-			return removeErr
-		}
+	return removeStoredGenerations(path)
+}
+
+// Forget removes every objective field and both persisted schema generations.
+// ClearGoal remains separate because clearing a user goal intentionally keeps
+// agent-managed tasks.
+func (o *Objectives) Forget(projectID, sessionID string) error {
+	// Session IDs are opaque ACP values. Unlike user-entered objective IDs,
+	// deletion cleanup can safely accept the broader persisted-record contract
+	// because objective filenames are SHA-256 keys rather than raw IDs.
+	if projectID == "" || sessionID == "" || containsNUL(projectID) || containsNUL(sessionID) {
+		return fmt.Errorf("invalid session objective target")
 	}
-	return nil
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	current := filepath.Join(o.store.Dir, objectiveName(projectID, sessionID))
+	legacy := filepath.Join(o.store.Dir, "extensions", "session-goals", objectiveKey(projectID, sessionID)+".json")
+	return errors.Join(removeStoredGenerations(current), removeStoredGenerations(legacy))
 }
 
 func (o *Objectives) ClearProject(projectID string) error {
@@ -384,6 +401,29 @@ func objectiveKey(projectID, sessionID string) string {
 
 func objectiveName(projectID, sessionID string) string {
 	return filepath.Join("extensions", "session-objectives", objectiveKey(projectID, sessionID)+".json")
+}
+
+func removeStoredGenerations(path string) error {
+	var removeErrors []error
+	for _, candidate := range []string{path, path + ".bak"} {
+		if err := os.Remove(candidate); err != nil && !os.IsNotExist(err) {
+			removeErrors = append(removeErrors, err)
+		}
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			removeErrors = append(removeErrors, err)
+		}
+	} else {
+		if err := directory.Sync(); err != nil {
+			removeErrors = append(removeErrors, err)
+		}
+		if err := directory.Close(); err != nil {
+			removeErrors = append(removeErrors, err)
+		}
+	}
+	return errors.Join(removeErrors...)
 }
 
 func utf16Length(value string) int {

@@ -541,18 +541,13 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {
 			return nil, fmt.Errorf("malformed objective request")
 		}
-		if _, err := h.Sessions.RecordedCWD(request.ProjectID, request.SessionID); err != nil {
-			return nil, err
-		}
 		if method == "session.goalSet" {
-			return h.Sessions.objectives.Update(request.ProjectID, request.SessionID, &request.Goal, nil)
+			return h.Sessions.UpdateObjective(ctx, request.ProjectID, request.SessionID, &request.Goal, nil)
 		}
 		if method == "session.goalClear" {
-			if err := h.Sessions.objectives.ClearGoal(request.ProjectID, request.SessionID); err != nil {
-				return nil, err
-			}
+			return h.Sessions.ClearObjectiveGoal(ctx, request.ProjectID, request.SessionID)
 		}
-		return h.Sessions.objectives.Get(request.ProjectID, request.SessionID)
+		return h.Sessions.Objective(ctx, request.ProjectID, request.SessionID)
 	case "settings.update":
 		var request struct {
 			Config AppConfigPatch `json:"config"`

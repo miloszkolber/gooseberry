@@ -78,7 +78,7 @@ func (h ObjectiveHandler) ServeHTTP(response http.ResponseWriter, request *http.
 		var operationErr error
 		switch name {
 		case "objective_get":
-			state, operationErr = h.Sessions.objectives.Get(projectID, sessionID)
+			state, operationErr = h.Sessions.Objective(request.Context(), projectID, sessionID)
 		case "objective_update":
 			if len(arguments) == 0 || hasUnknownKeys(arguments, "goal", "tasks") {
 				writeRPCError(response, rpc.ID, "Invalid objective update arguments")
@@ -107,10 +107,7 @@ func (h ObjectiveHandler) ServeHTTP(response http.ResponseWriter, request *http.
 				}
 				tasks = &value
 			}
-			state, operationErr = h.Sessions.objectives.Update(projectID, sessionID, goal, tasks)
-			if operationErr == nil {
-				h.Sessions.emit("session.objectiveChanged", state)
-			}
+			state, operationErr = h.Sessions.UpdateObjectiveFromAgent(request.Context(), projectID, sessionID, goal, tasks)
 		default:
 			writeRPCError(response, rpc.ID, "Unknown objective tool or invalid arguments")
 			return
