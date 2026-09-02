@@ -40,6 +40,8 @@ import { QueueStrip } from "./queue-strip";
 import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
 import { SessionGoalControl } from "./session-goal-control";
 import { SessionLineageControl } from "./session-lineage-control";
+import { SessionModeControl } from "./session-mode-control";
+import { SessionPlanControl } from "./session-plan-control";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./stream-indicator";
 import "./tools/register";
 import { unsupportedLifecycleReason } from "./session-lifecycle-controls";
@@ -171,6 +173,8 @@ export default function ChatView({
 		extUiStatus,
 		model: sessionModel,
 		thinkingLevel,
+		modes,
+		planState,
 	} = runtime;
 
 	const headerStatusEntries = useMemo<[string, string][]>(() => {
@@ -354,7 +358,15 @@ export default function ChatView({
 						page: snapshot.page,
 						isStreaming: snapshot.summary.isStreaming,
 					});
-					useAppStore.getState().replaceTranscriptSnapshot(sessionId, snapshot.summary, hydrated);
+					useAppStore
+						.getState()
+						.replaceTranscriptSnapshot(
+							sessionId,
+							snapshot.summary,
+							hydrated,
+							snapshot.modes,
+							snapshot.planState,
+						);
 					useAppStore.getState().setCommands(sessionId, snapshot.commands);
 					if (isCurrent()) setTranscriptLoadState("idle");
 					return "reloaded";
@@ -869,6 +881,8 @@ export default function ChatView({
 										agentCanAccessGoal={canUseHttpMcp}
 										agentName={agentProfile?.name}
 									/>
+									<SessionPlanControl planState={planState} />
+									<SessionModeControl sessionId={sessionId} modes={modes} />
 								</div>
 							}
 						/>

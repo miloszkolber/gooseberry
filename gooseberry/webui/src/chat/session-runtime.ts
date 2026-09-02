@@ -4,6 +4,8 @@ import type {
 	AssistantMessage,
 	ExtUiRequest,
 	SessionGoal,
+	SessionModeState,
+	SessionPlanState,
 	SessionQueueState,
 	SessionStats,
 	SlashCommandInfo,
@@ -30,6 +32,8 @@ export interface SessionRuntime {
 	queue: SessionQueueState;
 	model: WireModel | null;
 	thinkingLevel: ThinkingLevel;
+	modes: SessionModeState | null;
+	planState: SessionPlanState | null;
 	stats: SessionStats | null;
 	commands: SlashCommandInfo[];
 	commandRevision: number;
@@ -55,6 +59,7 @@ const EMPTY_QUEUE: SessionQueueState = { steering: [], followUp: [] };
 export function createSessionRuntime(
 	model: WireModel | null,
 	thinkingLevel: ThinkingLevel,
+	modes: SessionModeState | null = null,
 ): SessionRuntime {
 	return {
 		turns: [],
@@ -68,6 +73,8 @@ export function createSessionRuntime(
 		queue: EMPTY_QUEUE,
 		model,
 		thinkingLevel,
+		modes,
+		planState: null,
 		stats: null,
 		commands: [],
 		commandRevision: 0,
@@ -383,6 +390,10 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			return { ...rt, isStreaming: true, attemptAssistantId: null };
 		case "commands":
 			return { ...rt, commands: event.commands, commandRevision: rt.commandRevision + 1 };
+		case "current-mode":
+			return rt.modes ? { ...rt, modes: { ...rt.modes, currentModeId: event.currentModeId } } : rt;
+		case "plan":
+			return { ...rt, planState: event.planState };
 		case "queue_update":
 			return {
 				...rt,

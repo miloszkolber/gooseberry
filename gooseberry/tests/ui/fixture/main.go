@@ -35,6 +35,8 @@ const (
 type fixtureAgent struct {
 	release     chan struct{}
 	releaseOnce sync.Once
+	modeMu      sync.Mutex
+	mode        string
 }
 
 type rpcWriter struct {
@@ -60,7 +62,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	agent := &fixtureAgent{release: make(chan struct{})}
+	agent := &fixtureAgent{release: make(chan struct{}), mode: "ask"}
 	agentServer, err := agent.start()
 	if err != nil {
 		return err
@@ -270,13 +272,17 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 				"updatedAt": "2026-01-02T00:00:00Z",
 			}}}
 		case "session/new":
-			result = map[string]any{"sessionId": "new-fixture"}
+			result = map[string]any{"sessionId": "new-fixture", "modes": a.sessionModes()}
 		case "session/load":
 			id, _ := rpc.Params["sessionId"].(string)
 			if id == "" {
 				id = sessionID
 			}
 			for _, update := range []map[string]any{
+				{"sessionUpdate": "plan", "entries": []any{
+					map[string]any{"content": "Inspect the workspace", "priority": "high", "status": "completed"},
+					map[string]any{"content": "Finish the reply", "priority": "medium", "status": "in_progress"},
+				}},
 				{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "image", "data": base64.StdEncoding.EncodeToString(fixturePNG()), "mimeType": "image/png"}},
 				{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": "Show the fixture"}},
 				{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Loaded answer"}},
@@ -285,6 +291,7 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 					return
 				}
 			}
+			result = map[string]any{"modes": a.sessionModes()}
 		case "session/prompt":
 			id, _ := rpc.Params["sessionId"].(string)
 			if id == "" {
@@ -306,6 +313,35 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 				_ = writer.write(map[string]any{"jsonrpc": "2.0", "id": responseID, "result": map[string]any{"stopReason": "end_turn"}})
 			}()
 			continue
+		case "session/set_mode":
+			id, _ := rpc.Params["sessionId"].(string)
+			modeID, _ := rpc.Params["modeId"].(string)
+			if id == "" {
+				id = sessionID
+			}
+			if !a.setMode(modeID) {
+				if len(rpc.ID) > 0 {
+					_ = writer.write(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      rpc.ID,
+						"error":   map[string]any{"code": -32602, "message": "unknown fixture mode"},
+					})
+				}
+				continue
+			}
+			if writer.write(map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "session/update",
+				"params": map[string]any{
+					"sessionId": id,
+					"update": map[string]any{
+						"sessionUpdate": "current_mode_update",
+						"currentModeId": modeID,
+					},
+				},
+			}); err != nil {
+				return
+			}
 		case "session/cancel":
 			a.releaseOnce.Do(func() { close(a.release) })
 		}
@@ -313,6 +349,28 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 			return
 		}
 	}
+}
+
+func (a *fixtureAgent) sessionModes() map[string]any {
+	a.modeMu.Lock()
+	defer a.modeMu.Unlock()
+	return map[string]any{
+		"currentModeId": a.mode,
+		"availableModes": []any{
+			map[string]any{"id": "ask", "name": "Ask", "description": "Discuss before changing files"},
+			map[string]any{"id": "code", "name": "Code", "description": "Work directly in the project"},
+		},
+	}
+}
+
+func (a *fixtureAgent) setMode(modeID string) bool {
+	if modeID != "ask" && modeID != "code" {
+		return false
+	}
+	a.modeMu.Lock()
+	a.mode = modeID
+	a.modeMu.Unlock()
+	return true
 }
 
 func (w *rpcWriter) write(value any) error {
