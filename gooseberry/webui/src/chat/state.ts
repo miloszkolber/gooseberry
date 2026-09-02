@@ -4,6 +4,8 @@ import type {
 	ExtUiRequest,
 	PermissionRequest,
 	SessionGoal,
+	SessionModeState,
+	SessionPlanState,
 	SessionStats,
 	SessionSummary,
 	SlashCommandInfo,
@@ -45,6 +47,8 @@ export interface ChatState {
 		sessionId: string,
 		summary: SessionSummary,
 		hydrated: HydratedRuntime,
+		modes: SessionModeState | null,
+		planState: SessionPlanState | null,
 	) => void;
 	setSessionGoalLoading: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoalSaving: (sessionId: string, projectAreaId: string) => void;
@@ -210,7 +214,7 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 		);
 		return applied;
 	},
-	replaceTranscriptSnapshot: (sessionId, summary, hydrated) =>
+	replaceTranscriptSnapshot: (sessionId, summary, hydrated, modes, planState) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => {
 				const optimisticTurns = unmatchedOptimisticTurns(rt, hydrated);
@@ -225,6 +229,8 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 					isStreaming: summary.isStreaming,
 					model: summary.model,
 					thinkingLevel: summary.thinkingLevel,
+					modes,
+					planState,
 					...(summary.queue ? { queue: summary.queue } : {}),
 				};
 				if (summary.parentSessionId) next.parentSessionId = summary.parentSessionId;

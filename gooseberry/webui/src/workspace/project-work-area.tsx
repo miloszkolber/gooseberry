@@ -82,8 +82,10 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 				projectId: projectAreaId,
 				...(projectArea?.root ? { cwd: projectArea.root } : {}),
 			})
-			.then(({ sessionId, model, thinkingLevel, commands }) => {
-				useAppStore.getState().openChatSession(projectAreaId, sessionId, model, thinkingLevel);
+			.then(({ sessionId, model, thinkingLevel, commands, modes }) => {
+				useAppStore
+					.getState()
+					.openChatSession(projectAreaId, sessionId, model, thinkingLevel, modes);
 				useAppStore.getState().setCommands(sessionId, commands);
 			})
 			.catch((error) => {

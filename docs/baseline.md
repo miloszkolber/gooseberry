@@ -12,7 +12,7 @@ Desktop uses project, content and activity panes; narrow screens switch between 
 
 ## Conversations
 
-Concurrent persistent chats support streaming replies and thinking, tool results, images, permissions, questions, usage/context, steering, interruption, queued follow-ups, model/thinking choices, forks, rename, archive, search, slash commands and agent mentions. Summon calls show a bounded, best-effort list of recent child tool requests when Goose reports them.
+Concurrent persistent chats support streaming replies and thinking, tool results, images, permissions, questions, usage/context, steering, interruption, queued follow-ups, model/thinking choices, agent-advertised modes and plans, forks, rename, archive, search, slash commands and agent mentions. Summon calls show a bounded, best-effort list of recent child tool requests when Goose reports them.
 
 Each chat has a user-set goal and ordered agent-managed tasks: `pending`, `active` or `done`. Session-scoped MCP lets agents update tasks and ask questions. Browser MCP provides automation and screenshots. Completed Goose App tools can open an interactive view in an isolated browser-origin sandbox.
 

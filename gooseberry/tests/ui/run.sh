@@ -52,6 +52,15 @@ browser set media light reduced-motion >/dev/null
 browser open "$url" >/dev/null
 browser wait --text "Loaded answer" >/dev/null
 assert_eval "document.querySelector('[data-testid=connection-status]')?.getAttribute('data-status') === 'connected'"
+browser find testid session-plan-trigger click >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]') !== null" >/dev/null
+browser wait --text "Inspect the workspace" >/dev/null
+browser wait --text "1 of 2 complete" >/dev/null
+browser screenshot /artifacts/desktop-plan.png >/dev/null
+browser press Escape >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]') === null" >/dev/null
+browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'session-plan-trigger'" >/dev/null
+assert_eval "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'ask'"
 
 # Commit selection, keyboard activity switching, source and image previews.
 echo "UI acceptance: workspace"
@@ -93,6 +102,9 @@ browser wait --fn "document.querySelector('[data-testid=chat-input]')?.value ===
 browser wait --text "Continue" >/dev/null
 browser wait --text "Partial reply" >/dev/null
 assert_eval "document.querySelector('[data-testid=stream-indicator]') !== null"
+browser select '[data-testid="session-mode-trigger"]' code >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'code' && document.querySelector('[data-testid=session-mode-trigger]')?.disabled === false" >/dev/null
+assert_eval "document.querySelector('[data-testid=stream-indicator]') !== null"
 echo "UI acceptance: close and reopen streaming chat"
 browser click '[data-testid="content-tab"][data-kind="chat"] [data-testid="content-tab-close"]' >/dev/null
 browser wait --fn "document.querySelector('[data-testid=content-tab][data-kind=chat]') === null" >/dev/null
@@ -115,6 +127,8 @@ browser wait --fn "document.querySelector('[data-testid=connection-status]')?.ge
 browser set offline off >/dev/null
 browser wait --fn "document.querySelector('[data-testid=connection-status]')?.getAttribute('data-status') === 'connected'" >/dev/null
 browser wait --fn "(document.body.innerText.match(/Partial reply complete\\./g) ?? []).length === 1" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'code'" >/dev/null
+assert_eval "document.querySelector('[data-testid=session-plan-trigger]') !== null"
 browser click '[data-testid="chat-attachment-chip"]' >/dev/null
 browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]') !== null" >/dev/null
 browser press Escape >/dev/null
@@ -125,6 +139,12 @@ browser screenshot /artifacts/desktop-chat.png >/dev/null
 # Narrow layout, pane navigation, dialog keyboard behavior and overflow.
 echo "UI acceptance: narrow layout"
 browser set viewport 390 844 >/dev/null
+browser find testid session-plan-trigger click >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]') !== null" >/dev/null
+assert_eval "document.querySelector('[data-testid=session-plan-content]')?.closest('[data-radix-popper-content-wrapper]')?.getBoundingClientRect().right <= window.innerWidth"
+browser screenshot /artifacts/narrow-plan.png >/dev/null
+browser press Escape >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]') === null" >/dev/null
 browser find role button click --name "activity" >/dev/null
 browser wait --fn "document.querySelector('[data-testid=activity-tabs]')?.offsetParent !== null" >/dev/null
 assert_eval "document.documentElement.scrollWidth === document.documentElement.clientWidth"

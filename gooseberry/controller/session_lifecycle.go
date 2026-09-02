@@ -81,6 +81,7 @@ func (m *SessionManager) Fork(ctx context.Context, projectID, sessionID, cwd str
 	child.configOptions = arrayValue(value["configOptions"])
 	child.thinkingLevel = thinkingFromOptions(child.configOptions)
 	child.model = modelFromSetup(child.configOptions, response.Meta)
+	child.modes = projectSessionModes(response.Modes)
 	// The agent creates the child, but this controller has not replayed its
 	// inherited transcript yet. The first read or prompt must load it from the agent.
 	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: childID, CWD: admitted, ParentSessionID: sessionID}); err != nil {

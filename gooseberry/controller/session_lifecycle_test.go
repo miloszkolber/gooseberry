@@ -322,6 +322,142 @@ func TestStandardCommandCatalogSurvivesCreateAndLoadBoundaries(t *testing.T) {
 	}
 }
 
+func TestModesAndPlanSurviveReplayAndSetModeBoundary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	policy, err := NewPathPolicy([]string{root}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Dir: t.TempDir()}
+	projects := NewProjects(store, policy)
+	project, err := projects.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := NewSessionRecords(store)
+	if err := records.Record(ProjectSessionRecord{ProjectID: project.ID, SessionID: "loaded", CWD: project.Roots[0]}); err != nil {
+		t.Fatal(err)
+	}
+	var setModeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		for {
+			_, payload, err := connection.Read(ctx)
+			if err != nil {
+				return
+			}
+			var rpc struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params map[string]any  `json:"params"`
+			}
+			if json.Unmarshal(payload, &rpc) != nil {
+				return
+			}
+			result := any(map[string]any{})
+			switch rpc.Method {
+			case "initialize":
+				result = map[string]any{
+					"protocolVersion": 1,
+					"agentInfo":       map[string]any{"name": "fixture-agent", "version": "1.0.0"},
+					"agentCapabilities": map[string]any{
+						"loadSession":         true,
+						"sessionCapabilities": map[string]any{"list": map[string]any{}},
+					},
+					"authMethods": []any{},
+				}
+			case "session/load":
+				for _, update := range []map[string]any{
+					{"sessionUpdate": "plan", "entries": []any{map[string]any{"content": "Inspect", "priority": "high", "status": "in_progress"}}},
+					{"sessionUpdate": "current_mode_update", "currentModeId": "review"},
+				} {
+					if writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "loaded", "update": update}}) != nil {
+						return
+					}
+				}
+				result = map[string]any{"modes": map[string]any{
+					"currentModeId": "default",
+					"availableModes": []any{
+						map[string]any{"id": "default", "name": "Default"},
+						map[string]any{"id": "review", "name": "Review"},
+					},
+				}}
+			case "session/set_mode":
+				if rpc.Params["sessionId"] != "loaded" || rpc.Params["modeId"] != "review" {
+					return
+				}
+				setModeCalls.Add(1)
+			}
+			if len(rpc.ID) > 0 && writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result}) != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	currentModeEvents := make(chan map[string]any, 2)
+	manager := NewSessionManager(projects, policy, records, NewSessionQueues(store), NewObjectives(store), func(channel string, data any) {
+		if channel == "agent.event" {
+			event := mapValue(mapValue(data)["event"])
+			if event["type"] == "current-mode" {
+				currentModeEvents <- event
+			}
+		}
+	})
+	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "", "test", manager)
+	defer client.Close()
+	manager.SetClient(client)
+
+	assertSnapshot := func(snapshot map[string]any) {
+		t.Helper()
+		modes := snapshot["modes"].(*SessionModeState)
+		plan := snapshot["planState"].(*SessionPlanState)
+		if modes.CurrentModeID != "default" || len(modes.AvailableModes) != 2 || len(plan.Entries) != 1 || plan.Entries[0].Content != "Inspect" {
+			t.Fatalf("replayed modes/plan: modes=%#v plan=%#v", modes, plan)
+		}
+	}
+	snapshot, err := manager.Messages(ctx, "loaded", project.ID, project.Roots[0], "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSnapshot(snapshot)
+	mapModes := snapshot["modes"].(*SessionModeState)
+	mapModes.AvailableModes[0].Name = "mutated"
+	if manager.sessions["loaded"].modes.AvailableModes[0].Name != "Default" {
+		t.Fatal("mode snapshot shares mutable session state")
+	}
+
+	handler := CoreHandler{Sessions: manager}
+	if _, err := handler.Handle(ctx, "session.setMode", json.RawMessage(`{"sessionId":"loaded","modeId":"unknown"}`), "client"); err == nil {
+		t.Fatal("handler accepted an unadvertised mode")
+	}
+	manager.sessions["loaded"].state.Lock()
+	manager.sessions["loaded"].streaming = true
+	manager.sessions["loaded"].state.Unlock()
+	if _, err := handler.Handle(ctx, "session.setMode", json.RawMessage(`{"sessionId":"loaded","modeId":"review"}`), "client"); err != nil {
+		t.Fatal(err)
+	}
+	if setModeCalls.Load() != 1 || manager.sessions["loaded"].modes.CurrentModeID != "review" {
+		t.Fatal("set mode did not cross the validated ACP boundary")
+	}
+	last := <-currentModeEvents
+	if last["currentModeId"] != "review" {
+		t.Fatalf("set mode event: %#v", last)
+	}
+
+	client.Reset()
+	snapshot, err = manager.Messages(ctx, "loaded", project.ID, project.Roots[0], "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSnapshot(snapshot)
+}
+
 func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
