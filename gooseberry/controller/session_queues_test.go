@@ -78,6 +78,58 @@ func TestSessionQueuesRoundTripPreservesDurableShapes(t *testing.T) {
 	}
 }
 
+func TestDurableSessionStateAcceptsOpaqueACPSessionIDs(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	sessionID := "agent/session/" + strings.Repeat("opaque", 64)
+	queue := newSessionQueueState()
+	queue.FollowUp = []queuedFollowUp{{ID: "queued", Text: "preserve me"}}
+	if err := NewSessionQueues(store).Save("project", sessionID, queue); err != nil {
+		t.Fatalf("save queue with opaque session id: %v", err)
+	}
+	if restored, found, err := NewSessionQueues(store).Get("project", sessionID); err != nil || !found || !reflect.DeepEqual(restored, queue) {
+		t.Fatalf("queue round-trip: found=%v state=%#v err=%v", found, restored, err)
+	}
+
+	legacyPath := filepath.Join(store.Dir, "extensions", "session-goals", objectiveKey("project", sessionID)+".json")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := json.Marshal(map[string]any{
+		"version": 1, "workspaceId": "project", "sessionId": sessionID,
+		"goal": "legacy goal", "updatedAt": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	objectives := NewObjectives(store)
+	objective, err := objectives.Get("project", sessionID)
+	if err != nil || objective.Goal == nil || *objective.Goal != "legacy goal" {
+		t.Fatalf("legacy objective migration: %#v err=%v", objective, err)
+	}
+	newGoal := "new goal"
+	if _, err := objectives.Update("project", sessionID, &newGoal, nil); err != nil {
+		t.Fatalf("update migrated objective: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Dir, objectiveName("project", sessionID)), []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	objective, err = NewObjectives(store).Get("project", sessionID)
+	if err != nil || objective.Goal == nil || *objective.Goal != "legacy goal" {
+		t.Fatalf("objective backup recovery: %#v err=%v", objective, err)
+	}
+
+	if err := NewSessionQueues(store).Save("project/path", sessionID, queue); err == nil {
+		t.Fatal("opaque session validation weakened project id validation")
+	}
+	queue.FollowUp[0].ID = "queue/item"
+	if err := NewSessionQueues(store).Save("project", "other-session", queue); err == nil {
+		t.Fatal("opaque session validation weakened queue item id validation")
+	}
+}
+
 func TestSessionQueuesFailClosedInsteadOfReplayingBackup(t *testing.T) {
 	t.Run("valid backup is not an execution source", func(t *testing.T) {
 		store := Store{Dir: t.TempDir()}
