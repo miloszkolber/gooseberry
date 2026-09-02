@@ -218,39 +218,153 @@ func (m *SessionManager) Delete(ctx context.Context, projectID, sessionID, cwd s
 	if err != nil {
 		return err
 	}
-	defer finish()
+	finishLifecycle := true
+	defer func() {
+		if finishLifecycle {
+			finish()
+		}
+	}()
+	generation, profile, err := m.client.Profile(ctx)
+	if err != nil {
+		return err
+	}
+	if !profile.Operations.DeleteSession {
+		return unsupportedAgentCapability("session/delete")
+	}
+	// Pin attachment and deletion to the capability profile checked above. This
+	// also avoids replaying an unsupported session merely to reject deletion.
+	ctx = context.WithValue(ctx, connectionGenerationKey{}, generation)
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
 		return err
 	}
-	if err := m.client.DeleteSession(entry.context(ctx), sessionID); err != nil {
+	agentBinding, err := m.client.deletionAgentBinding(agentProfileIdentity(profile, generation))
+	if err != nil {
 		return err
+	}
+	if m.deletions == nil {
+		return fmt.Errorf("session deletion journal is not configured")
+	}
+	if err := m.deletions.Request(projectID, sessionID, agentBinding); err != nil {
+		// A failed write may still have replaced the journal before directory
+		// sync failed. Do not guess whether there is a durable deletion intent.
+		finishLifecycle = false
+		return fmt.Errorf("session deletion could not be recorded; restart Gooseberry to reconcile it: %w", err)
+	}
+	if err := m.client.DeleteSession(entry.context(ctx), sessionID); err != nil && !agentSessionMissing(err) {
+		// Once dispatched, no ACP error can prove the agent did not commit before
+		// replying. Keep the marker and reservation for restart reconciliation.
+		finishLifecycle = false
+		return fmt.Errorf("session deletion outcome is uncertain; restart Gooseberry to reconcile it: %w", err)
+	}
+	confirmErr := m.deletions.Confirm(projectID, sessionID)
+	if confirmErr != nil {
+		confirmErr = fmt.Errorf("confirm session deletion: %w", confirmErr)
 	}
 	m.cancelPermissions(sessionID)
 	m.mu.Lock()
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
 	m.history.Forget(sessionID)
-	var cleanup []error
-	if err := m.records.Forget(projectID, sessionID); err != nil {
-		cleanup = append(cleanup, fmt.Errorf("remove session association: %w", err))
+	cleanupErr := m.cleanupSessionDeletion(projectID, sessionID)
+	var journalErr error
+	if confirmErr == nil && cleanupErr == nil {
+		journalErr = m.deletions.Forget(projectID, sessionID)
+		if journalErr != nil {
+			journalErr = fmt.Errorf("finish session deletion: %w", journalErr)
+		}
 	}
-	if err := m.objectives.ClearGoal(projectID, sessionID); err != nil {
-		cleanup = append(cleanup, fmt.Errorf("remove session objective: %w", err))
+	m.emit("session.deleted", map[string]any{"projectId": projectID, "sessionId": sessionID})
+	deletionErr := errors.Join(confirmErr, cleanupErr, journalErr)
+	if deletionErr != nil {
+		finishLifecycle = false
+	}
+	return deletionErr
+}
+
+func (m *SessionManager) cleanupSessionDeletion(projectID, sessionID string) error {
+	var cleanup []error
+	if m.records != nil {
+		if err := m.records.Forget(projectID, sessionID); err != nil {
+			cleanup = append(cleanup, fmt.Errorf("remove session association: %w", err))
+		}
+	}
+	if m.objectives != nil {
+		if err := m.objectives.Forget(projectID, sessionID); err != nil {
+			cleanup = append(cleanup, fmt.Errorf("remove session objective: %w", err))
+		}
 	}
 	if m.queues != nil {
 		if err := m.queues.Forget(projectID, sessionID); err != nil {
 			cleanup = append(cleanup, fmt.Errorf("remove session queue: %w", err))
 		}
 	}
-	m.emit("session.deleted", map[string]any{"projectId": projectID, "sessionId": sessionID})
 	return errors.Join(cleanup...)
+}
+
+func (m *SessionManager) recoverDeletions(ctx context.Context) error {
+	if m.deletions == nil {
+		return nil
+	}
+	records, err := m.deletions.List()
+	if err != nil {
+		return err
+	}
+	var recovery []error
+	for _, record := range records {
+		if record.Phase == deletionRequested {
+			if m.client == nil {
+				recovery = append(recovery, fmt.Errorf("resume deletion of session %s: ACP client is not configured", record.SessionID))
+				continue
+			}
+			generation, profile, profileErr := m.client.Profile(ctx)
+			if profileErr != nil {
+				recovery = append(recovery, fmt.Errorf("resume deletion of session %s: %w", record.SessionID, profileErr))
+				continue
+			}
+			binding, bindingErr := m.client.deletionAgentBinding(agentProfileIdentity(profile, generation))
+			if bindingErr != nil {
+				recovery = append(recovery, fmt.Errorf("resume deletion of session %s: %w", record.SessionID, bindingErr))
+				continue
+			}
+			if binding != record.AgentBinding {
+				recovery = append(recovery, fmt.Errorf("resume deletion of session %s: connected ACP agent binding changed (identity, endpoint, or configuration)", record.SessionID))
+				continue
+			}
+			if !profile.Operations.DeleteSession {
+				recovery = append(recovery, fmt.Errorf("resume deletion of session %s: %w", record.SessionID, unsupportedAgentCapability("session/delete")))
+				continue
+			}
+			deleteContext := context.WithValue(ctx, connectionGenerationKey{}, generation)
+			if deleteErr := m.client.DeleteSession(deleteContext, record.SessionID); deleteErr != nil && !agentSessionMissing(deleteErr) {
+				recovery = append(recovery, fmt.Errorf("resume deletion of session %s: %w", record.SessionID, deleteErr))
+				continue
+			}
+			if confirmErr := m.deletions.Confirm(record.ProjectID, record.SessionID); confirmErr != nil {
+				recovery = append(recovery, fmt.Errorf("confirm deletion of session %s: %w", record.SessionID, confirmErr))
+				continue
+			}
+		}
+		if cleanupErr := m.cleanupSessionDeletion(record.ProjectID, record.SessionID); cleanupErr != nil {
+			recovery = append(recovery, fmt.Errorf("resume deletion of session %s: %w", record.SessionID, cleanupErr))
+			continue
+		}
+		if forgetErr := m.deletions.Forget(record.ProjectID, record.SessionID); forgetErr != nil {
+			recovery = append(recovery, fmt.Errorf("finish deletion of session %s: %w", record.SessionID, forgetErr))
+		}
+	}
+	return errors.Join(recovery...)
+}
+
+func agentSessionMissing(err error) bool {
+	var requestError *acp.RequestError
+	return errors.As(err, &requestError) && requestError.Code == -32002
 }
 
 func (m *SessionManager) ObjectiveOwner(token string) (string, string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for sessionID, entry := range m.sessions {
-		if entry.objectiveToken == token {
+		if entry.objectiveToken == token && !m.lifecycle[sessionID] {
 			return entry.projectID, sessionID, true
 		}
 	}
