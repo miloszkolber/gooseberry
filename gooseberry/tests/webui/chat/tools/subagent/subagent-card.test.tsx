@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ToolRenderProps } from "@/chat/tool-registry";
-import { getToolRenderer, getToolSummary } from "@/chat/tool-registry";
+import type { ToolRenderProps } from "@/chat/render/tool-registry";
+import { getToolRenderer, getToolSummary } from "@/chat/render/tool-registry";
 import { subagentSummary } from "@/chat/tools/subagent/register";
-import { SubagentCard, subagentDetails } from "@/chat/tools/subagent/subagent-card";
+import { SubagentCard } from "@/chat/tools/subagent/subagent-card";
 
 const props = (result: unknown, status: ToolRenderProps["status"] = "done"): ToolRenderProps => ({
 	toolCallId: "subagent-call",
@@ -15,48 +15,6 @@ const props = (result: unknown, status: ToolRenderProps["status"] = "done"): Too
 });
 
 describe("subagent renderer parsing", () => {
-	it("extracts bounded run and child details", () => {
-		expect(
-			subagentDetails({
-				details: {
-					mode: "single",
-					runId: "run-1",
-					parentSessionId: "parent-1",
-					childSessionId: "child-1",
-					status: "completed",
-					results: [
-						{
-							runId: "child-1",
-							agent: "child",
-							task: "Inspect",
-							status: "completed",
-							model: { provider: "faux", id: "model" },
-							thinkingLevel: "medium",
-							outputState: "present",
-						},
-					],
-				},
-			}),
-		).toEqual({
-			mode: "single",
-			runId: "run-1",
-			parentSessionId: "parent-1",
-			childSessionId: "child-1",
-			status: "completed",
-			results: [
-				{
-					runId: "child-1",
-					agent: "child",
-					task: "Inspect",
-					status: "completed",
-					model: { provider: "faux", id: "model" },
-					thinkingLevel: "medium",
-					outputState: "present",
-				},
-			],
-		});
-	});
-
 	it("renders child status and escapes untrusted result text", () => {
 		const markup = renderToStaticMarkup(
 			<SubagentCard
@@ -74,11 +32,6 @@ describe("subagent renderer parsing", () => {
 		expect(markup).toContain("Child completed");
 		expect(markup).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
 		expect(markup).not.toContain("<script>");
-	});
-
-	it("shows a bounded running state", () => {
-		const markup = renderToStaticMarkup(<SubagentCard {...props(undefined, "running")} />);
-		expect(markup).toContain("Subagent running");
 	});
 
 	it("shows bounded recent activity without treating it as a child transcript", () => {

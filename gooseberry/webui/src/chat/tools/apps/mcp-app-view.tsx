@@ -13,7 +13,7 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { errorText, getTransport } from "@/connection";
-import type { ToolRenderProps } from "../../tool-registry";
+import type { ToolRenderProps } from "../../render/tool-registry";
 import { toText } from "../tool-helpers";
 import {
 	APP_KEEP_ALIVE_INTERVAL_MS,

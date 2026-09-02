@@ -1,5 +1,5 @@
 import { ACCEPTED_IMAGE_TYPES } from "@gooseberry/contracts";
-import { ImageChip } from "../image-chip";
+import { ImageChip } from "../composer/image-chip";
 import { toolContent, toText } from "./tool-helpers";
 
 export function ToolOutput({ result, error = false }: { result: unknown; error?: boolean }) {

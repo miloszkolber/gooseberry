@@ -12,8 +12,8 @@ import {
 	mentionCompletionKeyAction,
 	streamingSendModes,
 	streamingSubmitBehavior,
-} from "@/chat/composer";
-import { SlashCommandMenu } from "@/chat/slash-command-completion";
+} from "@/chat/composer/composer";
+import { SlashCommandMenu } from "@/chat/composer/slash-command-completion";
 
 const agentMention: MentionCandidate = {
 	kind: "agent",

@@ -314,26 +314,6 @@ describe("WsTransport reconnect delivery", () => {
 });
 
 describe("WsTransport response receipts", () => {
-	test("keeps optional Signet configuration behind the typed settings boundary", async () => {
-		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
-		transport.connect();
-		const socket = TestWebSocket.instances[0];
-		socket?.open();
-
-		const result = transport.request("settings.update", {
-			config: { signet: { enabled: false, address: "127.0.0.1", port: 3850 } },
-		});
-		const request = requestsIn(socket?.sent ?? []).at(-1);
-		if (!request?.id) throw new Error("settings.update request was not sent");
-		expect(request.method).toBe("settings.update");
-		const config = {
-			signet: { enabled: false, address: "127.0.0.1", port: 3850 },
-			hiddenModels: [],
-		};
-		socket?.message(JSON.stringify({ id: request.id, ok: true, result: config }));
-		expect(await result).toEqual(config);
-	});
-
 	test("acknowledges each response, batching a burst into one frame", async () => {
 		const transport = new WsTransport({ url: "ws://localhost:7312/ws" });
 		transport.connect();

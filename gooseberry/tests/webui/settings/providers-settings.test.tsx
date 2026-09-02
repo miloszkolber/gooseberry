@@ -6,7 +6,7 @@ import {
 	ProviderCard,
 	readinessStatusText,
 	settleProviderReadiness,
-} from "@/settings/providers-settings";
+} from "@/settings/sections/providers-settings";
 
 const provider: ProviderStatus = {
 	id: "openai",
@@ -17,21 +17,18 @@ const provider: ProviderStatus = {
 	acp: true,
 };
 
-test("ACP providers expose an accessible readiness control and all safe status states", () => {
-	const markup = renderToStaticMarkup(
+test("provider cards gate readiness controls and expose safe status states", () => {
+	const acpMarkup = renderToStaticMarkup(
 		<ProviderCard provider={provider} busy={false} onSignIn={() => {}} onSignOut={() => {}} />,
 	);
-	expect(markup).toContain("Check readiness for OpenAI");
-	expect(markup).toContain("Check readiness");
+	expect(acpMarkup).toContain("Check readiness for OpenAI");
+	expect(acpMarkup).toContain("Check readiness");
 	expect(readinessStatusText("checking")).toBe("Checking readiness…");
 	expect(readinessStatusText("ready")).toBe("Ready");
 	expect(readinessStatusText("issue")).toBe("Ready with an issue");
 	expect(readinessStatusText("not-ready")).toBe("Not ready");
 	expect(readinessStatusText("failed")).toBe("Couldn't check readiness.");
-});
-
-test("non-ACP provider cards do not offer readiness checks", () => {
-	const markup = renderToStaticMarkup(
+	const genericMarkup = renderToStaticMarkup(
 		<ProviderCard
 			provider={{ ...provider, id: "other", name: "Other", acp: false }}
 			busy={false}
@@ -39,7 +36,7 @@ test("non-ACP provider cards do not offer readiness checks", () => {
 			onSignOut={() => {}}
 		/>,
 	);
-	expect(markup).not.toContain("Check readiness");
+	expect(genericMarkup).not.toContain("Check readiness");
 });
 
 test("a deferred readiness result cannot survive provider replacement or logout invalidation", () => {

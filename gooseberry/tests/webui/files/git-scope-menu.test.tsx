@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import type { GitBranchRef, GitCommit, GitHead } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { branchName, diffTabId, scopeKey, scopeLabel } from "@/files/changes-model";
-import { BranchPicker, CommitPicker } from "@/files/git-scope-menu";
+import { branchName, diffTabId, scopeKey, scopeLabel } from "@/files/changes/changes-model";
+import { BranchPicker, CommitPicker } from "@/files/changes/git-scope-menu";
 
 const commit: GitCommit = {
 	sha: "a".repeat(40),

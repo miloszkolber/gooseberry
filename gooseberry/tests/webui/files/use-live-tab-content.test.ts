@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changeNamesResource } from "@/files/use-live-tab-content";
+import { changeNamesResource } from "@/files/tabs/use-live-tab-content";
 
 test("matches a changed file only in its originating root", () => {
 	const tab = { projectAreaId: "project", root: "/work/one", path: "src/index.ts" };

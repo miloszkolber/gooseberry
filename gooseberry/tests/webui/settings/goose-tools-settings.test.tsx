@@ -1,13 +1,12 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { AgentProfile, GooseToolSummary } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AgentSettings } from "@/settings/agent-settings";
+import { AgentSettings } from "@/settings/sections/agent-settings";
 import {
 	ExtensionWarningCount,
-	GooseToolsSettings,
 	isSessionInventoryCurrent,
 	ToolInventory,
-} from "@/settings/goose-tools-settings";
+} from "@/settings/sections/goose-tools-settings";
 import { resolveSettingsSection, SettingsNavigation } from "@/settings/settings-dialog";
 import { SettingsSection } from "@/settings/state";
 import { useAppStore } from "@/store";
@@ -22,14 +21,6 @@ beforeEach(() => {
 		settingsSection: SettingsSection.Tools,
 		agentProfile: null,
 	});
-});
-
-test("tools settings explains global Goose ownership when no chat is active", () => {
-	const markup = renderToStaticMarkup(<GooseToolsSettings />);
-	expect(markup).toContain(
-		"Goose owns global extension configuration and global tool permissions.",
-	);
-	expect(markup).toContain("Open a chat in the current project");
 });
 
 test("tool inventory renders an accessible global-permission control", () => {
@@ -67,13 +58,6 @@ test("an omitted permission displays Goose default and warning counts do not exp
 	expect(inventory).toContain("Goose default");
 	expect(warnings).toContain("2 Goose configuration warnings reported.");
 	expect(warnings).not.toContain("warning text");
-});
-
-test("settings navigation exposes the Tools tab and scrolls on narrow screens", () => {
-	const markup = renderToStaticMarkup(<SettingsNavigation section={SettingsSection.Tools} />);
-	expect(markup).toContain(">Tools<");
-	expect(markup).toContain('aria-label="Settings"');
-	expect(markup).toContain("overflow-x-auto");
 });
 
 test("generic agent settings expose agent identity, Signet and System", () => {

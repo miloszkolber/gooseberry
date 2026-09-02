@@ -1,5 +1,5 @@
 import { projectRelativePath } from "@/lib";
-import { registerToolRenderer } from "../tool-registry";
+import { registerToolRenderer } from "../render/tool-registry";
 import { AskUserQuestionCard } from "./ask-user-question-card";
 import { BashCard } from "./bash-card";
 import { EditCard } from "./edit-card";

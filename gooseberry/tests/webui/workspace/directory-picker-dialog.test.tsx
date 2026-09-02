@@ -6,7 +6,7 @@ import {
 	DirectoryPickerContents,
 	type DirectoryPickerContentsProps,
 	parentPath,
-} from "@/workspace/directory-picker-dialog";
+} from "@/workspace/projects/directory-picker-dialog";
 
 const listing: DirectoryListing = {
 	path: "/mount/work",

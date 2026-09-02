@@ -5,8 +5,8 @@ import { ErrorBoundary } from "./components/error-boundary";
 import { ControllerAccess, initTransport, resetTransport } from "./connection";
 import { useAppStore } from "./store";
 import { initNavigation } from "./workspace/navigation";
-import { initProjectExpansionPersistence } from "./workspace/project-expansion";
-import { initSessionLeases } from "./workspace/session-leases";
+import { initSessionLeases } from "./workspace/navigation/session-leases";
+import { initProjectExpansionPersistence } from "./workspace/projects/project-expansion";
 import { Shell } from "./workspace/shell";
 
 function App() {

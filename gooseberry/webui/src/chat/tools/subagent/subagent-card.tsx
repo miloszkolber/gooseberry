@@ -1,6 +1,6 @@
 import type { SubagentActivity } from "@gooseberry/contracts";
 import { GitFork } from "lucide-react";
-import { DefaultToolRenderer, type ToolRenderProps } from "../../tool-registry";
+import { DefaultToolRenderer, type ToolRenderProps } from "../../render/tool-registry";
 import { Collapsible, countLines } from "../collapsible";
 import { resultText, strArg } from "../tool-helpers";
 import { ToolOutput } from "../tool-output";

@@ -1,5 +1,5 @@
 import { Brain } from "lucide-react";
-import type { ToolRenderProps } from "../../tool-registry";
+import type { ToolRenderProps } from "../../render/tool-registry";
 import { Collapsible, countLines } from "../collapsible";
 import { resultText, strArg } from "../tool-helpers";
 

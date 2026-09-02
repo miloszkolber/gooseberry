@@ -20,37 +20,37 @@ import {
 	type LoadedFileMentionCandidates,
 	visibleAgentMentions,
 	visibleFileMentionCandidates,
-} from "./agent-mention-state";
-import { AskStatesContext, deriveAskStates } from "./ask-state";
-import { ChatActionsContext } from "./chat-actions";
-import { ChatHeader } from "./chat-header";
+} from "./composer/agent-mention-state";
 import {
 	Composer,
 	type ComposerHandle,
 	type MentionCandidate,
 	type SubmitBehavior,
-} from "./composer";
-import { loadTranscriptUntil, type TranscriptLoadOutcome } from "./history-loading";
-import { HistoryOverlay } from "./history-overlay";
+} from "./composer/composer";
+import { loadTranscriptUntil, type TranscriptLoadOutcome } from "./history/history-loading";
+import { HistoryOverlay } from "./history/history-overlay";
+import { AskStatesContext, deriveAskStates } from "./runtime/ask-state";
 import {
 	messagesToRuntime,
 	prependTranscriptPage as prependHydratedTranscriptPage,
-} from "./hydrate";
-import { QueueStrip } from "./queue-strip";
-import { type ChatRow, deriveRows, rowIndexForTurn } from "./rows";
-import { SessionGoalControl } from "./session-goal-control";
-import { SessionLineageControl } from "./session-lineage-control";
-import { SessionModeControl } from "./session-mode-control";
-import { SessionPlanControl } from "./session-plan-control";
-import { StreamIndicator, type StreamStatus, streamStatus } from "./stream-indicator";
+} from "./runtime/hydrate";
+import { type ChatRow, deriveRows, rowIndexForTurn } from "./runtime/rows";
+import { ChatActionsContext } from "./session/chat-actions";
+import { ChatHeader } from "./session/chat-header";
+import { QueueStrip } from "./session/queue-strip";
+import { SessionGoalControl } from "./session/session-goal-control";
+import { SessionLineageControl } from "./session/session-lineage-control";
+import { SessionModeControl } from "./session/session-mode-control";
+import { SessionPlanControl } from "./session/session-plan-control";
+import { StreamIndicator, type StreamStatus, streamStatus } from "./session/stream-indicator";
 import "./tools/register";
-import { unsupportedLifecycleReason } from "./session-lifecycle-controls";
+import { useHistorySearch } from "./history/use-history-search";
+import { ChatTurnView } from "./render/turns";
+import type { ChatAttachment, ChatTurn } from "./runtime/types";
+import { unsupportedLifecycleReason } from "./session/session-lifecycle-controls";
+import { useSessionCommandSync } from "./session/use-session-command-sync";
 import { McpAppSessionProvider } from "./tools/apps/mcp-app-context";
-import { ChatTurnView } from "./turns";
-import type { ChatAttachment, ChatTurn } from "./types";
-import { useChatScroll } from "./use-chat-scroll";
-import { useHistorySearch } from "./use-history-search";
-import { useSessionCommandSync } from "./use-session-command-sync";
+import { useChatScroll } from "./view/use-chat-scroll";
 
 function turnAnchorText(turn: ChatTurn): string {
 	if (turn.kind === "user") {

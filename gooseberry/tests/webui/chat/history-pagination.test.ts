@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import type { TranscriptMessage } from "@gooseberry/contracts";
-import { loadTranscriptUntil } from "@/chat/history-loading";
-import { messagesToRuntime, prependTranscriptPage } from "@/chat/hydrate";
-import { deriveRows } from "@/chat/rows";
+import { loadTranscriptUntil } from "@/chat/history/history-loading";
+import { messagesToRuntime, prependTranscriptPage } from "@/chat/runtime/hydrate";
+import { deriveRows } from "@/chat/runtime/rows";
 import {
 	createSessionRuntime,
 	reduceSessionEvent,
 	type SessionRuntime,
-} from "@/chat/session-runtime";
+} from "@/chat/runtime/session-runtime";
 
 test("transcript pages hydrate and prepend without changing identity, result precedence, or row keys", () => {
 	const olderApp = {

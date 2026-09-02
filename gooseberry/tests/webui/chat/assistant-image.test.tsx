@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import type { TranscriptMessage } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { messagesToRuntime } from "@/chat/hydrate";
-import { deriveRows } from "@/chat/rows";
-import { ChatTurnView } from "@/chat/turns";
+import { ChatTurnView } from "@/chat/render/turns";
+import { messagesToRuntime } from "@/chat/runtime/hydrate";
+import { deriveRows } from "@/chat/runtime/rows";
 
 test("assistant image replays hydrate, project to an image row, and render an attachment chip", () => {
 	const messages: TranscriptMessage[] = [

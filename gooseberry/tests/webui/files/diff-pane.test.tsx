@@ -3,8 +3,8 @@ import type { GitDiffFile } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { initTransport, resetTransport } from "@/connection";
 import { WsTransport } from "@/connection/transport";
-import { DiffPane } from "@/files/diff-pane";
-import { openDiffInTab } from "@/files/open-tabs";
+import { DiffPane } from "@/files/changes/diff-pane";
+import { openDiffInTab } from "@/files/tabs/open-tabs";
 import { type DiffTab, useAppStore } from "@/store";
 
 afterEach(() => {

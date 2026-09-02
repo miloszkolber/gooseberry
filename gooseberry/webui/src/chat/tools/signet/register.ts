@@ -1,4 +1,4 @@
-import { registerToolRenderer } from "../../tool-registry";
+import { registerToolRenderer } from "../../render/tool-registry";
 import { strArg } from "../tool-helpers";
 import { SignetCard } from "./signet-card";
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ToolRenderProps } from "@/chat/tool-registry";
-import { getToolRenderer, getToolSummary } from "@/chat/tool-registry";
+import type { ToolRenderProps } from "@/chat/render/tool-registry";
+import { getToolRenderer, getToolSummary } from "@/chat/render/tool-registry";
 import {
 	BrowserCard,
 	browserArtifactUrl,

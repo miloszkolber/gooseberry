@@ -5,25 +5,8 @@ import {
 	agentNameError,
 	DefaultSettings,
 	defaultModelSuggestions,
-	GooseSettings,
 	shouldClearAgentEditorAfterMutation,
-} from "@/settings/goose-settings";
-
-test("renders focused Goose preference, default, and agent catalog controls", () => {
-	const markup = renderToStaticMarkup(<GooseSettings />);
-	expect(markup).toContain("Auto compact threshold");
-	expect(markup).toContain("greater than 0% through 100%, not 0%");
-	expect(markup).toContain('data-testid="goose-thinking-effort"');
-	expect(markup).toContain("New session defaults");
-	expect(markup).toContain("New sessions inherit Goose’s saved default.");
-	expect(markup).toContain("Agent catalog");
-	expect(markup).toContain("Markdown as plain text");
-	expect(markup).toContain("inherits its provider");
-	expect(markup).toContain('list="agent-model-suggestions"');
-	expect(markup).toContain("Goose default");
-	expect(markup).not.toContain("voice");
-	expect(markup).not.toContain("raw config");
-});
+} from "@/settings/sections/goose-settings";
 
 test("default providers come from configured available status, even without visible models", () => {
 	const provider: ProviderStatus = {

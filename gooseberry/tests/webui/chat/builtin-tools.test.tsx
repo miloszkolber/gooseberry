@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { messagesToRuntime } from "@/chat/hydrate";
-import { deriveRows } from "@/chat/rows";
-import { createSessionRuntime, reduceSessionEvent } from "@/chat/session-runtime";
-import { DefaultToolRenderer, getToolRenderer, type ToolRenderProps } from "@/chat/tool-registry";
+import {
+	DefaultToolRenderer,
+	getToolRenderer,
+	type ToolRenderProps,
+} from "@/chat/render/tool-registry";
+import { messagesToRuntime } from "@/chat/runtime/hydrate";
+import { deriveRows } from "@/chat/runtime/rows";
+import { createSessionRuntime, reduceSessionEvent } from "@/chat/runtime/session-runtime";
 import { McpAppSessionProvider } from "@/chat/tools/apps/mcp-app-context";
 import {
 	canOpenMcpApp,

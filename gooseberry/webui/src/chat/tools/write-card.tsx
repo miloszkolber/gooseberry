@@ -1,6 +1,6 @@
 import { FilePlus } from "lucide-react";
 import { projectRelativePath } from "@/lib";
-import type { ToolRenderProps } from "../tool-registry";
+import type { ToolRenderProps } from "../render/tool-registry";
 import { CodeBlock } from "./code-block";
 import { Collapsible, countLines } from "./collapsible";
 import { languageFromPath, resultText, strArg } from "./tool-helpers";

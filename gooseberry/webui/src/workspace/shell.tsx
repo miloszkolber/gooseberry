@@ -11,14 +11,16 @@ import {
 	selectContextProject,
 	useAppStore,
 } from "../store";
-import { hasConfiguredProvider, NoProviderWelcome } from "./no-provider-welcome";
-import { ProjectTree } from "./project-tree";
-import { ProjectWorkArea } from "./project-work-area";
-import { useGlobalHotkeys } from "./use-global-hotkeys";
-import { WelcomePanel } from "./welcome-panel";
+import { useGlobalHotkeys } from "./navigation/use-global-hotkeys";
+import { ProjectTree } from "./projects/project-tree";
+import { hasConfiguredProvider, NoProviderWelcome } from "./views/no-provider-welcome";
+import { WelcomePanel } from "./views/welcome-panel";
 
 const loadSettingsDialog = () => import("../settings/settings-dialog");
 const SettingsDialog = lazy(async () => ({ default: (await loadSettingsDialog()).SettingsDialog }));
+const ProjectWorkArea = lazy(async () => ({
+	default: (await import("./views/project-work-area")).ProjectWorkArea,
+}));
 
 function SettingsSurface() {
 	const open = useAppStore((state) => state.settingsOpen);
@@ -279,7 +281,9 @@ export function ShellLayout({
 			</header>
 			{hasActiveProjectArea && activeProjectAreaId ? (
 				<div data-testid="project-shell" className="h-full min-h-0 min-w-0">
-					<ProjectWorkArea key={activeProjectAreaId} projectAreaId={activeProjectAreaId} />
+					<Suspense fallback={null}>
+						<ProjectWorkArea key={activeProjectAreaId} projectAreaId={activeProjectAreaId} />
+					</Suspense>
 				</div>
 			) : surface === "unconfigured" ? (
 				<NoProviderWelcome />

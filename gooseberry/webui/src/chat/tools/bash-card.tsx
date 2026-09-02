@@ -1,4 +1,4 @@
-import type { ToolRenderProps } from "../tool-registry";
+import type { ToolRenderProps } from "../render/tool-registry";
 import { resultText, strArg } from "./tool-helpers";
 
 export function BashCard({ args, result, status }: ToolRenderProps) {

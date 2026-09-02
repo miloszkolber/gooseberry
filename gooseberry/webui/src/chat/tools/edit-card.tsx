@@ -1,6 +1,6 @@
 import { Pencil } from "lucide-react";
 import { projectRelativePath } from "@/lib";
-import type { ToolRenderProps } from "../tool-registry";
+import type { ToolRenderProps } from "../render/tool-registry";
 import { Collapsible } from "./collapsible";
 import { resultText, strArg } from "./tool-helpers";
 import { ToolOutput } from "./tool-output";

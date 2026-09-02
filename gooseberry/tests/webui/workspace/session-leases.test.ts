@@ -3,8 +3,8 @@ import { PROTOCOL_VERSION, type WsParams, type WsResult } from "@gooseberry/cont
 import { initTransport, resetTransport } from "@/connection";
 import { WsTransport } from "@/connection/transport";
 import { projectArea, useAppStore } from "@/store";
-import { hydrateChatResource } from "@/workspace/chat-reconciliation";
-import { initSessionLeases } from "@/workspace/session-leases";
+import { hydrateChatResource } from "@/workspace/navigation/chat-reconciliation";
+import { initSessionLeases } from "@/workspace/navigation/session-leases";
 
 afterEach(() => useAppStore.setState(useAppStore.getInitialState(), true));
 

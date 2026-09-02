@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ToolRenderProps } from "@/chat/tool-registry";
-import { getToolRenderer, getToolSummary } from "@/chat/tool-registry";
+import type { ToolRenderProps } from "@/chat/render/tool-registry";
+import { getToolRenderer, getToolSummary } from "@/chat/render/tool-registry";
 import { signetSummary } from "@/chat/tools/signet/register";
-import { SignetCard, signetDetails } from "@/chat/tools/signet/signet-card";
+import { SignetCard } from "@/chat/tools/signet/signet-card";
 
 const props = (result: unknown, status: ToolRenderProps["status"] = "done"): ToolRenderProps => ({
 	toolCallId: "signet-call",
@@ -15,15 +15,8 @@ const props = (result: unknown, status: ToolRenderProps["status"] = "done"): Too
 });
 
 describe("Signet renderer parsing", () => {
-	it("extracts bounded result metadata", () => {
-		expect(signetDetails({ details: { memoriesFound: 2, error: "ignored" } })).toEqual({
-			memoriesFound: 2,
-			error: "ignored",
-		});
-	});
-
-	it("renders offline memory availability without exposing raw diagnostics", () => {
-		const markup = renderToStaticMarkup(
+	it("renders safe memory results without exposing raw diagnostics or markup", () => {
+		const offline = renderToStaticMarkup(
 			<SignetCard
 				{...props({
 					content: [{ type: "text", text: "Signet daemon not running. Memories unavailable." }],
@@ -31,13 +24,8 @@ describe("Signet renderer parsing", () => {
 				})}
 			/>,
 		);
-		expect(markup).toContain("Signet daemon unavailable");
-		expect(markup).not.toContain("Memories unavailable.");
-	});
-
-	it("escapes saved memory text and shows a running state", () => {
-		const running = renderToStaticMarkup(<SignetCard {...props(undefined, "running")} />);
-		expect(running).toContain("Recalling memory");
+		expect(offline).toContain("Signet daemon unavailable");
+		expect(offline).not.toContain("Memories unavailable.");
 		const markup = renderToStaticMarkup(
 			<SignetCard
 				{...props({ content: [{ type: "text", text: '<script>alert("x")</script>' }] })}

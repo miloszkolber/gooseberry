@@ -2,9 +2,9 @@ import type { AskUserQuestionItem, AskUserQuestionResult } from "@gooseberry/con
 import { Check, CircleDot, ListChecks, MessageCircleQuestion } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib";
-import { useAskFocusScope, useAskState } from "../ask-state";
-import { useChatActions } from "../chat-actions";
-import type { ToolRenderProps } from "../tool-registry";
+import type { ToolRenderProps } from "../render/tool-registry";
+import { useAskFocusScope, useAskState } from "../runtime/ask-state";
+import { useChatActions } from "../session/chat-actions";
 import { QuestionBody } from "./ask-user-question-body";
 import { ResolvedRecord, ReviewView, SupersededRecord } from "./ask-user-question-record";
 import {

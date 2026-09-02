@@ -2,7 +2,7 @@ import type { AskUserQuestionItem } from "@gooseberry/contracts";
 import { Check, MessageCircleQuestion, Pencil } from "lucide-react";
 import { Fragment, type KeyboardEvent, useEffect, useId, useRef } from "react";
 import { cn } from "@/lib";
-import { Markdown } from "../markdown";
+import { Markdown } from "../render/markdown";
 import {
 	choiceKeyAction,
 	confirmStateFor,

@@ -1,25 +1,21 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SessionLineageControl } from "@/chat/session-lineage-control";
+import { SessionLineageControl } from "@/chat/session/session-lineage-control";
 
-test("fork lineage offers an accessible parent navigation control", () => {
-	const markup = renderToStaticMarkup(
-		<SessionLineageControl
-			projectAreaId="project"
-			parentSessionId="parent"
-			parentDeleted={false}
-		/>,
-	);
-	expect(markup).toContain('aria-label="Open parent chat"');
-	expect(markup).toContain("Forked from chat");
-	expect(markup).not.toMatch(/<button[^>]*\sdisabled(?:=| |>)/);
-});
-
-test("fork lineage retains a disabled indication for a locally deleted parent", () => {
-	const markup = renderToStaticMarkup(
-		<SessionLineageControl projectAreaId="project" parentSessionId="parent" parentDeleted />,
-	);
-	expect(markup).toContain('aria-label="Forked from an unavailable chat"');
-	expect(markup).toMatch(/<button[^>]*\sdisabled(?:=| |>)/);
-	expect(markup).toContain("Forked from chat");
+test("fork lineage exposes accessible available and deleted-parent states", () => {
+	for (const [parentDeleted, label, disabled] of [
+		[false, "Open parent chat", false],
+		[true, "Forked from an unavailable chat", true],
+	] as const) {
+		const markup = renderToStaticMarkup(
+			<SessionLineageControl
+				projectAreaId="project"
+				parentSessionId="parent"
+				parentDeleted={parentDeleted}
+			/>,
+		);
+		expect(markup).toContain(`aria-label="${label}"`);
+		expect(markup).toContain("Forked from chat");
+		expect(/<button[^>]*\sdisabled(?:=| |>)/.test(markup)).toBe(disabled);
+	}
 });

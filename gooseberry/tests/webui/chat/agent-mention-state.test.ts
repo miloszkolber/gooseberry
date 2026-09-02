@@ -5,7 +5,7 @@ import {
 	fileMentionCandidateIdentity,
 	visibleAgentMentions,
 	visibleFileMentionCandidates,
-} from "@/chat/agent-mention-state";
+} from "@/chat/composer/agent-mention-state";
 
 const mentions: AgentMentionInfo[] = [
 	{ name: "Reviewer", description: "Review", sourceType: "agent", mention: "@reviewer" },

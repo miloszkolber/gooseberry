@@ -1,4 +1,4 @@
-import { registerToolRenderer } from "../../tool-registry";
+import { registerToolRenderer } from "../../render/tool-registry";
 import { strArg } from "../tool-helpers";
 import { WebFetchCard } from "./web-fetch-card";
 import { WebSearchCard } from "./web-search-card";

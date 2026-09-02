@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SessionModeControl } from "@/chat/session-mode-control";
-import { SessionPlanContent, SessionPlanControl } from "@/chat/session-plan-control";
+import { SessionModeControl } from "@/chat/session/session-mode-control";
+import { SessionPlanContent, SessionPlanControl } from "@/chat/session/session-plan-control";
 
 test("session agent controls expose the current mode and safe bounded plan content", () => {
 	const mode = renderToStaticMarkup(

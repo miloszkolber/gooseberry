@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { isImagePath } from "@/files/file-kind";
-import { FilePane } from "@/files/file-pane";
-import { openFileInTab } from "@/files/open-tabs";
+import { FilePane } from "@/files/tabs/file-pane";
+import { openFileInTab } from "@/files/tabs/open-tabs";
+import { isImagePath } from "@/files/tree/file-kind";
 import { projectArea, useAppStore } from "@/store";
 
 afterEach(() => useAppStore.setState(useAppStore.getInitialState(), true));

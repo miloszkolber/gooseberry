@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { QueueStrip } from "@/chat/queue-strip";
+import { QueueStrip } from "@/chat/session/queue-strip";
 
 const handlers = { onEdit: () => {}, onRemove: () => {}, onRetry: () => {} };
 

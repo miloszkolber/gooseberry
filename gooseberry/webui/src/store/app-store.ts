@@ -1,9 +1,13 @@
 import type { AgentProfile, AppConfig, PermissionRequest, Project } from "@gooseberry/contracts";
 import { create } from "zustand";
-import { type ChatState, createChatState } from "@/chat/state";
+import { type ChatState, createChatState } from "@/chat/runtime/state";
 import { type ConnectionState, createConnectionState } from "@/connection/state";
 import { createSettingsState, type SettingsState } from "@/settings/state";
-import { createWorkspaceState, projectSnapshot, type WorkspaceState } from "@/workspace/state";
+import {
+	createWorkspaceState,
+	projectSnapshot,
+	type WorkspaceState,
+} from "@/workspace/store/state";
 
 export { SettingsSection } from "@/settings/state";
 export {
@@ -11,7 +15,7 @@ export {
 	reduceSessionEvent,
 	type SessionGoalRuntime,
 	type SessionRuntime,
-} from "../chat/session-runtime";
+} from "../chat/runtime/session-runtime";
 export {
 	type ChatLocationRequest,
 	type ChatTab,
@@ -26,7 +30,7 @@ export {
 	projectArea,
 	type RouteChatTarget,
 	type TabIntent,
-} from "../workspace/model";
+} from "../workspace/store/model";
 
 export interface Toast {
 	id: string;

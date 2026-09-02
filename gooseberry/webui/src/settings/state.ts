@@ -2,7 +2,7 @@ import type { AppConfig, LoginPush, RefreshedModels, WireModel } from "@gooseber
 import { DEFAULT_CONFIG } from "@gooseberry/contracts";
 import type { StateCreator } from "zustand";
 import type { AppState } from "../store/app-store";
-import { foldLoginFrame, type LoginState, newLoginState } from "./login-state";
+import { foldLoginFrame, type LoginState, newLoginState } from "./login/login-state";
 
 export function selectCatalogModel(
 	models: readonly WireModel[],

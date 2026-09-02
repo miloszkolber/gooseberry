@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { projectFileUrl, resolveRelativePath } from "@/files/markdown-links";
+import { projectFileUrl, resolveRelativePath } from "@/files/markdown/markdown-links";
 
 test("resolves Markdown files inside the originating project root", () => {
 	expect(resolveRelativePath("docs/guide.md", "../images/diagram one.png")).toBe(

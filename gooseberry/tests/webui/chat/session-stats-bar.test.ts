@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionStats } from "@gooseberry/contracts";
-import { formatTokens, usageParts } from "@/chat/session-stats-bar";
+import { formatTokens, usageParts } from "@/chat/session/session-stats-bar";
 
 function stats(overrides: Partial<SessionStats> = {}): SessionStats {
 	return {

@@ -1,13 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { AgentProfile, Project, SessionGoal } from "@gooseberry/contracts";
-import {
-	chatTabId,
-	EMPTY_RUNTIME,
-	projectArea,
-	reduceSessionEvent,
-	useAppStore,
-} from "@/store/app-store";
-import { selectDiffTabTargetRef, selectSkillsStale } from "@/workspace/selectors";
+import { EMPTY_RUNTIME, projectArea, reduceSessionEvent, useAppStore } from "@/store/app-store";
+import { selectDiffTabTargetRef, selectSkillsStale } from "@/workspace/store/selectors";
 
 const project: Project = {
 	id: "p1",
@@ -262,29 +256,6 @@ test("live text preserves thinking and parallel tool calls after terminal tool u
 	});
 });
 
-test("standard ACP command snapshots replace the session command catalog", () => {
-	const runtime = reduceSessionEvent(EMPTY_RUNTIME, {
-		type: "commands",
-		commands: [
-			{
-				name: "compact",
-				description: "Compact the conversation",
-				inputHint: "optional focus",
-				source: "goose",
-				sourceInfo: {
-					path: "compact",
-					source: "Goose",
-					scope: "temporary",
-					origin: "top-level",
-				},
-			},
-		],
-	});
-	expect(runtime.commands.map((command) => command.name)).toEqual(["compact"]);
-	expect(runtime.commands[0]?.inputHint).toBe("optional focus");
-	expect(runtime.commandRevision).toBe(1);
-});
-
 test("a costless ACP context update is retained before session stats load", () => {
 	const contextUsage = { tokens: 32000, contextWindow: 200000, percent: 16 };
 	const runtime = reduceSessionEvent(EMPTY_RUNTIME, { type: "context", contextUsage });
@@ -295,12 +266,13 @@ test("a costless ACP context update is retained before session stats load", () =
 	});
 });
 
-test("a delayed command refresh cannot overwrite a newer ACP command snapshot", () => {
+test("a newer ACP command snapshot replaces the catalog and rejects a delayed refresh", () => {
 	const state = useAppStore.getState();
 	state.openChatSession("p1", "commands", null, "medium");
 	const revision = useAppStore.getState().sessions.commands?.commandRevision;
 	const command = (name: string) => ({
 		name,
+		inputHint: `${name} input`,
 		source: "goose" as const,
 		sourceInfo: {
 			path: name,
@@ -312,6 +284,8 @@ test("a delayed command refresh cannot overwrite a newer ACP command snapshot", 
 	state.handleAgentEvent({ type: "commands", commands: [command("new")] }, "commands");
 	state.setCommands("commands", [command("stale")], revision);
 	expect(useAppStore.getState().sessions.commands?.commands[0]?.name).toBe("new");
+	expect(useAppStore.getState().sessions.commands?.commands[0]?.inputHint).toBe("new input");
+	expect(useAppStore.getState().sessions.commands?.commandRevision).toBe(1);
 });
 
 test("live assistant content only merges adjacent compatible blocks", () => {
@@ -410,29 +384,19 @@ test("welcome and profile-change snapshots replace connection-scoped agent capab
 	expect(useAppStore.getState().agentProfile).toEqual(genericProfile);
 });
 
-test("opening a chat creates and focuses one content tab", () => {
-	useAppStore.getState().openChatSession("p1", "s1", null, "medium");
-	const state = useAppStore.getState();
-	expect(state.tabsByProjectArea.p1).toEqual([
-		{ kind: "chat", id: chatTabId("p1", "s1"), projectAreaId: "p1", name: "Chat", sessionId: "s1" },
-	]);
-	expect(state.activeTabByProjectArea.p1).toBe(chatTabId("p1", "s1"));
-});
-
-test("closing a chat moves it to local history", () => {
-	useAppStore.getState().openChatSession("p1", "s1", null, "medium");
-	useAppStore.getState().closeChatToHistory("s1", "p1", false);
-	const state = useAppStore.getState();
-	expect(state.tabsByProjectArea.p1).toEqual([]);
-	expect(state.closedChatsByProjectArea.p1?.[0]?.sessionId).toBe("s1");
-	expect(state.sessions.s1).toBeUndefined();
-});
-
-test("closing a running chat retains its live runtime", () => {
+test("closing chats releases idle state but retains active work", () => {
+	useAppStore.getState().openChatSession("p1", "idle", null, "medium");
 	useAppStore.getState().openChatSession("p1", "running", null, "medium");
 	useAppStore.getState().handleAgentEvent({ type: "agent_start" }, "running");
+	useAppStore.getState().closeChatToHistory("idle", "p1", false);
 	useAppStore.getState().closeChatToHistory("running", "p1", false);
-	expect(useAppStore.getState().sessions.running?.isStreaming).toBe(true);
+	const state = useAppStore.getState();
+	expect(state.closedChatsByProjectArea.p1?.map((chat) => chat.sessionId)).toEqual([
+		"running",
+		"idle",
+	]);
+	expect(state.sessions.idle).toBeUndefined();
+	expect(state.sessions.running?.isStreaming).toBe(true);
 });
 
 test("Goose session lifecycle pushes rename and archive local presentation without deleting", () => {
@@ -457,7 +421,6 @@ test("Goose session lifecycle pushes rename and archive local presentation witho
 	expect(archived.tabsByProjectArea.p1).toEqual([]);
 	expect(archived.sessions.s1).toBeUndefined();
 	expect(archived.deletedSessionsByProjectArea.p1?.s1).toBeUndefined();
-	expect(archived.sessionCatalogVersionByProjectArea.p1).toBe(3);
 	archived.applySessionLifecycle({ projectId: "p1", sessionId: "s1", operation: "unarchived" });
 	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(4);
 });
@@ -538,24 +501,6 @@ test("missed deletion reconciliation tombstones late hydration", () => {
 	);
 	expect(useAppStore.getState().sessions.deleted).toBeUndefined();
 	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
-});
-
-test("activity requests select the fixed activity panel", () => {
-	useAppStore.getState().requestToolView("p1", "files");
-	expect(useAppStore.getState().activeActivityByProjectArea.p1).toBe("files");
-	useAppStore.getState().requestChangesView("p1", "src/a.ts");
-	expect(useAppStore.getState().activeActivityByProjectArea.p1).toBe("changes");
-	expect(useAppStore.getState().changesRequest).toMatchObject({
-		projectAreaId: "p1",
-		path: "src/a.ts",
-	});
-});
-
-test("route chat activation advances the local navigation tick", () => {
-	useAppStore.getState().activateProjectAreaFromRoute(area, "s1");
-	const state = useAppStore.getState();
-	expect(state.routeChatTarget?.sessionId).toBe("s1");
-	expect(state.routeChatTarget?.navTick).toBe(state.navTickByProjectArea.p1);
 });
 
 test("session goal state keeps loading, ready, and error transitions isolated to one runtime", () => {

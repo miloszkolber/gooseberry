@@ -1,5 +1,5 @@
 import { Link as LinkIcon } from "lucide-react";
-import type { ToolRenderProps } from "../../tool-registry";
+import type { ToolRenderProps } from "../../render/tool-registry";
 import { CodeBlock } from "../code-block";
 import { Collapsible, countLines } from "../collapsible";
 import { resultText, strArg } from "../tool-helpers";

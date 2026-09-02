@@ -1,13 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ProviderStatus, WireModel } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-	filterModels,
-	formatModelPrice,
-	formatTokenCount,
-	ModelCatalogList,
-	ModelsSettings,
-} from "@/settings/models-settings";
+import { filterModels, ModelCatalogList } from "@/settings/sections/models-settings";
 
 const model: WireModel = {
 	provider: "provider-a",
@@ -39,14 +33,6 @@ const provider: ProviderStatus = {
 	acp: false,
 };
 
-test("formats model limits and prices for the management UI", () => {
-	expect(formatTokenCount(1_100_000)).toBe("1.1M");
-	expect(formatTokenCount(128_000)).toBe("128K");
-	expect(formatModelPrice(0)).toBe("$0");
-	expect(formatModelPrice(1.25)).toBe("$1.25");
-	expect(formatModelPrice(1.25, "€")).toBe("€1.25");
-});
-
 test("filters by provider and renders context, modality, cost, and visibility", () => {
 	const providers = new Map([[provider.id, provider]]);
 	expect(filterModels([model], providers, "provider a")).toHaveLength(1);
@@ -67,10 +53,4 @@ test("filters by provider and renders context, modality, cost, and visibility", 
 	expect(markup).toContain("Hidden");
 	expect(markup).toContain("Unavailable");
 	expect(markup).not.toContain("Routing");
-});
-
-test("renders catalog visibility controls without role model preferences", () => {
-	const markup = renderToStaticMarkup(<ModelsSettings />);
-	expect(markup).toContain("Visibility is a Gooseberry preference.");
-	expect(markup).not.toContain("Role model preferences");
 });

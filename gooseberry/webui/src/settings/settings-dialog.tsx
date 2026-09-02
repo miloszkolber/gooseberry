@@ -1,16 +1,16 @@
 import type { AgentProfile } from "@gooseberry/contracts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAppStore } from "@/store";
-import { AgentSettings } from "./agent-settings";
-import { GooseAutomationSettings } from "./goose-automation-settings";
-import { GooseSettings } from "./goose-settings";
-import { GooseToolsSettings } from "./goose-tools-settings";
-import { ModelsSettings } from "./models-settings";
 import { restoreSettingsFocus } from "./open-settings";
-import { ProvidersSettings } from "./providers-settings";
-import { SignetSettings } from "./signet-settings";
+import { AgentSettings } from "./sections/agent-settings";
+import { GooseAutomationSettings } from "./sections/goose-automation-settings";
+import { GooseSettings } from "./sections/goose-settings";
+import { GooseToolsSettings } from "./sections/goose-tools-settings";
+import { ModelsSettings } from "./sections/models-settings";
+import { ProvidersSettings } from "./sections/providers-settings";
+import { SignetSettings } from "./sections/signet-settings";
+import { SystemSettings } from "./sections/system-settings";
 import { SettingsSection } from "./state";
-import { SystemSettings } from "./system-settings";
 
 export function resolveSettingsSection(
 	section: SettingsSection,

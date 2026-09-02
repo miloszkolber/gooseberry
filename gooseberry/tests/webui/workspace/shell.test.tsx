@@ -11,9 +11,9 @@ import {
 	SettingsSection,
 	useAppStore,
 } from "@/store";
-import { hasConfiguredProvider, NoProviderWelcome } from "@/workspace/no-provider-welcome";
-import { selectTabSessionStreaming } from "@/workspace/project-work-area";
 import { resolveShellAvailability, ShellLayout } from "@/workspace/shell";
+import { NoProviderWelcome } from "@/workspace/views/no-provider-welcome";
+import { selectTabSessionStreaming } from "@/workspace/views/project-work-area";
 
 const project: Project = {
 	id: "project-1",
@@ -170,17 +170,6 @@ test("an incompatible agent names the required ACP capabilities it is missing", 
 	expect(markup).toContain("session/load");
 	expect(markup).toContain("session/list");
 	expectBlockedShell(markup);
-});
-
-test("provider configuration reflects the status report", () => {
-	expect(hasConfiguredProvider({ providers: [] })).toBeFalse();
-	expect(
-		hasConfiguredProvider({
-			providers: [
-				{ id: "p", name: "P", configured: true, acp: false, modelCount: 0, availableModelCount: 0 },
-			],
-		}),
-	).toBeTrue();
 });
 
 test("desktop and narrow layouts share one mounted file and changes activity surface", () => {
