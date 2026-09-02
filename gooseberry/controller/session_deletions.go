@@ -148,7 +148,7 @@ func validateStoredSessionDeletions(value storedSessionDeletions) error {
 func validateSessionDeletion(record sessionDeletion) error {
 	// Match the existing project-session record contract. ACP session IDs are
 	// opaque and may legitimately contain slashes or exceed path-key limits.
-	if record.ProjectID == "" || record.SessionID == "" || containsNUL(record.ProjectID) || containsNUL(record.SessionID) {
+	if record.ProjectID == "" || validateACPSessionID(record.SessionID) != nil || containsNUL(record.ProjectID) {
 		return fmt.Errorf("invalid session deletion target")
 	}
 	if !validDeletionAgentBinding(record.AgentBinding) {
