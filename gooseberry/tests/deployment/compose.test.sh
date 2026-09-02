@@ -26,6 +26,7 @@ jq -e --arg root "$repo_root" --arg data "$GOOSEBERRY_DATA_PATH" --slurpfile saf
   (.services | keys) == ["browser", "gooseberry"] and
   all(.services | to_entries[]; .key as $service | .value |
     .user == "1000:1000" and .read_only == true and .network_mode == "host" and
+    .cap_drop == ["ALL"] and .security_opt == ["no-new-privileges:true"] and
     .build.context == $root and .build.dockerfile == "gooseberry/Dockerfile" and
     .logging.driver == "local" and .logging.options."max-size" == "10m" and
     .logging.options."max-file" == "3" and
@@ -48,7 +49,8 @@ jq -e --arg root "$repo_root" --arg data "$GOOSEBERRY_DATA_PATH" --slurpfile saf
     "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN", "GOOSEBERRY_BROWSER_TOKEN"
   ] and
   .services.browser.environment.GOOSEBERRY_BROWSER_AUTH == "true" and
-  .services.browser.environment.GOOSEBERRY_BROWSER_TOKEN == env.GOOSEBERRY_BROWSER_TOKEN
+  .services.browser.environment.GOOSEBERRY_BROWSER_TOKEN == env.GOOSEBERRY_BROWSER_TOKEN and
+  any(.services.browser.tmpfs[]; startswith("/dev/shm:size=256m"))
 ' "$fixture/compose.json" > /dev/null || {
 	echo "Compose service isolation checks failed" >&2
 	exit 1

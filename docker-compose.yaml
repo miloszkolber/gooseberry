@@ -10,6 +10,10 @@ services:
         network_mode: host
         user: "1000:1000"
         read_only: true
+        cap_drop:
+            - ALL
+        security_opt:
+            - no-new-privileges:true
         environment:
             GOOSEBERRY_GOOSE_SECRET_KEY: "${GOOSEBERRY_GOOSE_SECRET_KEY:?set the Goose service secret in .gooseberry}"
             GOOSEBERRY_AUTH_ENABLED: "${GOOSEBERRY_AUTH_ENABLED:-false}"
@@ -49,6 +53,10 @@ services:
         network_mode: host
         user: "1000:1000"
         read_only: true
+        cap_drop:
+            - ALL
+        security_opt:
+            - no-new-privileges:true
         environment:
             GOOSEBERRY_BROWSER_AUTH: "true"
             GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set a distinct strong browser token in .gooseberry}"
@@ -65,7 +73,7 @@ services:
         tmpfs:
             - /tmp:size=128m,mode=1777,uid=1000,gid=1000
             - /run:size=16m,mode=700,uid=1000,gid=1000
-            - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000
+            - /dev/shm:size=256m,mode=1777,uid=1000,gid=1000
         logging:
             driver: local
             options:

@@ -80,7 +80,7 @@ jobs:
         working-directory: gooseberry
       - name: Validate Compose service isolation
         run: sh gooseberry/tests/deployment/compose.test.sh
-      - run: gofmt -d main.go cmd controller browser internal tests | tee /tmp/gooseberry-gofmt.diff && test ! -s /tmp/gooseberry-gofmt.diff
+      - run: gofmt -d cmd internal tests | tee /tmp/gooseberry-gofmt.diff && test ! -s /tmp/gooseberry-gofmt.diff
         working-directory: gooseberry
       - run: go test -race -count=1 ./...
         env:
