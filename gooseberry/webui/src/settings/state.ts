@@ -13,6 +13,7 @@ export function selectCatalogModel(
 }
 
 export const SettingsSection = {
+	Agent: "agent",
 	Goose: "goose",
 	Providers: "providers",
 	Models: "models",
@@ -104,8 +105,17 @@ export const createSettingsState: StateCreator<AppState, [], [], SettingsState> 
 			return { activeLogin: rest };
 		}),
 	clearLogin: () => set({ activeLogin: null }),
-	openSettings: (section = SettingsSection.Providers) =>
-		set({ settingsOpen: true, settingsSection: section }),
+	openSettings: (section) => {
+		const profile = get().agentProfile;
+		set({
+			settingsOpen: true,
+			settingsSection:
+				section ??
+				(profile && (!profile.goose || !profile.operations.administration)
+					? SettingsSection.Agent
+					: SettingsSection.Providers),
+		});
+	},
 	closeSettings: () => set({ settingsOpen: false }),
 	setSettingsSection: (section) => set({ settingsSection: section }),
 	applyConfig: (config) => set({ config }),

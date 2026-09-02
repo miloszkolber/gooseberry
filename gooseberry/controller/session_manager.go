@@ -19,8 +19,11 @@ const (
 	maxQueuedMessages          = 20
 	inactiveProjectionMaxCount = 24
 	inactiveProjectionMaxBytes = 8 * 1024 * 1024
+	maxPendingCommandCatalogs  = 32
 	permissionTimeout          = 5 * time.Minute
 )
+
+var errAgentIdentityChanged = errors.New("connected ACP agent identity changed")
 
 type SessionPublisher func(channel string, data any)
 
@@ -56,6 +59,8 @@ type sessionEntry struct {
 	promptAcknowledged bool
 	pendingToolOutputs map[string]toolOutput
 	appAttachments     map[string]appAttachmentState
+	commands           []map[string]any
+	agentIdentity      string
 	consumedQuestions  map[string]bool
 	drainScheduled     bool
 	drainFailures      uint8
@@ -92,25 +97,32 @@ type clientSessionLeases struct {
 }
 
 type SessionManager struct {
-	mu           sync.Mutex
-	work         sync.WaitGroup
-	closed       bool
-	client       *GooseClient
-	projects     *Projects
-	policy       *PathPolicy
-	records      *SessionRecords
-	queues       *SessionQueues
-	objectives   *Objectives
-	objectiveURL string
-	sessions     map[string]*sessionEntry
-	leases       map[string]*clientSessionLeases
-	lifecycle    map[string]bool
-	permissions  map[string]*pendingPermission
-	questions    map[string]*pendingQuestion
-	publish      SessionPublisher
-	now          func() time.Time
-	deviceCode   func(map[string]any)
-	history      *HistoryIndex
+	mu              sync.Mutex
+	work            sync.WaitGroup
+	closed          bool
+	client          *GooseClient
+	projects        *Projects
+	policy          *PathPolicy
+	records         *SessionRecords
+	queues          *SessionQueues
+	objectives      *Objectives
+	objectiveURL    string
+	sessions        map[string]*sessionEntry
+	leases          map[string]*clientSessionLeases
+	lifecycle       map[string]bool
+	permissions     map[string]*pendingPermission
+	questions       map[string]*pendingQuestion
+	creating        int
+	pendingCommands map[string]pendingCommandCatalog
+	publish         SessionPublisher
+	now             func() time.Time
+	deviceCode      func(map[string]any)
+	history         *HistoryIndex
+}
+
+type pendingCommandCatalog struct {
+	generation uint64
+	commands   []map[string]any
 }
 
 func NewSessionManager(projects *Projects, policy *PathPolicy, records *SessionRecords, queues *SessionQueues, objectives *Objectives, publish SessionPublisher) *SessionManager {
@@ -136,69 +148,125 @@ func (m *SessionManager) RecordedCWD(projectID, sessionID string) (string, error
 }
 
 func (m *SessionManager) Create(ctx context.Context, projectID, cwd string, model *WireModel, thinking, clientKey string) (map[string]any, error) {
+	result, after, err := m.create(ctx, projectID, cwd, model, thinking, clientKey)
+	if after != nil {
+		after()
+	}
+	return result, err
+}
+
+func (m *SessionManager) CreateDeferred(ctx context.Context, projectID, cwd string, model *WireModel, thinking, clientKey string) (any, error) {
+	result, after, err := m.create(ctx, projectID, cwd, model, thinking, clientKey)
+	if err != nil {
+		return nil, err
+	}
+	return deferredResponse{result: result, after: after}, nil
+}
+
+func (m *SessionManager) create(ctx context.Context, projectID, cwd string, model *WireModel, thinking, clientKey string) (map[string]any, func(), error) {
 	if m.client == nil {
-		return nil, fmt.Errorf("Goose client is not configured")
+		return nil, nil, fmt.Errorf("ACP agent client is not configured")
 	}
 	admitted, err := m.projects.AssertCWD(projectID, cwd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	token := randomID()
-	generation, err := m.client.Ready(ctx)
+	generation, profile, err := m.client.Profile(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	if !profile.Compatible {
+		return nil, nil, unsupportedAgentCapability(strings.Join(profile.MissingRequired, " and "))
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, nil, fmt.Errorf("session manager has been shut down")
+	}
+	m.creating++
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.creating--
+		if m.creating == 0 {
+			m.pendingCommands = nil
+		}
+		m.mu.Unlock()
+	}()
 	ctx = context.WithValue(ctx, connectionGenerationKey{}, generation)
-	response, err := m.client.NewSession(ctx, acp.NewSessionRequest{Cwd: admitted, McpServers: m.objectiveServers(token), Meta: map[string]any{"projectId": projectID}})
+	response, err := m.client.NewSession(ctx, acp.NewSessionRequest{Cwd: admitted, McpServers: m.objectiveServers(profile, token), Meta: map[string]any{"projectId": projectID}})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sessionID := string(response.SessionId)
 	if sessionID == "" {
-		return nil, fmt.Errorf("Goose response is missing sessionId")
+		return nil, nil, fmt.Errorf("ACP agent response is missing sessionId")
 	}
 	_, err = m.client.Ready(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	entry := newSessionEntry(sessionID, projectID, admitted, "", token)
 	entry.configOptions = jsonValues(response.ConfigOptions)
 	entry.thinkingLevel = thinkingFromOptions(entry.configOptions)
 	entry.model = modelFromSetup(entry.configOptions, response.Meta)
 	entry.attached = generation
+	entry.agentIdentity = agentProfileIdentity(profile, generation)
 	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: sessionID, CWD: admitted}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("session manager has been shut down")
+		return nil, nil, fmt.Errorf("session manager has been shut down")
 	}
 	m.sessions[sessionID] = entry
+	if pending, ok := m.pendingCommands[sessionID]; ok && pending.generation == generation {
+		entry.commands = pending.commands
+		delete(m.pendingCommands, sessionID)
+	}
 	entry.refs++ // Configuration and the response must survive concurrent lease reconciliation.
 	m.retainSessionLocked(clientKey, sessionID, projectID)
 	m.mu.Unlock()
-	defer m.releaseEntry(entry)
+	releaseEntry := true
+	defer func() {
+		if releaseEntry {
+			m.releaseEntry(entry)
+		}
+	}()
 	m.emit("session.lifecycleChanged", map[string]any{"projectId": projectID, "sessionId": sessionID, "operation": "created"})
 	if model != nil {
 		if err := m.SetModel(ctx, sessionID, *model); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if thinking != "" {
 		if err := m.SetThinking(ctx, sessionID, thinking); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	entry.state.Lock()
-	createdModel, createdThinking := entry.model, entry.thinkingLevel
-	entry.state.Unlock()
-	return map[string]any{"sessionId": sessionID, "model": createdModel, "thinkingLevel": createdThinking}, nil
+	result := map[string]any{
+		"sessionId":     sessionID,
+		"model":         entry.model,
+		"thinkingLevel": entry.thinkingLevel,
+		"commands":      cloneSlashCommands(entry.commands),
+	}
+	var once sync.Once
+	releaseEntry = false
+	after := func() {
+		once.Do(func() {
+			entry.state.Unlock()
+			m.releaseEntry(entry)
+		})
+	}
+	return result, after, nil
 }
 
 func (m *SessionManager) EnsureAttached(ctx context.Context, sessionID, projectID, cwd string) (*sessionEntry, error) {
 	if m.client == nil {
-		return nil, fmt.Errorf("Goose client is not configured")
+		return nil, fmt.Errorf("ACP agent client is not configured")
 	}
 	admitted, err := m.projects.AssertCWD(projectID, cwd)
 	if err != nil {
@@ -276,11 +344,23 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	if _, err := m.projects.AssertCWD(entry.projectID, cwd); err != nil {
 		return err
 	}
-	generation, err := m.client.Ready(ctx)
+	generation, profile, err := m.client.Profile(ctx)
 	if err != nil {
 		return err
 	}
+	if !profile.Compatible {
+		return unsupportedAgentCapability(strings.Join(profile.MissingRequired, " and "))
+	}
+	identity := agentProfileIdentity(profile, generation)
 	entry.state.Lock()
+	if entry.agentIdentity != "" && entry.agentIdentity != identity {
+		if entry.drainRetry != nil {
+			entry.drainRetry.Stop()
+			entry.drainRetry = nil
+		}
+		entry.state.Unlock()
+		return fmt.Errorf("%w; reopen this chat only after restoring the original agent", errAgentIdentityChanged)
+	}
 	alreadyAttached := entry.attached == generation
 	entry.state.Unlock()
 	if alreadyAttached {
@@ -290,16 +370,18 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.state.Lock()
 	replay := newSessionEntry(sessionID, entry.projectID, entry.cwd, entry.parentSessionID, entry.objectiveToken)
 	replay.title = entry.title
+	replay.commands = cloneSlashCommands(entry.commands)
+	replay.agentIdentity = identity
 	replay.attached = generation
 	entry.replay = replay
 	entry.state.Unlock()
 	ctx = context.WithValue(ctx, connectionGenerationKey{}, generation)
-	response, err := m.client.LoadSession(ctx, acp.LoadSessionRequest{SessionId: acp.SessionId(sessionID), Cwd: entry.cwd, McpServers: m.objectiveServers(entry.objectiveToken)})
+	response, err := m.client.LoadSession(ctx, acp.LoadSessionRequest{SessionId: acp.SessionId(sessionID), Cwd: entry.cwd, McpServers: m.objectiveServers(profile, entry.objectiveToken)})
 	if err == nil {
 		var currentGeneration uint64
 		currentGeneration, err = m.client.Ready(ctx)
 		if err == nil && currentGeneration != generation {
-			err = fmt.Errorf("Goose ACP connection changed while loading the session")
+			err = fmt.Errorf("ACP connection changed while loading the session")
 		}
 	}
 	if err != nil {
@@ -334,18 +416,29 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.pendingEcho = replay.pendingEcho
 	entry.pendingToolOutputs = replay.pendingToolOutputs
 	entry.appAttachments = replay.appAttachments
+	entry.commands = replay.commands
+	entry.agentIdentity = replay.agentIdentity
 	entry.attached = replay.attached
 	entry.projectionID = replay.projectionID
 	entry.replay = nil
 	if recoveredDispatch {
 		m.emitQueueProjection(sessionID, entry, !entry.promptActive)
 	}
+	commands := cloneSlashCommands(entry.commands)
+	m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "commands", "commands": commands}})
 	entry.state.Unlock()
 	m.scheduleFollowUp(sessionID, entry)
 	return nil
 }
 
 func (m *SessionManager) List(ctx context.Context, projectID string, archived any) ([]SessionSummary, error) {
+	_, profile, err := m.client.Profile(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !profile.Compatible {
+		return nil, unsupportedAgentCapability(strings.Join(profile.MissingRequired, " and "))
+	}
 	records, err := m.records.List()
 	if err != nil {
 		return nil, err
@@ -383,12 +476,12 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 			break
 		}
 		if seen[*response.NextCursor] {
-			return nil, fmt.Errorf("Goose session list was truncated because it repeated a cursor")
+			return nil, fmt.Errorf("ACP agent session list was truncated because it repeated a cursor")
 		}
 		seen[*response.NextCursor] = true
 		cursor = response.NextCursor
 		if page == 19 {
-			return nil, fmt.Errorf("Goose session list was truncated after 20 pages")
+			return nil, fmt.Errorf("ACP agent session list was truncated after 20 pages")
 		}
 	}
 	missing := make([]ProjectSessionRecord, 0)
@@ -397,19 +490,21 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 			missing = append(missing, record)
 		}
 	}
-	if len(missing) > 200 {
+	if profile.Goose && len(missing) > 200 {
 		return nil, fmt.Errorf("Goose session list requires more than 200 per-session lookups")
 	}
-	for _, record := range missing {
-		info, err := m.info(ctx, record.SessionID)
-		if err != nil {
-			var requestError *acp.RequestError
-			if errors.As(err, &requestError) && requestError.Code == -32002 {
-				continue
+	if profile.Goose {
+		for _, record := range missing {
+			info, err := m.info(ctx, record.SessionID)
+			if err != nil {
+				var requestError *acp.RequestError
+				if errors.As(err, &requestError) && requestError.Code == -32002 {
+					continue
+				}
+				return nil, err
 			}
-			return nil, err
+			remote[record.SessionID] = info
 		}
-		remote[record.SessionID] = info
 	}
 	result := make([]SessionSummary, 0, len(filtered))
 	for _, record := range filtered {
@@ -855,7 +950,32 @@ func (m *SessionManager) evictLocked() {
 }
 
 func newSessionEntry(sessionID, projectID, cwd, parent, token string) *sessionEntry {
-	return &sessionEntry{projectID: projectID, cwd: cwd, parentSessionID: parent, title: "Chat", thinkingLevel: "off", messages: []any{}, stats: SessionStats{SessionID: sessionID, Reported: map[string]bool{}}, queue: newSessionQueueState(), objectiveToken: token, consumedQuestions: make(map[string]bool), projectionID: randomID()}
+	return &sessionEntry{projectID: projectID, cwd: cwd, parentSessionID: parent, title: "Chat", thinkingLevel: "off", messages: []any{}, commands: []map[string]any{}, stats: SessionStats{SessionID: sessionID, Reported: map[string]bool{}}, queue: newSessionQueueState(), objectiveToken: token, consumedQuestions: make(map[string]bool), projectionID: randomID()}
+}
+
+func agentProfileIdentity(profile AgentProfile, generation uint64) string {
+	if profile.Goose {
+		return "goose"
+	}
+	if profile.identity != "" {
+		return "agent:" + profile.identity
+	}
+	if profile.Name == "" {
+		return fmt.Sprintf("anonymous-agent:%d", generation)
+	}
+	operations, _ := json.Marshal(profile.Operations)
+	return "agent:" + profile.Name + "\x00" + profile.Version + "\x00" + string(operations)
+}
+
+func cloneSlashCommands(commands []map[string]any) []map[string]any {
+	if commands == nil {
+		return []map[string]any{}
+	}
+	cloned := make([]map[string]any, len(commands))
+	for index, command := range commands {
+		cloned[index] = cloneJSON(command).(map[string]any)
+	}
+	return cloned
 }
 
 func (m *SessionManager) restoredQueue(projectID, sessionID string) (sessionQueueState, error) {
@@ -947,8 +1067,8 @@ func (m *SessionManager) resumeQueues(targets []queueResume) {
 	}
 }
 
-func (m *SessionManager) objectiveServers(token string) []acp.McpServer {
-	if m.objectiveURL == "" {
+func (m *SessionManager) objectiveServers(profile AgentProfile, token string) []acp.McpServer {
+	if m.objectiveURL == "" || !profile.Operations.HTTPMCP {
 		return []acp.McpServer{}
 	}
 	return []acp.McpServer{{Http: &acp.McpServerHttpInline{Type: "http", Name: "gooseberry_objectives", Url: m.objectiveURL, Headers: []acp.HttpHeader{{Name: "Authorization", Value: "Bearer " + token}}}}}

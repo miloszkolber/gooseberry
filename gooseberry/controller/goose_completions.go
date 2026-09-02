@@ -86,6 +86,17 @@ func (a *GooseAdmin) completions(ctx context.Context, method string, request map
 }
 
 func projectSlashCommands(value any) []map[string]any {
+	return projectSlashCommandsFrom(value, "goose", "Goose")
+}
+
+func projectAgentSlashCommands(value any, goose bool) []map[string]any {
+	if goose {
+		return projectSlashCommands(value)
+	}
+	return projectSlashCommandsFrom(value, "agent", "Connected agent")
+}
+
+func projectSlashCommandsFrom(value any, source, label string) []map[string]any {
 	result := make([]map[string]any, 0, min(len(arrayValue(value)), maxSlashCommands))
 	optional := make([]map[string]string, 0, cap(result))
 	total := 2 // JSON array delimiters.
@@ -103,9 +114,9 @@ func projectSlashCommands(value any) []map[string]any {
 		}
 		entry := map[string]any{
 			"name":   name,
-			"source": "goose",
+			"source": source,
 			"sourceInfo": map[string]any{
-				"path": name, "source": "Goose", "scope": "temporary", "origin": "top-level",
+				"path": name, "source": label, "scope": "temporary", "origin": "top-level",
 			},
 		}
 		encoded, err := json.Marshal(entry)

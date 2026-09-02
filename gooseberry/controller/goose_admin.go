@@ -434,7 +434,7 @@ func (a *GooseAdmin) ClearDefaults(ctx context.Context) (GooseProviderDefaults, 
 }
 
 func (a *GooseAdmin) call(ctx context.Context, method string, params any, destination any) error {
-	raw, err := a.client.Call(ctx, method, params)
+	raw, err := a.client.CallGoose(ctx, method, params)
 	if err != nil {
 		return gooseAdministrationError{cause: err}
 	}

@@ -72,7 +72,7 @@ export function hydrateChatResource(
 		.request("session.getMessages", { projectId: projectAreaId, sessionId })
 		.then((response) => {
 			if (response.kind !== "snapshot") throw new Error("invalid chat snapshot");
-			const { summary, messages, pendingTools, page } = response;
+			const { summary, messages, pendingTools, commands, page } = response;
 			const current = useAppStore.getState();
 			if (!isConnectedGeneration(current, generation)) return false;
 			if (
@@ -97,6 +97,7 @@ export function hydrateChatResource(
 			} else {
 				current.hydrateSession(summary, hydrated, false, undefined, { activate: false });
 			}
+			useAppStore.getState().setCommands(sessionId, commands);
 			const installed = useAppStore.getState();
 			return (
 				installed.sessions[sessionId] !== undefined &&

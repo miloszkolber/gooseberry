@@ -1,4 +1,4 @@
-import type { Project } from "@gooseberry/contracts";
+import type { AgentProfile, Project } from "@gooseberry/contracts";
 import { ChevronRight, LogOut, Settings } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../components/brand-logo";
@@ -40,7 +40,28 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
 	disconnected: "bg-feedback-error",
 };
 
-export type ShellAvailability = "loading" | "ready" | "unconfigured" | "disconnected" | "error";
+export type ShellAvailability =
+	| "loading"
+	| "ready"
+	| "unconfigured"
+	| "incompatible"
+	| "disconnected"
+	| "error";
+
+export function resolveShellAvailability(
+	status: ConnectionStatus,
+	agentProfile: AgentProfile | null,
+	providerConfigured: boolean | null,
+	providerError: boolean,
+): ShellAvailability {
+	if (status !== "connected") return status === "disconnected" ? "disconnected" : "loading";
+	if (!agentProfile) return providerError ? "error" : "loading";
+	if (!agentProfile.compatible) return "incompatible";
+	if (!agentProfile.operations.administration) return "ready";
+	if (providerError) return "error";
+	if (providerConfigured === null) return "loading";
+	return providerConfigured ? "ready" : "unconfigured";
+}
 
 export function Shell() {
 	const status = useAppStore((s) => s.status);
@@ -51,6 +72,7 @@ export function Shell() {
 	const activeProjectArea = useAppStore(selectActiveProjectArea);
 	const contextProject = useAppStore(selectContextProject);
 	const providerConfigured = useAppStore((s) => s.providerConfigured);
+	const agentProfile = useAppStore((s) => s.agentProfile);
 	const authenticationEnabled = useAppStore((s) => s.authenticationEnabled);
 	const [providerError, setProviderError] = useState(false);
 	const [providerRefreshTick, setProviderRefreshTick] = useState(0);
@@ -68,6 +90,27 @@ export function Shell() {
 		let current = true;
 		useAppStore.getState().setProviderConfigured(null);
 		setProviderError(false);
+		if (!agentProfile) {
+			void getTransport()
+				.request("goose.status", {})
+				.then((report) => {
+					if (!current || generation !== latestProviderStatusGeneration.current) return;
+					if (report.agentProfile) {
+						useAppStore.getState().replaceAgentProfile(report.agentProfile);
+					} else {
+						setProviderError(true);
+					}
+				})
+				.catch(() => {
+					if (current && generation === latestProviderStatusGeneration.current) {
+						setProviderError(true);
+					}
+				});
+			return () => {
+				current = false;
+			};
+		}
+		if (!agentProfile.compatible || !agentProfile.operations.administration) return;
 		void (async () => {
 			try {
 				const report = await getTransport().request("provider.status", {});
@@ -84,22 +127,16 @@ export function Shell() {
 		return () => {
 			current = false;
 		};
-	}, [providerStatusGeneration, providerRefreshTick, status]);
+	}, [agentProfile, providerStatusGeneration, providerRefreshTick, status]);
 
-	const availability: ShellAvailability =
-		status !== "connected"
-			? status === "disconnected"
-				? "disconnected"
-				: "loading"
-			: providerError
-				? "error"
-				: providerConfigured === null
-					? "loading"
-					: providerConfigured
-						? "ready"
-						: "unconfigured";
+	const availability = resolveShellAvailability(
+		status,
+		agentProfile,
+		providerConfigured,
+		providerError,
+	);
 
-	const hasActiveProjectArea = providerConfigured === true && activeProjectAreaId != null;
+	const hasActiveProjectArea = availability === "ready" && activeProjectAreaId != null;
 	useGlobalHotkeys({
 		onProjects: () => {
 			(document.querySelector('[data-testid="left-nav"]') as HTMLElement | null)?.focus();
@@ -121,6 +158,7 @@ export function Shell() {
 			availability={availability}
 			onRetryProviderStatus={() => setProviderRefreshTick((tick) => tick + 1)}
 			providerConfigured={providerConfigured}
+			agentProfile={agentProfile}
 			activeProjectAreaId={activeProjectAreaId}
 			activeProjectArea={activeProjectArea}
 			contextProject={contextProject}
@@ -134,6 +172,7 @@ export function ShellLayout({
 	availability,
 	onRetryProviderStatus,
 	providerConfigured,
+	agentProfile,
 	activeProjectAreaId,
 	activeProjectArea,
 	contextProject,
@@ -143,6 +182,7 @@ export function ShellLayout({
 	availability?: ShellAvailability;
 	onRetryProviderStatus?: () => void;
 	providerConfigured: boolean | null;
+	agentProfile?: AgentProfile | null;
 	activeProjectAreaId: string | null;
 	activeProjectArea: ProjectArea | null;
 	contextProject: Project | null;
@@ -150,22 +190,24 @@ export function ShellLayout({
 }) {
 	const surface =
 		availability ??
-		(status !== "connected"
-			? status === "disconnected"
-				? "disconnected"
-				: "loading"
-			: providerConfigured === null
-				? "loading"
-				: providerConfigured
-					? "ready"
-					: "unconfigured");
+		(agentProfile === undefined
+			? status !== "connected"
+				? status === "disconnected"
+					? "disconnected"
+					: "loading"
+				: providerConfigured === null
+					? "loading"
+					: providerConfigured
+						? "ready"
+						: "unconfigured"
+			: resolveShellAvailability(status, agentProfile, providerConfigured, false));
 	const hasActiveProjectArea = surface === "ready" && activeProjectAreaId !== null;
 	return (
 		<div data-testid="shell" className="grid h-full grid-rows-[auto_1fr]">
 			<header className="flex min-w-0 items-center justify-between gap-sm border-b border-border-default bg-container-header-bg px-sm py-sm sm:px-lg">
 				<div className="flex min-w-0 items-center gap-md">
 					<BrandLogo />
-					{providerConfigured === true && contextProject ? (
+					{surface === "ready" && contextProject ? (
 						<div
 							data-testid="scope-context"
 							data-context={activeProjectArea ? "project" : "project-home"}
@@ -240,16 +282,40 @@ export function ShellLayout({
 				</div>
 			) : surface === "unconfigured" ? (
 				<NoProviderWelcome />
+			) : surface === "incompatible" ? (
+				<main className="flex h-full min-h-0 min-w-0 items-center justify-center bg-container-content-bg px-xl py-xl text-center">
+					<div className="flex max-w-[34rem] flex-col items-center gap-sm">
+						<h1 className="tr-title-dialog text-text-default">
+							{agentProfile?.name || "Connected agent"} is not compatible with Gooseberry
+						</h1>
+						<p role="alert" className="tr-text-ui text-text-muted">
+							The agent must support the ACP session operations Gooseberry uses to list and reopen
+							chats.
+						</p>
+						{agentProfile?.missingRequired.length ? (
+							<div className="text-left tr-text-ui text-text-muted">
+								<p>Missing capabilities:</p>
+								<ul className="mt-xs list-disc pl-lg">
+									{agentProfile.missingRequired.map((capability) => (
+										<li key={capability}>
+											<code>{capability}</code>
+										</li>
+									))}
+								</ul>
+							</div>
+						) : null}
+					</div>
+				</main>
 			) : surface === "disconnected" || surface === "error" ? (
 				<main className="flex h-full min-h-0 min-w-0 items-center justify-center bg-container-content-bg px-xl py-xl text-center">
 					<div className="flex max-w-[30rem] flex-col items-center gap-sm">
 						<h1 className="tr-title-dialog text-text-default">
-							{surface === "disconnected" ? "Controller disconnected" : "Goose status unavailable"}
+							{surface === "disconnected" ? "Controller disconnected" : "Agent status unavailable"}
 						</h1>
 						<p role="alert" className="tr-text-ui text-text-muted">
 							{surface === "disconnected"
 								? "Gooseberry will reconnect automatically. Your open work remains in this browser."
-								: "The controller is connected, but its provider status could not be read."}
+								: "The controller is connected, but the agent status could not be read."}
 						</p>
 						{surface === "error" ? (
 							<div className="flex flex-wrap justify-center gap-sm">
@@ -277,7 +343,7 @@ export function ShellLayout({
 					className="flex h-full min-h-0 min-w-0 items-center justify-center bg-container-content-bg px-xl py-xl text-center tr-text-ui text-text-muted"
 					role="status"
 				>
-					Checking provider status…
+					Checking agent status…
 				</main>
 			) : (
 				<div

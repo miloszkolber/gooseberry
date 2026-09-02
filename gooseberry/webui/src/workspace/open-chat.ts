@@ -51,7 +51,7 @@ export async function openChatInTab(
 			projectId: projectAreaId,
 		});
 		if (response.kind !== "snapshot") throw new Error("invalid chat snapshot");
-		const { summary, messages, pendingTools, page } = response;
+		const { summary, messages, pendingTools, commands, page } = response;
 		const current = useAppStore.getState();
 		if (
 			!current.projects.some((project) => project.id === projectId) ||
@@ -81,6 +81,7 @@ export async function openChatInTab(
 			undefined,
 			options,
 		);
+		useAppStore.getState().setCommands(sessionId, commands);
 		const settled = useAppStore.getState();
 		const installed =
 			settled.sessions[sessionId] !== undefined &&

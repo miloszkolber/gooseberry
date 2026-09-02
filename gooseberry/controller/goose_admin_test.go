@@ -46,7 +46,7 @@ func TestGooseAdministrationScopesSecretsAndScansRecipes(t *testing.T) {
 			var failure any
 			switch rpc.Method {
 			case "initialize":
-				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+				result = testGooseInitializeResponse()
 			case "_goose/unstable/providers/list":
 				result = map[string]any{"entries": []any{map[string]any{"providerId": "manual", "configKeys": []any{map[string]any{"name": "TOKEN", "secret": true, "required": true}}}, map[string]any{"providerId": "native", "configKeys": []any{map[string]any{"name": "OAUTH", "oauthFlow": true}}}}}
 			case "_goose/unstable/providers/config/authenticate":

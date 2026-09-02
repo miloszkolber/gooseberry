@@ -152,7 +152,7 @@ func checkRuntime(url string) error {
 		"_goose/unstable/recipes/list": "recipes", "_goose/unstable/schedules/list": "jobs",
 		"_goose/unstable/config/extensions/list": "extensions",
 	} {
-		raw, err := client.Call(ctx, method, map[string]any{})
+		raw, err := client.CallGoose(ctx, method, map[string]any{})
 		if err != nil {
 			return fmt.Errorf("%s: %w", method, err)
 		}

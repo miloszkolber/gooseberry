@@ -98,6 +98,26 @@ func toolDetailsWithoutApp(update map[string]any) map[string]any {
 	return details
 }
 
+func toolDetailsForAgent(update map[string]any, trustedGoose bool) map[string]any {
+	if trustedGoose {
+		return toolDetailsWithoutApp(update)
+	}
+	meta := mapValue(update["_meta"])
+	if len(meta) == 0 {
+		return update
+	}
+	details := maps.Clone(update)
+	cleanMeta := maps.Clone(meta)
+	delete(cleanMeta, "goose")
+	delete(cleanMeta, "toolNotification")
+	if len(cleanMeta) == 0 {
+		delete(details, "_meta")
+	} else {
+		details["_meta"] = cleanMeta
+	}
+	return details
+}
+
 func appIdentifier(value any, label string) (string, error) {
 	text, err := requiredIdentifier(value, label)
 	if err != nil || len(text) > 1024 {
@@ -174,7 +194,7 @@ func (m *SessionManager) readAppResourceLocked(ctx context.Context, entry *sessi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := m.client.Call(entry.context(ctx), "_goose/unstable/resources/read", map[string]any{
+	raw, err := m.client.CallGoose(entry.context(ctx), "_goose/unstable/resources/read", map[string]any{
 		"sessionId":     sessionID,
 		"uri":           uri,
 		"extensionName": state.attachment.ExtensionName,
@@ -218,7 +238,7 @@ func (m *SessionManager) CallAppTool(ctx context.Context, projectID, sessionID, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := m.client.Call(entry.context(ctx), "_goose/unstable/tools/call", map[string]any{
+	raw, err := m.client.CallGoose(entry.context(ctx), "_goose/unstable/tools/call", map[string]any{
 		"sessionId": sessionID,
 		"name":      name,
 		"arguments": arguments,

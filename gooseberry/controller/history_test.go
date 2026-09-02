@@ -66,7 +66,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 			var result any = map[string]any{}
 			switch rpc.Method {
 			case "initialize":
-				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+				result = testGooseInitializeResponse()
 			case "session/list":
 				sessions := make([]any, 0)
 				count := 10
@@ -250,7 +250,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 						mapValue(mapValue(messages[0])["content"])["text"] = "changed tool output"
 						mapValue(arrayValue(mapValue(messages[1])["content"])[0])["data"] = "changed-image"
 					}
-					applySessionUpdate(entry, "agent_message_chunk", map[string]any{"content": map[string]any{"type": "text", "text": "later"}}, false)
+					applySessionUpdate(entry, "agent_message_chunk", map[string]any{"content": map[string]any{"type": "text", "text": "later"}}, gooseACPUpdate)
 					entry.state.Unlock()
 				}
 			}()

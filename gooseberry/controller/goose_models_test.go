@@ -40,7 +40,7 @@ func TestCanonicalLookupsShareWorkWithoutReleasingActiveSlots(t *testing.T) {
 				return
 			}
 			if rpc.Method == "initialize" {
-				_ = writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}})
+				_ = writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": testGooseInitializeResponse()})
 			} else if rpc.Method == "_goose/unstable/providers/canonical-model-info" {
 				requests.Add(1)
 				model := textValue(rpc.Params["model"])

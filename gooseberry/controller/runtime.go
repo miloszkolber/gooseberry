@@ -83,6 +83,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	settings := NewSettings(store, func(value AppConfig) { publish("settings.changed", value) })
 	sessions := NewSessionManager(projects, config.Policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), publish)
 	client := NewGooseClient(config.GooseURL, strings.TrimSpace(config.Getenv("GOOSEBERRY_GOOSE_SECRET_KEY")), config.AppVersion, sessions)
+	client.profileChanged = func(profile AgentProfile) { publish("agent.profileChanged", profile) }
 	sessions.SetClient(client)
 	sessions.SetObjectiveURL("http://127.0.0.1:" + strconv.Itoa(config.Port) + "/mcp/objective")
 	admin := NewGooseAdmin(client, settings)
@@ -113,7 +114,17 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 		if err != nil {
 			return nil, err
 		}
-		result := map[string]any{"protocolVersion": BrowserProtocolVersion, "projects": open, "recentProjects": recent, "config": appConfig, "gooseStatus": runtimeGooseStatus(ctx, client), "pendingPermissions": sessions.PendingPermissions()}
+		status := runtimeGooseStatus(ctx, client)
+		health := make(map[string]any, len(status))
+		for key, value := range status {
+			if key != "agentProfile" {
+				health[key] = value
+			}
+		}
+		result := map[string]any{"protocolVersion": BrowserProtocolVersion, "projects": open, "recentProjects": recent, "config": appConfig, "gooseStatus": health, "pendingPermissions": sessions.PendingPermissions()}
+		if profile, ok := status["agentProfile"]; ok {
+			result["agentProfile"] = profile
+		}
 		if config.AppVersion != "" {
 			result["appVersion"] = config.AppVersion
 		}
@@ -131,7 +142,8 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	ready := func(response http.ResponseWriter, request *http.Request) {
 		status := runtimeGooseStatus(request.Context(), client)
 		code := http.StatusOK
-		if status["configured"] != true || status["reachable"] != true {
+		profile, _ := status["agentProfile"].(AgentProfile)
+		if status["configured"] != true || status["reachable"] != true || !profile.Compatible {
 			code = http.StatusServiceUnavailable
 		}
 		writeAuthJSON(response, code, status)
@@ -172,15 +184,20 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 }
 
 func runtimeGooseStatus(ctx context.Context, client *GooseClient) map[string]any {
-	if client.SecretKey == "" {
+	if client.requireSecret && client.SecretKey == "" {
 		return map[string]any{"configured": false, "reachable": false, "error": "GOOSEBERRY_GOOSE_SECRET_KEY is not configured"}
 	}
 	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err := client.Ready(bounded); err != nil {
+	_, profile, err := client.Profile(bounded)
+	if err != nil {
 		return map[string]any{"configured": true, "reachable": false, "error": err.Error()}
 	}
-	return map[string]any{"configured": true, "reachable": true}
+	status := map[string]any{"configured": true, "reachable": true, "agentProfile": profile}
+	if !profile.Compatible {
+		status["error"] = "Connected agent is missing required capabilities: " + strings.Join(profile.MissingRequired, ", ")
+	}
+	return status
 }
 
 func (m *SessionManager) shutdown(ctx context.Context) {

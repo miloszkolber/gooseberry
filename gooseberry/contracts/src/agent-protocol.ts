@@ -180,6 +180,7 @@ export interface SessionStats {
 	totalMessages: number;
 	tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
 	cost: number;
+	costCurrency?: string;
 	reported?: Partial<
 		Record<"input" | "output" | "cacheRead" | "cacheWrite" | "total" | "cost", boolean>
 	>;
@@ -248,6 +249,7 @@ export type AgentEvent =
 			status?: string;
 			usage?: Partial<SessionStats["tokens"]> & { cost?: number };
 			reported?: SessionStats["reported"];
+			costCurrency?: string;
 			contextUsage?: ContextUsage;
 			configOptions?: readonly { id: string; currentValue?: string | boolean }[];
 			title?: string;
@@ -296,7 +298,7 @@ export interface SlashCommandInfo {
 	name: string;
 	description?: string;
 	inputHint?: string;
-	source: "goose" | "extension" | "prompt" | "skill";
+	source: "agent" | "goose" | "extension" | "prompt" | "skill";
 	sourceInfo: {
 		path: string;
 		source: string;

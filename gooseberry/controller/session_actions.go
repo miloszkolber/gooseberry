@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,6 +30,15 @@ func (m *SessionManager) Prompt(ctx context.Context, sessionID, text string, ima
 	defer entry.op.Unlock()
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
 		return err
+	}
+	if len(images) > 0 {
+		_, profile, err := m.client.Profile(entry.context(ctx))
+		if err != nil {
+			return err
+		}
+		if !profile.Operations.PromptImage {
+			return unsupportedAgentCapability("image prompts")
+		}
 	}
 	entry.state.Lock()
 	busy := entry.streaming || entry.promptActive || queuedFollowUpCount(entry.queue) > 0
@@ -352,6 +362,17 @@ func (m *SessionManager) Steer(ctx context.Context, sessionID, text string, imag
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
 		return err
 	}
+	ctx = entry.context(ctx)
+	_, profile, err := m.client.Profile(ctx)
+	if err != nil {
+		return err
+	}
+	if !profile.Operations.Steer {
+		return unsupportedAgentCapability("session steering")
+	}
+	if len(images) > 0 && !profile.Operations.PromptImage {
+		return unsupportedAgentCapability("image prompts")
+	}
 	entry.state.Lock()
 	runID := entry.runID
 	entry.state.Unlock()
@@ -362,7 +383,7 @@ func (m *SessionManager) Steer(ctx context.Context, sessionID, text string, imag
 	if err != nil {
 		return err
 	}
-	response, err := m.client.Call(entry.context(ctx), "_goose/unstable/session/steer", map[string]any{"sessionId": sessionID, "expectedRunId": runID, "prompt": prompt})
+	response, err := m.client.CallGoose(ctx, "_goose/unstable/session/steer", map[string]any{"sessionId": sessionID, "expectedRunId": runID, "prompt": prompt})
 	if err != nil {
 		return err
 	}
@@ -518,7 +539,8 @@ func (m *SessionManager) scheduleFollowUp(sessionID string, entry *sessionEntry)
 		defer m.releaseWork(entry)
 		retry := false
 		if err := m.lockEntry(sessionID, entry); err == nil {
-			retry = m.drainFollowUp(sessionID, entry) != nil
+			drainErr := m.drainFollowUp(sessionID, entry)
+			retry = drainErr != nil && !errors.Is(drainErr, errAgentIdentityChanged)
 			// Clear the admission flag while still owning op. A queue mutation
 			// cannot observe the old flag and lose its wakeup in this interval.
 			entry.state.Lock()
@@ -771,7 +793,7 @@ func (m *SessionManager) recoverQueuedDispatchLocked(sessionID string, entry *se
 		next.FollowUp = append([]queuedFollowUp{{ID: dispatch.ID, Text: dispatch.Text}}, next.FollowUp...)
 	} else {
 		next.Blocked = &queuedFollowUp{ID: dispatch.ID, Text: dispatch.Text}
-		entry.settlement = &SessionSettlement{StopReason: "error", ErrorMessage: "A queued follow-up may already have reached Goose before the controller restarted. Check the transcript, then retry or remove it."}
+		entry.settlement = &SessionSettlement{StopReason: "error", ErrorMessage: "A queued follow-up may already have reached the ACP agent before the controller restarted. Check the transcript, then retry or remove it."}
 	}
 	next.Revision = randomID()
 	return m.saveQueueLocked(sessionID, entry, next)

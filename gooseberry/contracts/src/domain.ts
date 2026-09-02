@@ -1,3 +1,25 @@
+/** Browser-safe operations available through the connected ACP agent. */
+export interface AgentOperations {
+	deleteSession: boolean;
+	forkSession: boolean;
+	promptImage: boolean;
+	httpMcp: boolean;
+	steer: boolean;
+	renameSession: boolean;
+	archiveSession: boolean;
+	administration: boolean;
+}
+
+/** Connection-scoped identity and capabilities; never includes raw ACP metadata. */
+export interface AgentProfile {
+	name: string;
+	version: string;
+	goose: boolean;
+	compatible: boolean;
+	missingRequired: string[];
+	operations: AgentOperations;
+}
+
 /** Browser-safe projection of Goose's globally persisted tool permission. */
 export type GooseToolPermission = "always_allow" | "ask_before" | "never_allow";
 

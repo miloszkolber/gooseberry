@@ -30,16 +30,29 @@ export interface SessionLifecycleTarget {
 export function forkActionState(
 	streaming: boolean,
 	busy: boolean,
+	supported = true,
+	agentName = "The connected agent",
 ): {
 	disabled: boolean;
 	label: string;
 	title?: string;
 } {
 	return {
-		disabled: streaming || busy,
+		disabled: !supported || streaming || busy,
 		label: busy ? "Forking…" : "Fork",
-		...(streaming ? { title: "Stop the running chat before forking it" } : {}),
+		...(!supported
+			? { title: `${agentName} does not support forking chats` }
+			: streaming
+				? { title: "Stop the running chat before forking it" }
+				: {}),
 	};
+}
+
+export function unsupportedLifecycleReason(
+	agentName: string | undefined,
+	action: "renaming" | "archiving" | "deleting",
+): string {
+	return `${agentName || "The connected agent"} does not support ${action} chats`;
 }
 
 export function RenameSessionDialog({
@@ -97,7 +110,7 @@ export function RenameSessionDialog({
 				<form className="flex flex-col gap-lg" onSubmit={submit}>
 					<DialogHeader>
 						<DialogTitle>Rename chat</DialogTitle>
-						<DialogDescription>Goose stores this title with the session.</DialogDescription>
+						<DialogDescription>The title is stored with this agent session.</DialogDescription>
 					</DialogHeader>
 					<label className="flex flex-col gap-xs tr-text-ui text-text-default">
 						<span>Title</span>
@@ -148,7 +161,7 @@ export function ArchiveSessionDialog({
 			open={open}
 			onOpenChange={onOpenChange}
 			title="Archive this chat?"
-			description="Goose will retain the conversation. You can restore it from chat history."
+			description="The agent will retain the conversation. You can restore it from chat history."
 			confirmLabel="Archive"
 			confirmTestId="session-archive-confirm"
 			onConfirm={() => {
@@ -182,8 +195,28 @@ export function SessionLifecycleMenu({
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [forkBusy, setForkBusy] = useState(false);
 	const [forkError, setForkError] = useState<string | null>(null);
-	const forkAction = forkActionState(streaming, forkBusy);
+	const agentProfile = useAppStore((state) => state.agentProfile);
+	const canFork = agentProfile?.operations.forkSession === true;
+	const canRename = agentProfile?.operations.renameSession === true;
+	const canArchive = agentProfile?.operations.archiveSession === true;
+	const forkAction = forkActionState(streaming, forkBusy, canFork, agentProfile?.name);
+	const renameUnavailable = canRename
+		? undefined
+		: unsupportedLifecycleReason(agentProfile?.name, "renaming");
+	const archiveUnavailable = canArchive
+		? undefined
+		: unsupportedLifecycleReason(agentProfile?.name, "archiving");
+	const unavailableActions = [
+		forkAction.disabled ? forkAction.title : undefined,
+		renameUnavailable,
+		archiveUnavailable ?? (streaming ? "Stop the running chat before archiving it" : undefined),
+	].filter((reason): reason is string => !!reason);
+	useEffect(() => {
+		if (!canRename) setRenameOpen(false);
+		if (!canArchive) setArchiveOpen(false);
+	}, [canArchive, canRename]);
 	const fork = () => {
+		if (!canFork) return;
 		setForkBusy(true);
 		setForkError(null);
 		void getTransport()
@@ -219,6 +252,7 @@ export function SessionLifecycleMenu({
 						data-testid="session-fork"
 						disabled={forkAction.disabled}
 						title={forkAction.title}
+						aria-label={forkAction.title ? `Fork: ${forkAction.title}` : "Fork"}
 						onSelect={(event) => {
 							event.preventDefault();
 							fork();
@@ -226,16 +260,36 @@ export function SessionLifecycleMenu({
 					>
 						<GitFork className="size-3.5" /> {forkAction.label}
 					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => setRenameOpen(true)}>
+					<DropdownMenuItem
+						disabled={!canRename}
+						title={renameUnavailable}
+						aria-label={renameUnavailable ? `Rename: ${renameUnavailable}` : "Rename"}
+						onSelect={() => setRenameOpen(true)}
+					>
 						<Pencil className="size-3.5" /> Rename
 					</DropdownMenuItem>
 					<DropdownMenuItem
-						disabled={streaming}
-						title={streaming ? "Stop the running chat before archiving it" : undefined}
+						disabled={!canArchive || streaming}
+						title={
+							archiveUnavailable ??
+							(streaming ? "Stop the running chat before archiving it" : undefined)
+						}
+						aria-label={
+							archiveUnavailable
+								? `Archive: ${archiveUnavailable}`
+								: streaming
+									? "Archive: Stop the running chat before archiving it"
+									: "Archive"
+						}
 						onSelect={() => setArchiveOpen(true)}
 					>
 						<Archive className="size-3.5" /> Archive
 					</DropdownMenuItem>
+					{unavailableActions.map((reason) => (
+						<p key={reason} className="max-w-64 px-sm py-xs text-text-muted tr-text-metadata">
+							{reason}
+						</p>
+					))}
 					{forkError ? (
 						<p role="alert" className="max-w-64 px-sm py-xs text-feedback-error tr-text-metadata">
 							{forkError}

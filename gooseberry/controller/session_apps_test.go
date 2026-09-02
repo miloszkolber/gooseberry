@@ -59,7 +59,7 @@ func TestCanceledAppOperationStopsWaitingForSession(t *testing.T) {
 			var result any
 			switch rpc.Method {
 			case "initialize":
-				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+				result = testGooseInitializeResponse()
 			case "_goose/unstable/resources/read":
 				upstreamStarted <- struct{}{}
 				select {
@@ -223,7 +223,7 @@ func TestAppOperationsStayBoundToTrustedToolAttachment(t *testing.T) {
 			var result any = map[string]any{}
 			switch rpc.Method {
 			case "initialize":
-				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+				result = testGooseInitializeResponse()
 			case "_goose/unstable/resources/read":
 				calls <- upstreamCall{method: rpc.Method, params: rpc.Params}
 				content := map[string]any{"uri": rpc.Params["uri"], "mimeType": "text/plain", "text": "fixture"}
