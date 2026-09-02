@@ -5,15 +5,32 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestRuntimeReadinessAndWelcomeExposeAgentProfile(t *testing.T) {
-	for _, compatible := range []bool{true, false} {
-		t.Run(map[bool]string{true: "compatible", false: "incompatible"}[compatible], func(t *testing.T) {
+	tests := []struct {
+		name       string
+		compatible bool
+		static     bool
+		status     int
+	}{
+		{name: "compatible", compatible: true, static: true, status: http.StatusOK},
+		{name: "incompatible", compatible: false, static: true, status: http.StatusServiceUnavailable},
+		{name: "missing interface", compatible: true, static: false, status: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			fixture, requests := newGooseSetupFixture(t, false)
 			root := t.TempDir()
+			if test.static {
+				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			policy, err := NewPathPolicy([]string{root}, false)
 			if err != nil {
 				t.Fatal(err)
@@ -48,18 +65,14 @@ func TestRuntimeReadinessAndWelcomeExposeAgentProfile(t *testing.T) {
 			}()
 			initialize := takeGooseSetup(t, requests)
 			response := testGooseInitializeResponse()
-			if !compatible {
+			if !test.compatible {
 				capabilities := response["agentCapabilities"].(map[string]any)
 				capabilities["loadSession"] = false
 				delete(capabilities["sessionCapabilities"].(map[string]any), "list")
 			}
 			initialize.respondResult(t, response)
 			result := <-ready
-			expectedCode := http.StatusOK
-			if !compatible {
-				expectedCode = http.StatusServiceUnavailable
-			}
-			if result.code != expectedCode {
+			if result.code != test.status {
 				t.Fatalf("readyz status %d, body %s", result.code, result.body)
 			}
 			var status map[string]any
@@ -67,8 +80,14 @@ func TestRuntimeReadinessAndWelcomeExposeAgentProfile(t *testing.T) {
 				t.Fatal(err)
 			}
 			readyProfile := mapValue(status["agentProfile"])
-			if readyProfile["name"] != "goose" || readyProfile["compatible"] != compatible {
+			if readyProfile["name"] != "goose" || readyProfile["compatible"] != test.compatible {
 				t.Fatalf("readyz profile: %#v", readyProfile)
+			}
+			if status["applicationReady"] != test.static {
+				t.Fatalf("readyz local prerequisites: %#v", status)
+			}
+			if test.static && status["applicationError"] != nil || !test.static && status["applicationError"] != "Application interface is unavailable." {
+				t.Fatalf("readyz local detail: %#v", status)
 			}
 
 			welcomeValue, err := runtime.socket.Welcome(t.Context())
@@ -77,7 +96,7 @@ func TestRuntimeReadinessAndWelcomeExposeAgentProfile(t *testing.T) {
 			}
 			welcome := welcomeValue.(map[string]any)
 			profile, ok := welcome["agentProfile"].(AgentProfile)
-			if !ok || profile.Name != "goose" || profile.Compatible != compatible {
+			if !ok || profile.Name != "goose" || profile.Compatible != test.compatible {
 				t.Fatalf("welcome profile: %#v", welcome["agentProfile"])
 			}
 			health := welcome["gooseStatus"].(map[string]any)
