@@ -82,13 +82,16 @@ func (h *HistoryIndex) Search(ctx context.Context, request map[string]any) (map[
 	var catalog []acp.SessionInfo
 	var cursor *string
 	seen := make(map[string]bool)
+	incomplete := false
 	for page := 0; ; page++ {
 		response, err := m.client.ListSessions(ctx, acp.ListSessionsRequest{Cursor: cursor})
 		if err != nil {
 			return nil, err
 		}
-		catalog = append(catalog, response.Sessions[:min(len(response.Sessions), historyMaxSessions-len(catalog))]...)
+		remaining := historyMaxSessions - len(catalog)
+		catalog = append(catalog, response.Sessions[:min(len(response.Sessions), remaining)]...)
 		if len(catalog) == historyMaxSessions || response.NextCursor == nil {
+			incomplete = incomplete || len(response.Sessions) > remaining || len(catalog) == historyMaxSessions && response.NextCursor != nil
 			break
 		}
 		if seen[*response.NextCursor] || page == 19 {
@@ -114,7 +117,6 @@ func (h *HistoryIndex) Search(ctx context.Context, request map[string]any) (map[
 		value.updatedAt, _ = parseTimestamp(stamp)
 		remote[id], order[id] = value, index
 	}
-	incomplete := false
 	selected := make([]ProjectSessionRecord, 0)
 	for _, record := range records {
 		if kind == "chat" && record.SessionID != textValue(scope["sessionId"]) || kind == "project" && record.ProjectID != textValue(scope["projectId"]) {

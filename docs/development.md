@@ -58,6 +58,6 @@ For packaging changes, check both architectures, state/environment isolation, no
 
 The initial JavaScript budget is **500,000 raw bytes**, including eager imports. Keep large views/grammars lazy and transcript lists virtualized.
 
-Controller p95 may regress by at most **5%** against the reference workload. The opt-in [comparison probe](performance.md#run-a-comparison) measures project lists, one-MiB files, images and concurrent clients. Keep authorization, replay and I/O limits intact.
+The controller comparison target is no more than **5%** above the reference workload. Deployment-host enforcement is deferred. The opt-in [comparison probe](performance.md#run-a-comparison) measures project lists, one-MiB files, images and concurrent clients. Keep authorization, replay and I/O limits intact.
 
-[Performance](performance.md) owns measurements and acceptance limits. `GOGC=200` trades memory for fewer collections; measure before changing it.
+[Performance](performance.md) owns measurements and targets. `GOGC=200` trades memory for fewer collections; measure before changing it.

@@ -17,7 +17,9 @@ const sessionHydration = new Map<
 	string,
 	{ promise: Promise<boolean>; closedChat: ClosedChat | undefined }
 >();
+const refreshedConnectionByProjectArea = new Map<string, number>();
 const AUTO_OPEN_CHAT_LIMIT = 4;
+const CHAT_REFRESH_BATCH = 4;
 
 function chatTab(
 	state: ReturnType<typeof useAppStore.getState>,
@@ -29,7 +31,11 @@ function chatTab(
 	);
 }
 
-export function hydrateChatResource(projectAreaId: string, sessionId: string): Promise<boolean> {
+export function hydrateChatResource(
+	projectAreaId: string,
+	sessionId: string,
+	refreshExisting = false,
+): Promise<boolean> {
 	const state = useAppStore.getState();
 	const projectId = selectProjectAreaById(state, projectAreaId)?.projectId ?? projectAreaId;
 	if (
@@ -42,7 +48,7 @@ export function hydrateChatResource(projectAreaId: string, sessionId: string): P
 	const closedChat = state.closedChatsByProjectArea[projectAreaId]?.find(
 		(chat) => chat.sessionId === sessionId,
 	);
-	if (state.sessions[sessionId]) {
+	if (state.sessions[sessionId] && !refreshExisting) {
 		if (!chatTab(state, projectAreaId, sessionId)) {
 			state.openTab(
 				{
@@ -64,7 +70,9 @@ export function hydrateChatResource(projectAreaId: string, sessionId: string): P
 	if (existing && existing.closedChat === closedChat) return existing.promise;
 	const request = getTransport()
 		.request("session.getMessages", { projectId: projectAreaId, sessionId })
-		.then(({ summary, messages, pendingTools }) => {
+		.then((response) => {
+			if (response.kind !== "snapshot") throw new Error("invalid chat snapshot");
+			const { summary, messages, pendingTools, page } = response;
 			const current = useAppStore.getState();
 			if (!isConnectedGeneration(current, generation)) return false;
 			if (
@@ -77,13 +85,18 @@ export function hydrateChatResource(projectAreaId: string, sessionId: string): P
 			) {
 				return false;
 			}
-			current.hydrateSession(
-				summary,
-				messagesToRuntime(messages, summary.lastSettlement, pendingTools),
-				false,
-				undefined,
-				{ activate: false },
-			);
+			const hydrated = messagesToRuntime(messages, {
+				lastSettlement: summary.lastSettlement,
+				pendingTools,
+				page,
+				isStreaming: summary.isStreaming,
+			});
+			if (current.sessions[sessionId]) {
+				if (!chatTab(current, projectAreaId, sessionId)) return false;
+				current.replaceTranscriptSnapshot(sessionId, summary, hydrated);
+			} else {
+				current.hydrateSession(summary, hydrated, false, undefined, { activate: false });
+			}
 			const installed = useAppStore.getState();
 			return (
 				installed.sessions[sessionId] !== undefined &&
@@ -109,6 +122,28 @@ export function useProjectAreaChatCatalogReconciliation(projectAreaId: string): 
 		return target?.projectAreaId === projectAreaId ? target : null;
 	});
 	const flight = useRef(0);
+
+	useEffect(() => {
+		if (connectionGeneration === 0) return;
+		const state = useAppStore.getState();
+		if (!isConnectedGeneration(state, connectionGeneration)) return;
+		if (refreshedConnectionByProjectArea.get(projectAreaId) === connectionGeneration) return;
+		refreshedConnectionByProjectArea.set(projectAreaId, connectionGeneration);
+		const sessionIds = (state.tabsByProjectArea[projectAreaId] ?? [])
+			.filter((tab): tab is ChatTab => tab.kind === "chat")
+			.map((tab) => tab.sessionId);
+		if (sessionIds.length === 0) return;
+		void (async () => {
+			for (let index = 0; index < sessionIds.length; index += CHAT_REFRESH_BATCH) {
+				if (!isConnectedGeneration(useAppStore.getState(), connectionGeneration)) return;
+				await Promise.allSettled(
+					sessionIds
+						.slice(index, index + CHAT_REFRESH_BATCH)
+						.map((sessionId) => hydrateChatResource(projectAreaId, sessionId, true)),
+				);
+			}
+		})();
+	}, [connectionGeneration, projectAreaId]);
 
 	useEffect(() => {
 		void routeTargetGeneration;
@@ -231,7 +266,6 @@ export function useChatLocationReconciliation(projectAreaId: string): void {
 		const existing = chatTab(state, projectAreaId, request.sessionId);
 		if (existing) {
 			state.setActiveTab(existing.id, "keep");
-			state.clearChatLocation();
 			return;
 		}
 		if (state.sessions[request.sessionId]) {
@@ -249,7 +283,6 @@ export function useChatLocationReconciliation(projectAreaId: string): void {
 				},
 				"keep",
 			);
-			state.clearChatLocation();
 			return;
 		}
 		if (status !== "connected" || !isConnectedGeneration(state, connectionGeneration)) return;
@@ -267,7 +300,7 @@ export function useChatLocationReconciliation(projectAreaId: string): void {
 				) {
 					toast.error("The chat could not be restored.", "Couldn't open the chat");
 				}
-				if (latest.chatLocationRequest === request) latest.clearChatLocation();
+				if (!installed && latest.chatLocationRequest === request) latest.clearChatLocation();
 			})
 			.catch((error) => {
 				if (current) toast.error(errorText(error), "Couldn't open the chat");

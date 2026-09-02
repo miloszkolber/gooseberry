@@ -50,7 +50,7 @@ import type {
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 75;
+export const PROTOCOL_VERSION = 76;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -207,6 +207,26 @@ export interface ProjectWatchReadyResult {
 	startupNudge: boolean;
 }
 
+export interface TranscriptPage {
+	projectionId: string;
+	start: number;
+	total: number;
+}
+
+export type SessionMessagesResult =
+	| {
+			kind: "snapshot";
+			summary: SessionSummary;
+			messages: TranscriptMessage[];
+			pendingTools: PendingToolPreview[];
+			page: TranscriptPage;
+	  }
+	| {
+			kind: "page";
+			messages: TranscriptMessage[];
+			page: TranscriptPage;
+	  };
+
 export interface WsMethodMap {
 	"project.open": { params: { path: string }; result: Project };
 	"project.addRoot": { params: { id: string; path: string }; result: Project };
@@ -318,12 +338,14 @@ export interface WsMethodMap {
 		result: SessionSummary[];
 	};
 	"session.getMessages": {
-		params: { sessionId: string; projectId: string };
-		result: {
-			summary: SessionSummary;
-			messages: TranscriptMessage[];
-			pendingTools: PendingToolPreview[];
-		};
+		params:
+			| { sessionId: string; projectId: string }
+			| {
+					sessionId: string;
+					projectId: string;
+					before: { projectionId: string; index: number };
+			  };
+		result: SessionMessagesResult;
 	};
 	"session.release": { params: { sessionId: string; projectId: string }; result: Ack };
 	"session.appOpen": {
@@ -560,7 +582,8 @@ export type WsErrorCode =
 	| "SYMBOLIC_BRANCH"
 	| "UNBORN_HEAD"
 	| "NO_MERGE_BASE"
-	| "GIT_BRANCHES_UNAVAILABLE";
+	| "GIT_BRANCHES_UNAVAILABLE"
+	| "STALE_TRANSCRIPT_PROJECTION";
 
 export interface WsResponse {
 	id: string;

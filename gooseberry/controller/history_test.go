@@ -35,6 +35,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 		}
 	}
 	var loads atomic.Int32
+	var oversizeCatalog atomic.Bool
 	var forks, configurations atomic.Int32
 	setup := map[string]any{
 		"configOptions": []any{
@@ -68,7 +69,11 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
 			case "session/list":
 				sessions := make([]any, 0)
-				for index := 0; index < 10; index++ {
+				count := 10
+				if oversizeCatalog.Load() {
+					count = historyMaxSessions + 1
+				}
+				for index := 0; index < count; index++ {
 					meta := map[string]any{}
 					if index == 9 {
 						meta["archivedAt"] = "2026-08-30T00:00:00Z"
@@ -122,6 +127,12 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 	if result["indexing"] != false || result["incomplete"] != false || result["promptTotal"] != 9 || result["messageTotal"] != 18 || len(result["messages"].([]map[string]any)) != 2 || loads.Load() != 9 {
 		t.Fatalf("completed index: %#v; loads %d", result, loads.Load())
 	}
+	oversizeCatalog.Store(true)
+	result, err = manager.history.Search(ctx, request)
+	if err != nil || result["incomplete"] != true {
+		t.Fatalf("oversized final catalog page was reported as complete: %#v, %v", result, err)
+	}
+	oversizeCatalog.Store(false)
 	manager.mu.Lock()
 	retained := len(manager.sessions)
 	manager.mu.Unlock()
@@ -301,7 +312,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 		responseDone := make(chan responseResult, 1)
 		go func() {
 			close(responseStarted)
-			value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client")
+			value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client", transcriptPageRequest{})
 			responseDone <- responseResult{value: value, err: err}
 		}()
 		<-responseStarted
@@ -332,7 +343,7 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 				published <- mapValue(data)
 			}
 		}
-		value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client")
+		value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client", transcriptPageRequest{})
 		deferred, ok = value.(deferredResponse)
 		if err != nil || !ok {
 			t.Fatalf("snapshot-first response was not holding the update boundary: %#v, %v", value, err)
@@ -377,5 +388,33 @@ func TestHistoryIndexesInBatchesWithoutLeakingReplays(t *testing.T) {
 		if strings.Contains(string(encoded), "after-snapshot") {
 			t.Fatalf("snapshot included a later update: %s", encoded)
 		}
+	})
+	t.Run("older pages release live state before encoding", func(t *testing.T) {
+		entry, err := manager.entry(child.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer manager.releaseEntry(entry)
+		entry.state.Lock()
+		entry.messages = nil
+		for index := 0; index < transcriptPageMaxMessages+10; index++ {
+			entry.messages = append(entry.messages, map[string]any{"role": "user", "content": fmt.Sprintf("history-%03d", index)})
+		}
+		_, tail, err := transcriptPageLocked(entry, nil)
+		entry.state.Unlock()
+		if err != nil || tail.Start == 0 {
+			t.Fatalf("fixture did not produce an older page: %#v, %v", tail, err)
+		}
+		value, err := manager.messageResponse(ctx, child.SessionID, project.ID, project.Roots[0], "client", transcriptPageRequest{Before: &transcriptBefore{ProjectionID: tail.ProjectionID, Index: tail.Start}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, deferred := value.(deferredResponse); deferred {
+			t.Fatal("older page retained the newest-snapshot response boundary")
+		}
+		if !entry.state.TryLock() {
+			t.Fatal("older page kept session state locked after copying its immutable messages")
+		}
+		entry.state.Unlock()
 	})
 }

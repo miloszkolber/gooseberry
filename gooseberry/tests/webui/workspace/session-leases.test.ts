@@ -124,6 +124,7 @@ test("late hydration respects chat and project closure while allowing an explici
 			"keep",
 		);
 	const reply: WsResult<"session.getMessages"> = {
+		kind: "snapshot",
 		summary: {
 			sessionId: "chat",
 			projectId: "project",
@@ -139,6 +140,7 @@ test("late hydration respects chat and project closure while allowing an explici
 		},
 		messages: [],
 		pendingTools: [],
+		page: { projectionId: "projection", start: 0, total: 0 },
 	};
 	try {
 		const previous = hydrateChatResource("project", "chat");
@@ -153,18 +155,54 @@ test("late hydration respects chat and project closure while allowing an explici
 		replies[1]?.(reply);
 		expect(await reopened).toBe(true);
 		expect(useAppStore.getState().tabsByProjectArea.project).toHaveLength(1);
+		useAppStore.getState().setChatDraft("chat", "keep this draft");
+		useAppStore.getState().appendUserMessage("chat", "pending admission");
+		const refresh = hydrateChatResource("project", "chat", true);
+		expect(replies).toHaveLength(3);
+		replies[2]?.({ ...reply, page: { projectionId: "refreshed", start: 0, total: 0 } });
+		expect(await refresh).toBe(true);
+		expect(useAppStore.getState().sessions.chat?.transcript?.projectionId).toBe("refreshed");
+		expect(useAppStore.getState().sessions.chat?.draft).toBe("keep this draft");
+		expect(
+			useAppStore
+				.getState()
+				.sessions.chat?.turns.some(
+					(turn) => turn.kind === "user" && turn.message.content === "pending admission",
+				),
+		).toBe(true);
+		const admittedRefresh = hydrateChatResource("project", "chat", true);
+		expect(replies).toHaveLength(4);
+		replies[3]?.({
+			...reply,
+			summary: { ...reply.summary, messageCount: 1 },
+			messages: [{ role: "user", content: [{ type: "text", text: "pending admission" }] }],
+			page: { projectionId: "admitted", start: 0, total: 1 },
+		});
+		expect(await admittedRefresh).toBe(true);
+		expect(
+			useAppStore.getState().sessions.chat?.turns.filter((turn) => turn.kind === "user"),
+		).toHaveLength(1);
+
+		const staleRefresh = hydrateChatResource("project", "chat", true);
+		expect(replies).toHaveLength(5);
+		useAppStore.getState().setStatus("disconnected");
+		useAppStore.getState().setStatus("connected");
+		replies[4]?.({ ...reply, page: { projectionId: "stale", start: 0, total: 0 } });
+		expect(await staleRefresh).toBe(false);
+		expect(useAppStore.getState().sessions.chat?.transcript?.projectionId).toBe("admitted");
+
 		const runtime = useAppStore.getState().sessions.chat;
 		if (!runtime) throw new Error("chat runtime missing");
 		useAppStore.setState({ sessions: { chat: { ...runtime, isStreaming: true } } });
 		useAppStore.getState().closeChatToHistory("chat", "project");
 		expect(await hydrateChatResource("project", "chat")).toBe(true);
-		expect(replies).toHaveLength(2);
+		expect(replies).toHaveLength(5);
 		expect(useAppStore.getState().tabsByProjectArea.project).toHaveLength(1);
 
 		useAppStore.getState().closeChatRuntime("chat");
 		const closingProject = hydrateChatResource("project", "chat");
 		useAppStore.getState().applyProjectUpdated({ ...project, closed: true });
-		replies[2]?.(reply);
+		replies[5]?.(reply);
 		expect(await closingProject).toBe(false);
 		expect(useAppStore.getState().sessions.chat).toBeUndefined();
 	} finally {

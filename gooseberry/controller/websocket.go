@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	BrowserProtocolVersion  = 75
+	BrowserProtocolVersion  = 76
 	maxWSRequestBytes       = 32 * 1024 * 1024
 	maxConcurrentWSRequests = 256
 )
@@ -162,6 +162,7 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 		var ids []string
 		if json.Unmarshal(rawAck, &ids) == nil {
 			s.replay.Acknowledge(clientKey, ids)
+			output.replay.Acknowledge(clientKey, ids)
 		}
 		return
 	}
@@ -172,6 +173,7 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 		var ids []string
 		if json.Unmarshal(rawResume, &ids) == nil {
 			s.replay.Retain(clientKey, ids)
+			output.replay.Retain(clientKey, ids)
 		}
 		return
 	}
@@ -208,7 +210,7 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 			s.handlers.Done()
 		}()
 		var after func()
-		response, err := s.replay.Run(ctx, clientKey, id, fingerprint, func() ([]byte, error) {
+		execute := func() ([]byte, error) {
 			result, handleErr := s.Handler.Handle(requestContext, method, params, clientKey)
 			if handleErr != nil {
 				failure := map[string]any{"id": id, "ok": false, "error": handleErr.Error()}
@@ -226,7 +228,17 @@ func (s *WebSocketServer) handle(ctx context.Context, output *socketOutput, clie
 				OK     bool   `json:"ok"`
 				Result any    `json:"result"`
 			}{id, true, result})
-		})
+		}
+		var response []byte
+		var err error
+		if method == "session.getMessages" {
+			// Coalesce retries on this socket, but establish a fresh response boundary
+			// after replacement. Replaying an older socket's snapshot could otherwise
+			// place stale state after a newer event on the replacement connection.
+			response, err = output.replay.Run(ctx, clientKey, id, fingerprint, execute)
+		} else {
+			response, err = s.replay.Run(ctx, clientKey, id, fingerprint, execute)
+		}
 		if err != nil {
 			response, _ = json.Marshal(map[string]any{"id": id, "ok": false, "error": err.Error()})
 		}
