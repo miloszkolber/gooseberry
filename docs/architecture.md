@@ -29,7 +29,7 @@ Local diagnostics use standard-library counters and process snapshots. The authe
 
 Goose stores transcripts. ACP replay has no range request, so the controller receives the complete authoritative transcript and exposes a bounded browser projection. The first response contains the newest user-round page; older pages load on demand. A projection identity prevents the browser from combining pages from different replays.
 
-Gooseberry stores project/session associations, follow-up queues, mutation receipts, objectives and presentation settings. JSON writes use atomic replacement and last-valid backups; execution queues fail closed rather than running a stale backup. Cached project metadata requires matching freshly read bytes. Path authorization remains fresh.
+Gooseberry stores project/session associations, follow-up queues, mutation receipts, objectives and presentation settings. JSON writes use atomic replacement and last-valid backups; execution queues fail closed rather than running a stale backup. Session deletion uses a primary-authoritative two-phase journal and removes both rollback generations before completing. Cached project metadata requires matching freshly read bytes. Path authorization remains fresh.
 
 Each Web UI client reports its open chats as a revisioned lease snapshot. Closing one client's tab preserves other clients' leases. Disconnect cleanup waits for reconnect grace and replay work; project closure checks for concurrent reopening.
 

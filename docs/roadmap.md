@@ -14,7 +14,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 ## Operations and maintenance
 
 - Check backup/restore, schema migration and rollback before changing persisted state.
-- Make session deletion recoverable across partial record, objective and queue-store failures without treating older backups as deletion authority.
 - Bound queue-recovery fan-out and compact durable request receipts if persisted queue state approaches its file limit.
 - Consider browser egress controls for private networks and cloud-metadata endpoints, plus optional TLS/identity setup for remote access.
 - Extend protocol tests when upstream payloads change. Keep tests focused on persistence, reconnect/replay, concurrent chats, permissions, path isolation and fragile interactions.
