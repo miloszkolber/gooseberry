@@ -49,11 +49,12 @@ import type {
 	LoginReply,
 	Project,
 	ProviderStatusReport,
+	RuntimeStatusReport,
 	SessionGoal,
 	SignetStatus,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 78;
+export const PROTOCOL_VERSION = 79;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -175,6 +176,7 @@ export const WS_METHODS = {
 	gooseScheduleInspect: "goose.scheduleInspect",
 	gooseScheduleKill: "goose.scheduleKill",
 	gooseStatus: "goose.status",
+	runtimeStatus: "runtime.status",
 	gooseExtensionList: "goose.extensionList",
 	gooseExtensionAdd: "goose.extensionAdd",
 	gooseExtensionSetEnabled: "goose.extensionSetEnabled",
@@ -539,6 +541,10 @@ export interface WsMethodMap {
 			version?: string;
 			agentProfile?: AgentProfile;
 		};
+	};
+	"runtime.status": {
+		params: Record<string, never>;
+		result: RuntimeStatusReport;
 	};
 	"goose.extensionList": { params: Record<string, never>; result: GooseExtensionCatalog };
 	"goose.extensionAdd": {

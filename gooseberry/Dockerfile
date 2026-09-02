@@ -4,6 +4,8 @@ ARG BUN_IMAGE=oven/bun:1.4.0-debian@sha256:5bb0f9be3a1a36a03e27c9a9dd894a3b1ad26
 ARG GO_IMAGE=golang:1.27.0-trixie@sha256:ae28539d2ef595b9a2930dd7f031d9592376829dc0eae7cb869559f7d5812c3a
 ARG AGENT_BROWSER_VERSION=0.34.0
 ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+ARG VERSION=0.0.0-dev
+ARG REVISION=unknown
 
 FROM --platform=$BUILDPLATFORM ${BUN_IMAGE} AS web-build
 WORKDIR /work
@@ -27,15 +29,18 @@ COPY gooseberry/main.go ./
 COPY gooseberry/cmd/ cmd/
 COPY gooseberry/controller/ controller/
 COPY gooseberry/browser/ browser/
+COPY gooseberry/internal/ internal/
 
 FROM go-source AS go-build
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION
+ARG REVISION
 RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH; \
     set -eu; \
     for entry in gooseberry:. gooseberry-browser:./cmd/browser; do \
         binary=${entry%%:*}; package=${entry#*:}; \
-        go build -trimpath -ldflags='-s -w' -o "/out/$binary" "$package"; \
+        go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.revision=$REVISION" -o "/out/$binary" "$package"; \
         mkdir -p "/out/licenses/$binary/go"; \
         cp /usr/local/go/LICENSE "/out/licenses/$binary/go/LICENSE"; \
         go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}}@{{.Version}} {{.Dir}}{{end}}{{end}}' "$package" \

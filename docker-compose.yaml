@@ -31,6 +31,11 @@ services:
         tmpfs:
             - /tmp:size=128m,mode=1777,uid=1000,gid=1000
             - /run:size=16m,mode=700,uid=1000,gid=1000
+        logging:
+            driver: local
+            options:
+                max-size: "10m"
+                max-file: "3"
         stop_grace_period: 20s
 
     browser:
@@ -61,4 +66,9 @@ services:
             - /tmp:size=128m,mode=1777,uid=1000,gid=1000
             - /run:size=16m,mode=700,uid=1000,gid=1000
             - /dev/shm:size=64m,mode=1777,uid=1000,gid=1000
+        logging:
+            driver: local
+            options:
+                max-size: "10m"
+                max-file: "3"
         stop_grace_period: 20s

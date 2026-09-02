@@ -69,6 +69,11 @@ jobs:
         run: |
           echo "short=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -92,6 +97,7 @@ jobs:
           flavor: latest=false
           labels: |
             org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
+            org.opencontainers.image.version=${{ steps.source.outputs.version }}
           tags: |
             type=ref,event=tag
             type=raw,value=sha-${{ steps.source.outputs.short }}
@@ -107,6 +113,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.source.outputs.version }}
+            REVISION=${{ steps.source.outputs.revision }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           no-cache-filters: ${{ github.event_name == 'schedule' && 'runtime-base,browser-packages,gooseberry' || '' }}

@@ -27,6 +27,8 @@ jq -e --arg root "$repo_root" --arg data "$GOOSEBERRY_DATA_PATH" --slurpfile saf
   all(.services | to_entries[]; .key as $service | .value |
     .user == "1000:1000" and .read_only == true and .network_mode == "host" and
     .build.context == $root and .build.dockerfile == "gooseberry/Dockerfile" and
+    .logging.driver == "local" and .logging.options."max-size" == "10m" and
+    .logging.options."max-file" == "3" and
     (has("env_file") | not) and
     (.volumes | length) == 1 and
     .volumes[0].type == "bind" and (.volumes[0].bind | type) == "object" and

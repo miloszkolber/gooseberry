@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,11 +13,15 @@ import (
 	"time"
 
 	controller "github.com/miloszkolber/gooseberry/controller"
+	"github.com/miloszkolber/gooseberry/internal/diagnostics"
 )
 
 var version = "0.0.0-dev"
+var revision = "unknown"
 
 func main() {
+	build := diagnostics.NormalizeBuild(version, revision)
+	slog.SetDefault(diagnostics.NewLogger("gooseberry", build))
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
 		host := "127.0.0.1"
 		if configured := strings.TrimSpace(os.Getenv("GOOSEBERRY_CONTROLLER_HOST")); configured == "::" || configured == "::1" {
@@ -35,13 +40,13 @@ func main() {
 	}
 	stop, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if err := run(stop); err != nil {
+	if err := run(stop, build); err != nil {
 		fatal(err)
 	}
 }
 
-func run(ctx context.Context) error {
-	runtime, err := controller.NewRuntime(controller.RuntimeConfig{AppVersion: version})
+func run(ctx context.Context, build diagnostics.BuildInfo) error {
+	runtime, err := controller.NewRuntime(controller.RuntimeConfig{AppVersion: build.Version, AppRevision: build.Revision})
 	if err != nil {
 		return err
 	}
@@ -49,7 +54,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Gooseberry → %s\n", endpoint)
+	slog.Info("listening", "address", endpoint)
 	select {
 	case err = <-runtime.Errors():
 	case <-ctx.Done():
@@ -60,6 +65,6 @@ func run(ctx context.Context) error {
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, err)
+	slog.Error("application failed", "error", err)
 	os.Exit(1)
 }

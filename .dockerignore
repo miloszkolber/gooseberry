@@ -15,6 +15,8 @@
 !gooseberry/controller/**
 !gooseberry/browser/
 !gooseberry/browser/**
+!gooseberry/internal/
+!gooseberry/internal/**
 !gooseberry/tests/
 !gooseberry/tests/ui/
 !gooseberry/tests/ui/**
