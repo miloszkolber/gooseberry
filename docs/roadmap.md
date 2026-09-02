@@ -4,10 +4,11 @@ Current behavior is documented in the [README](../README.md), [architecture](arc
 
 ## Conditional
 
-- Connect extension-dialog replies and add export, share, import or broader source management only when upstream exposes stable operations.
+- Connect extension-dialog replies only when upstream exposes a stable response operation.
+- Add export, share, import or broader source management only when upstream exposes stable browser-safe operations.
 - Expose production generic ACP selection only after persisted sessions and controller-owned queues can be bound to an operator-stable agent identity.
-- Compact durable queue receipts only if observed state approaches its limit and a safe retention rule is defined.
-- Add browser egress policy or remote TLS and identity only for a defined deployment threat model.
+- Revisit the 512-entry handled-receipt cap only if observed recovery state approaches it and a safe longer-lived retention rule is defined.
+- Add browser egress controls, built-in TLS or mTLS, or service identity only for a defined deployment threat model.
 
 ## Deferred
 

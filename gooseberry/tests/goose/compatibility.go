@@ -22,7 +22,7 @@ import (
 
 func main() {
 	source := flag.String("source", "", "optional upstream Goose source directory")
-	controllerDir := flag.String("controller", "controller", "Gooseberry controller source directory")
+	controllerDir := flag.String("controller", "internal/controller", "Gooseberry controller source directory")
 	url := flag.String("url", "", "isolated Goose ACP WebSocket URL")
 	flag.Parse()
 	if *source == "" && *url == "" {
