@@ -20,7 +20,9 @@ test("session agent controls expose the current mode and safe bounded plan conte
 	expect(mode).toContain('aria-label="Session mode"');
 	expect(mode).toContain("aria-describedby=");
 	expect(mode).toContain("Make changes to the project");
-	expect(mode).toContain('<option value="code" title="Make changes to the project" selected="">Code</option>');
+	expect(mode).toContain(
+		'<option value="code" title="Make changes to the project" selected="">Code</option>',
+	);
 
 	const plan = renderToStaticMarkup(
 		<SessionPlanContent
