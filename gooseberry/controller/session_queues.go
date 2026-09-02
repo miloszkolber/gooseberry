@@ -283,7 +283,7 @@ func validateStoredQueues(value storedSessionQueues) error {
 		if err := validateIdentity(record.ProjectID, "Project id"); err != nil {
 			return err
 		}
-		if err := validateIdentity(record.SessionID, "Session id"); err != nil {
+		if err := validateACPSessionID(record.SessionID); err != nil {
 			return err
 		}
 		key := queueRecordKey(record.ProjectID, record.SessionID)

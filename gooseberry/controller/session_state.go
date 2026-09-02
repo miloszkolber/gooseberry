@@ -116,10 +116,10 @@ func (s *SessionRecords) filter(keep func(ProjectSessionRecord) bool) error {
 }
 
 func validateSessionRecord(record ProjectSessionRecord) error {
-	if record.ProjectID == "" || record.SessionID == "" || record.CWD == "" || containsNUL(record.ProjectID) || containsNUL(record.SessionID) || containsNUL(record.CWD) {
+	if record.ProjectID == "" || validateACPSessionID(record.SessionID) != nil || record.CWD == "" || containsNUL(record.ProjectID) || containsNUL(record.CWD) {
 		return fmt.Errorf("invalid project session record")
 	}
-	if record.ParentSessionID != "" && (containsNUL(record.ParentSessionID) || record.ParentSessionID == record.SessionID) {
+	if record.ParentSessionID != "" && (validateACPSessionID(record.ParentSessionID) != nil || record.ParentSessionID == record.SessionID) {
 		return fmt.Errorf("invalid project session record")
 	}
 	return nil
@@ -196,10 +196,7 @@ func (o *Objectives) Update(projectID, sessionID string, goal *string, tasks *[]
 	if goal == nil && tasks == nil {
 		return SessionGoal{}, fmt.Errorf("an objective update requires goal or tasks")
 	}
-	if err := validateIdentity(projectID, "Project id"); err != nil {
-		return SessionGoal{}, err
-	}
-	if err := validateIdentity(sessionID, "Session id"); err != nil {
+	if err := validateDurableSessionTarget(projectID, sessionID); err != nil {
 		return SessionGoal{}, err
 	}
 	o.mu.Lock()
@@ -301,10 +298,7 @@ func (o *Objectives) ClearProject(projectID string) error {
 }
 
 func (o *Objectives) read(projectID, sessionID string) (*storedObjective, error) {
-	if err := validateIdentity(projectID, "Project id"); err != nil {
-		return nil, err
-	}
-	if err := validateIdentity(sessionID, "Session id"); err != nil {
+	if err := validateDurableSessionTarget(projectID, sessionID); err != nil {
 		return nil, err
 	}
 	var stored storedObjective
@@ -350,7 +344,7 @@ func (o *Objectives) write(stored storedObjective) error {
 }
 
 func validateObjective(value storedObjective, projectID, sessionID string) error {
-	if value.Version != 2 || value.ProjectID != projectID || value.SessionID != sessionID || value.Tasks == nil {
+	if validateDurableSessionTarget(projectID, sessionID) != nil || value.Version != 2 || value.ProjectID != projectID || value.SessionID != sessionID || value.Tasks == nil {
 		return fmt.Errorf("invalid objective")
 	}
 	if value.Goal != nil {
@@ -392,6 +386,22 @@ func validateIdentity(value, label string) error {
 		return fmt.Errorf("%s is invalid", label)
 	}
 	return nil
+}
+
+func validateACPSessionID(value string) error {
+	// ACP session identifiers are opaque. They are stored as data, never used
+	// directly as path components; objective filenames use a digest instead.
+	if value == "" || containsNUL(value) {
+		return fmt.Errorf("Session id is invalid")
+	}
+	return nil
+}
+
+func validateDurableSessionTarget(projectID, sessionID string) error {
+	if err := validateIdentity(projectID, "Project id"); err != nil {
+		return err
+	}
+	return validateACPSessionID(sessionID)
 }
 
 func objectiveKey(projectID, sessionID string) string {
