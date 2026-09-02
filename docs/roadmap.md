@@ -1,26 +1,16 @@
 # Roadmap
 
-The [baseline](baseline.md) describes the application today. Priorities are incomplete behavior, latency and session continuity. Goose remains the runtime and conversation store.
+The [baseline](baseline.md) describes Gooseberry today. Goose remains the default runtime and conversation store.
 
-## Finish existing behavior
+## Conditional
 
-- **Dormant surfaces.** Connect the retained extension-dialog hooks when upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
-
-## Session continuity and integration
-
-- Bind persisted sessions and controller-owned queues to a stable agent identity before exposing production agent selection. Explicit generic endpoints currently bind live sessions to the reported name, version and capability profile; unnamed agents fail closed across reconnects, but ACP does not yet distinguish two implementations reporting the same profile. Keep Goose as the optimized default and avoid a generic service framework.
-- Add export/share/import and broader source management only through supported upstream methods and small browser-safe records.
-
-## Operations and maintenance
-
-- Check backup/restore, schema migration and rollback before changing persisted state.
-- Bound queue-recovery fan-out and compact durable request receipts if persisted queue state approaches its file limit.
-- Consider browser egress controls for private networks and cloud-metadata endpoints, plus optional TLS/identity setup for remote access.
-- Extend protocol tests when upstream payloads change. Keep tests focused on persistence, reconnect/replay, concurrent chats, permissions, path isolation and fragile interactions.
-- Keep frontend code grouped by responsibility. Generate duplicated wire types or change frameworks only when this clearly reduces maintenance.
+- Connect extension-dialog replies and add export, share, import or broader source management only when upstream exposes stable operations.
+- Expose production generic ACP selection only after persisted sessions and controller-owned queues can be bound to an operator-stable agent identity.
+- Compact durable queue receipts only if observed state approaches its limit and a safe retention rule is defined.
+- Add browser egress policy or remote TLS and identity only for a defined deployment threat model.
 
 ## Deferred
 
-- **Nested-agent upstream gaps.** Add durable child activity, child approvals, direct asynchronous-child cancellation and Orchestrator nested activity only when Goose exposes reliable methods or replayable events. Do not add a second conversation store.
-- **Unstable named ACP plans.** Add named plan updates and removal only after the ACP capability stabilizes. The stable replacement plan remains the small browser projection.
-- **Deployment acceptance.** Run the [comparison probe](performance.md#run-a-comparison) on the deployment host before enforcing the unchanged 5% controller p95 gate. Include separate application/browser containers, concurrent clients, Chromium activity, reconnect-to-interactive time and long histories. Workstation measurements remain reference evidence. Repeat browser checks on native x86-64.
+- Nested-agent durability, approvals and cancellation await reliable Goose methods or replayable events.
+- Named ACP plan updates and removal await a stable capability.
+- Deployment-host p95 enforcement, long-history acceptance and native x86-64 browser checks remain postponed.
