@@ -239,9 +239,9 @@ test("status-only tool completion retains the right streamed result and matches 
 		extensionName: "images",
 		resourceUri: "ui://images/viewer",
 	};
-	const pending = messagesToRuntime([], null, [
-		{ toolCallId: "image", output: image, app, subagentActivity },
-	]);
+	const pending = messagesToRuntime([], {
+		pendingTools: [{ toolCallId: "image", output: image, app, subagentActivity }],
+	});
 	expect(pending.toolResults.image).toEqual({
 		status: "running",
 		raw: image,
@@ -262,12 +262,13 @@ test("status-only tool completion retains the right streamed result and matches 
 				],
 			},
 		],
-		null,
-		[
-			{ toolCallId: "image", output: "current pending output" },
-			{ toolCallId: "__proto__", output: "current reserved output" },
-			{ toolCallId: "toString", output: "still running" },
-		],
+		{
+			pendingTools: [
+				{ toolCallId: "image", output: "current pending output" },
+				{ toolCallId: "__proto__", output: "current reserved output" },
+				{ toolCallId: "toString", output: "still running" },
+			],
+		},
 	);
 	expect(Object.getPrototypeOf(precedence.toolResults)).toBeNull();
 	expect(precedence.toolResults.image).toEqual({

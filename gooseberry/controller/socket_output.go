@@ -14,6 +14,7 @@ import (
 type socketOutput struct {
 	connection *websocket.Conn
 	queue      chan []byte
+	replay     *ReplayCache
 	mu         sync.Mutex
 	bytes      int
 	large      bool
@@ -23,7 +24,7 @@ type socketOutput struct {
 const socketOutputBudget = 32 * 1024 * 1024
 
 func newSocketOutput(connection *websocket.Conn) *socketOutput {
-	return &socketOutput{connection: connection, queue: make(chan []byte, 256)}
+	return &socketOutput{connection: connection, queue: make(chan []byte, 256), replay: NewReplayCache()}
 }
 
 // enqueue borrows immutable bytes, which can also belong to the replay cache.

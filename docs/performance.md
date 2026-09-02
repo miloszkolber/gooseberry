@@ -3,8 +3,8 @@
 ## Budgets
 
 - Initial JavaScript: **500,000 raw bytes**, including eager imports.
-- Controller p95: at most **5% above the reference workload**.
-- Deployment-host, long-history and native x86-64 acceptance remain open.
+- Controller comparison target: at most **5% above the reference workload**.
+- Deployment-host enforcement, long-history and native x86-64 acceptance are deferred.
 
 ## Run a comparison
 
@@ -55,6 +55,6 @@ Nonblocking regular-file opens preserve path, size and backup checks while avoid
 
 Inactive-history accounting caches encoded sizes and invalidates them on operations/notifications. Rechecking six unchanged one-MiB histories takes 0.26–0.29 µs and 720 allocated bytes. Changed histories still require serialization; regression tests cover late growth beyond the eight-MiB budget.
 
-History responses detach mutable containers under the session lock and encode afterward. Five alternating local runs on 31 August (same Go/CPU/RAM settings above) reduce snapshot-plus-encoding time from 4.52 to 1.55 ms for 128 text messages, and 7.66 to 3.19 ms with an added two-MiB image. Lock time falls 95–97%; allocated bytes fall 28–41%, though allocation counts increase. Wire bytes match in every round. This isolates encoding work, not reconnect-to-render latency.
+Browser history opens on the newest page and loads older pages on demand. Pages target at most 100 normalized messages and two MiB, then extend to a user-round boundary so tools and activity remain together. An unusually large round can exceed the byte target. The newest snapshot stays linearized with live events until its response is queued; older immutable pages copy under the session lock and encode after release, keeping their serialization out of the streaming path.
 
-Repeat end-to-end checks on the deployment host with browser activity. Measure reconnect-to-interactive time, streaming and long histories separately. See [development](development.md) for methodology.
+Deployment-host acceptance remains deferred. Its scope is recorded in the [roadmap](roadmap.md#deferred); see [development](development.md) for the comparison method.

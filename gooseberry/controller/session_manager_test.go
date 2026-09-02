@@ -71,9 +71,7 @@ func TestPendingToolPreviewsAreSafeStableAndDetached(t *testing.T) {
 	update := subagentToolUpdate("z-call", "child", "developer__read")
 	update["rawOutput"] = map[string]any{"nested": []any{map[string]any{"value": "original"}}}
 	applySessionUpdate(entry, "tool_call_update", update, false)
-	applySessionUpdate(entry, "tool_call_update", map[string]any{
-		"toolCallId": "a-call", "status": "in_progress", "rawOutput": "first",
-	}, false)
+	applySessionUpdate(entry, "tool_call", map[string]any{"toolCallId": "a-call", "title": "ordinary"}, false)
 	entry.appAttachments = map[string]appAttachmentState{
 		"z-call": {attachment: AppAttachment{ToolName: "apps__show", ExtensionName: "apps", ResourceURI: "ui://apps/view"}},
 		"orphan": {attachment: AppAttachment{ToolName: "private", ExtensionName: "private", ResourceURI: "ui://private/view"}},
@@ -100,6 +98,14 @@ func TestPendingToolPreviewsAreSafeStableAndDetached(t *testing.T) {
 	stored := mapValue(arrayValue(mapValue(entry.pendingToolOutputs["z-call"].Raw)["nested"])[0])["value"]
 	if stored != "original" {
 		t.Fatal("pending projection shares mutable output with session state")
+	}
+
+	reused := newSessionEntry("reused", "project", "/project", "", "")
+	applySessionUpdate(reused, "tool_call_update", map[string]any{"toolCallId": "same", "status": "completed", "rawOutput": "old"}, false)
+	applySessionUpdate(reused, "tool_call", map[string]any{"toolCallId": "same", "title": "new"}, false)
+	preview := mapValue(pendingToolPreviewsLocked(reused)[0])
+	if preview["toolCallId"] != "same" || preview["output"] != nil {
+		t.Fatalf("reused active tool exposed its older result: %#v", preview)
 	}
 }
 

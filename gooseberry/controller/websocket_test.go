@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +32,24 @@ type deferredOrderHandler struct {
 	after func()
 }
 
+type replacementSnapshotHandler struct {
+	state         sync.Mutex
+	value         int
+	calls         atomic.Int32
+	firstStarted  chan struct{}
+	secondStarted chan struct{}
+	releaseFirst  chan struct{}
+	allowSecond   chan struct{}
+	publish       func() error
+	publishDone   chan error
+}
+
+type coalescedTranscriptHandler struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
 func (h blockingHandler) Handle(ctx context.Context, _ string, _ json.RawMessage, _ string) (any, error) {
 	close(h.started)
 	<-ctx.Done()
@@ -39,6 +59,49 @@ func (h blockingHandler) Handle(ctx context.Context, _ string, _ json.RawMessage
 
 func (h deferredOrderHandler) Handle(context.Context, string, json.RawMessage, string) (any, error) {
 	return deferredResponse{result: map[string]bool{"snapshot": true}, after: h.after}, nil
+}
+
+func (h *replacementSnapshotHandler) Handle(context.Context, string, json.RawMessage, string) (any, error) {
+	switch h.calls.Add(1) {
+	case 1:
+		h.state.Lock()
+		close(h.firstStarted)
+		<-h.releaseFirst
+		value := h.value
+		return deferredResponse{
+			result: map[string]int{"value": value},
+			after: func() {
+				h.state.Unlock()
+				// Model a session event that wins the state lock after the abandoned
+				// delivery. Queue it on the replacement before allowing its fresh
+				// snapshot to observe the updated state.
+				h.state.Lock()
+				h.value++
+				h.publishDone <- h.publish()
+				h.state.Unlock()
+				close(h.allowSecond)
+			},
+		}, nil
+	case 2:
+		close(h.secondStarted)
+		<-h.allowSecond
+		h.state.Lock()
+		value := h.value
+		return deferredResponse{
+			result: map[string]int{"value": value},
+			after:  h.state.Unlock,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unexpected transcript execution")
+	}
+}
+
+func (h *coalescedTranscriptHandler) Handle(context.Context, string, json.RawMessage, string) (any, error) {
+	if h.calls.Add(1) == 1 {
+		close(h.started)
+	}
+	<-h.release
+	return map[string]bool{"snapshot": true}, nil
 }
 
 func (h *countingHandler) Handle(ctx context.Context, method string, params json.RawMessage, client string) (any, error) {
@@ -186,6 +249,152 @@ func TestDeferredResponseIsQueuedBeforeItsLaterEvent(t *testing.T) {
 	}
 }
 
+func TestReplacementSocketRecomputesDeferredTranscriptBeforeDelivery(t *testing.T) {
+	handler := &replacementSnapshotHandler{
+		firstStarted:  make(chan struct{}),
+		secondStarted: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+		allowSecond:   make(chan struct{}),
+		publishDone:   make(chan error, 1),
+	}
+	var releaseFirst sync.Once
+	t.Cleanup(func() { releaseFirst.Do(func() { close(handler.releaseFirst) }) })
+	server, err := NewWebSocketServer(handler, nil, AuthConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	host := httptest.NewServer(server)
+	defer host.Close()
+	handler.publish = func() error {
+		return server.PublishToClient(context.Background(), "replacement", "ordered.update", map[string]int{"value": handler.value})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	url := "ws" + strings.TrimPrefix(host.URL, "http") + "/?client=replacement"
+	connect := func() *websocket.Conn {
+		t.Helper()
+		connection, _, dialErr := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: map[string][]string{"Origin": {host.URL}}})
+		if dialErr != nil {
+			t.Fatal(dialErr)
+		}
+		t.Cleanup(func() { connection.CloseNow() })
+		return connection
+	}
+	request := []byte(`{"id":"snapshot","method":"session.getMessages","params":{}}`)
+	first := connect()
+	if err := first.Write(ctx, websocket.MessageText, request); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handler.firstStarted:
+	case <-ctx.Done():
+		t.Fatal("first transcript request did not start")
+	}
+
+	replacement := connect()
+	if err := replacement.Write(ctx, websocket.MessageText, request); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handler.secondStarted:
+	case <-ctx.Done():
+		releaseFirst.Do(func() { close(handler.releaseFirst) })
+		t.Fatal("replacement transcript request reused bytes instead of establishing its own response boundary")
+	}
+	releaseFirst.Do(func() { close(handler.releaseFirst) })
+	if err := <-handler.publishDone; err != nil {
+		t.Fatal(err)
+	}
+
+	_, raw, err := replacement.Read(ctx)
+	var event struct {
+		Channel string `json:"channel"`
+		Data    struct {
+			Value int `json:"value"`
+		} `json:"data"`
+	}
+	if err != nil || json.Unmarshal(raw, &event) != nil || event.Channel != "ordered.update" || event.Data.Value != 1 {
+		t.Fatalf("replacement did not receive the intervening event first: %s, %v", raw, err)
+	}
+	_, raw, err = replacement.Read(ctx)
+	var response struct {
+		ID     string `json:"id"`
+		OK     bool   `json:"ok"`
+		Result struct {
+			Value int `json:"value"`
+		} `json:"result"`
+	}
+	if err != nil || json.Unmarshal(raw, &response) != nil || response.ID != "snapshot" || !response.OK || response.Result.Value != 1 {
+		t.Fatalf("replacement received a stale transcript: %s, %v", raw, err)
+	}
+	if handler.calls.Load() != 2 {
+		t.Fatalf("transcript executed %d times across two delivery attempts", handler.calls.Load())
+	}
+}
+
+func TestSameSocketTranscriptRetriesKeepRequestIdentity(t *testing.T) {
+	handler := &coalescedTranscriptHandler{started: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(handler.release) }) })
+	server, err := NewWebSocketServer(handler, nil, AuthConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	host := httptest.NewServer(server)
+	defer host.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(host.URL, "http")+"/?client=coalesced", &websocket.DialOptions{HTTPHeader: map[string][]string{"Origin": {host.URL}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	request := []byte(`{"id":"snapshot","method":"session.getMessages","params":{"sessionId":"chat","projectId":"project"}}`)
+	for range 2 {
+		if err := connection.Write(ctx, websocket.MessageText, request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-handler.started:
+	case <-ctx.Done():
+		t.Fatal("transcript request did not start")
+	}
+	conflict := []byte(`{"id":"snapshot","method":"session.getMessages","params":{"sessionId":"other","projectId":"project"}}`)
+	if err := connection.Write(ctx, websocket.MessageText, conflict); err != nil {
+		t.Fatal(err)
+	}
+	_, raw, err := connection.Read(ctx)
+	var rejected struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err != nil || json.Unmarshal(raw, &rejected) != nil || rejected.OK || !strings.Contains(rejected.Error, "different payload") {
+		t.Fatalf("same request id accepted conflicting transcript params: %s, %v", raw, err)
+	}
+	if handler.calls.Load() != 1 {
+		t.Fatalf("same-socket transcript retries executed %d handlers before release", handler.calls.Load())
+	}
+	release.Do(func() { close(handler.release) })
+	for range 2 {
+		_, raw, err = connection.Read(ctx)
+		var response struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				Snapshot bool `json:"snapshot"`
+			} `json:"result"`
+		}
+		if err != nil || json.Unmarshal(raw, &response) != nil || !response.OK || !response.Result.Snapshot {
+			t.Fatalf("coalesced transcript retry: %s, %v", raw, err)
+		}
+	}
+	if handler.calls.Load() != 1 {
+		t.Fatalf("same-socket transcript retries executed %d handlers", handler.calls.Load())
+	}
+}
+
 func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	mount := t.TempDir()
 	policy, err := NewPathPolicy([]string{mount}, false)
@@ -211,7 +420,7 @@ func TestBrowserWireCoreRoundTripAndReplay(t *testing.T) {
 	}
 	defer connection.CloseNow()
 	_, welcome, err := connection.Read(context.Background())
-	if err != nil || !strings.Contains(string(welcome), `"protocolVersion":75`) {
+	if err != nil || !strings.Contains(string(welcome), fmt.Sprintf(`"protocolVersion":%d`, BrowserProtocolVersion)) {
 		t.Fatalf("welcome %s, %v", welcome, err)
 	}
 	request := []byte(`{"id":"one","method":"project.open","params":{"path":` + mustJSON(t, mount) + `}}`)

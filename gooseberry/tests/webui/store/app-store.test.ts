@@ -475,7 +475,15 @@ test("missed deletion reconciliation tombstones late hydration", () => {
 			live: false,
 			archived: false,
 		},
-		{ turns: [], toolResults: {}, askAnswers: {}, turnIdByMessageIndex: [] },
+		{
+			turns: [],
+			toolResults: {},
+			askAnswers: {},
+			turnIdByMessageIndex: {},
+			currentAssistantId: null,
+			transcript: null,
+			messageCount: 0,
+		},
 	);
 	expect(useAppStore.getState().sessions.deleted).toBeUndefined();
 	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
@@ -549,7 +557,15 @@ test("session hydration restores controller queues and question replies", () => 
 				blocked: { lane: "followUp", index: 0, reason: "delivery-uncertain" },
 			},
 		},
-		{ turns: [], toolResults: {}, askAnswers: {}, turnIdByMessageIndex: [] },
+		{
+			turns: [],
+			toolResults: {},
+			askAnswers: {},
+			turnIdByMessageIndex: {},
+			currentAssistantId: null,
+			transcript: null,
+			messageCount: 0,
+		},
 	);
 	const result = { answers: [], cancelled: true };
 	useAppStore.getState().setAskAnswer("s1", "question-1", result);

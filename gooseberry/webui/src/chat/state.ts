@@ -5,15 +5,20 @@ import type {
 	PermissionRequest,
 	SessionGoal,
 	SessionStats,
+	SessionSummary,
 	SlashCommandInfo,
 	ThinkingLevel,
 	WireModel,
 } from "@gooseberry/contracts";
 import type { StateCreator } from "zustand";
-import type { ChatAttachment } from "@/chat/types";
+import type { ChatAttachment, ChatTurn } from "@/chat/types";
 import type { AppState } from "@/store/app-store";
 import { omitKey } from "@/store/record";
 import type { ChatTab } from "../workspace/model";
+import {
+	type HydratedRuntime,
+	prependTranscriptPage as prependHydratedTranscriptPage,
+} from "./hydrate";
 import {
 	clearTurnStreaming,
 	reduceSessionEvent,
@@ -35,6 +40,12 @@ export interface ChatState {
 	setStats: (sessionId: string, stats: SessionStats) => void;
 	setCommands: (sessionId: string, commands: SlashCommandInfo[], expectedRevision?: number) => void;
 	setChatDraft: (sessionId: string, text: string) => void;
+	prependTranscriptPage: (sessionId: string, hydrated: HydratedRuntime) => boolean;
+	replaceTranscriptSnapshot: (
+		sessionId: string,
+		summary: SessionSummary,
+		hydrated: HydratedRuntime,
+	) => void;
 	setSessionGoalLoading: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoalSaving: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoal: (sessionId: string, value: SessionGoal) => void;
@@ -52,6 +63,58 @@ function withRuntime(
 	if (!rt) return {};
 	const next = update(rt);
 	return next === rt ? {} : { sessions: { ...s.sessions, [sessionId]: next } };
+}
+
+function sameUserContent(a: ChatTurn, b: ChatTurn): boolean {
+	if (a.kind !== "user" || b.kind !== "user") return false;
+	const normalize = (content: typeof a.message.content) =>
+		(typeof content === "string" ? [{ type: "text" as const, text: content }] : content).filter(
+			(block) => block.type !== "text" || block.text.length > 0,
+		);
+	const left = normalize(a.message.content);
+	const right = normalize(b.message.content);
+	return (
+		left.length === right.length &&
+		left.every((block, index) => {
+			const other = right[index];
+			if (!other || block.type !== other.type) return false;
+			return block.type === "text"
+				? block.text === (other.type === "text" ? other.text : undefined)
+				: block.data === (other.type === "image" ? other.data : undefined) &&
+						block.mimeType === (other.type === "image" ? other.mimeType : undefined);
+		})
+	);
+}
+
+function unmatchedOptimisticTurns(
+	runtime: SessionRuntime,
+	hydrated: HydratedRuntime,
+): Extract<ChatTurn, { kind: "user" }>[] {
+	const pending = runtime.turns.filter(
+		(turn): turn is Extract<ChatTurn, { kind: "user" }> =>
+			turn.kind === "user" && turn.optimistic !== undefined,
+	);
+	if (pending.length === 0) return [];
+	const messageIndexByTurnId = new Map<string, number>();
+	for (const [index, turnId] of Object.entries(hydrated.turnIdByMessageIndex)) {
+		if (turnId) messageIndexByTurnId.set(turnId, Number(index));
+	}
+	const available = hydrated.turns.filter(
+		(turn): turn is Extract<ChatTurn, { kind: "user" }> => turn.kind === "user",
+	);
+	const consumed = new Set<string>();
+	return pending.filter((optimistic) => {
+		const baseline = optimistic.optimistic?.transcriptTotal ?? null;
+		const match = available.find(
+			(turn) =>
+				!consumed.has(turn.id) &&
+				(baseline === null || (messageIndexByTurnId.get(turn.id) ?? -1) >= baseline) &&
+				sameUserContent(optimistic, turn),
+		);
+		if (!match) return true;
+		consumed.add(match.id);
+		return false;
+	});
 }
 
 export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) => ({
@@ -101,6 +164,7 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 									: text,
 							timestamp: Date.now(),
 						},
+						optimistic: { transcriptTotal: rt.transcript?.total ?? null },
 						...(attachments && attachments.length > 0
 							? { attachmentNames: attachments.map((a) => a.name) }
 							: {}),
@@ -135,6 +199,39 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 		),
 	setChatDraft: (sessionId, draft) =>
 		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, draft }))),
+	prependTranscriptPage: (sessionId, hydrated) => {
+		let applied = false;
+		set((s) =>
+			withRuntime(s, sessionId, (rt) => {
+				const next = prependHydratedTranscriptPage(rt, hydrated);
+				applied = next !== null;
+				return next ?? rt;
+			}),
+		);
+		return applied;
+	},
+	replaceTranscriptSnapshot: (sessionId, summary, hydrated) =>
+		set((s) =>
+			withRuntime(s, sessionId, (rt) => {
+				const optimisticTurns = unmatchedOptimisticTurns(rt, hydrated);
+				const next: SessionRuntime = {
+					...rt,
+					turns: [...hydrated.turns, ...optimisticTurns],
+					toolResults: hydrated.toolResults,
+					turnIdByMessageIndex: hydrated.turnIdByMessageIndex,
+					transcript: hydrated.transcript,
+					currentAssistantId: hydrated.currentAssistantId,
+					attemptAssistantId: null,
+					isStreaming: summary.isStreaming,
+					model: summary.model,
+					thinkingLevel: summary.thinkingLevel,
+					...(summary.queue ? { queue: summary.queue } : {}),
+				};
+				if (summary.parentSessionId) next.parentSessionId = summary.parentSessionId;
+				else delete next.parentSessionId;
+				return next;
+			}),
+		),
 	setSessionGoalLoading: (sessionId, projectAreaId) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => ({

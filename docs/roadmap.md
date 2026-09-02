@@ -9,7 +9,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Session continuity and integration
 
-- Paginate browser history and improve inactive-session eviction while preserving replay, images, tool order, forks and multiple observers.
 - Use advertised ACP capabilities to enable controls and explain unavailable operations. Keep Goose-specific methods separate; support other ACP agents where the contract fits, without a fork or generic service framework.
 - Add export/share/import and broader source management only through supported upstream methods and small browser-safe records.
 
