@@ -272,6 +272,20 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		commands := projectAgentSlashCommands(update["availableCommands"], trustedGoose)
 		entry.commands = commands
 		return []map[string]any{{"type": "commands", "commands": cloneSlashCommands(commands)}}
+	case "plan":
+		plan := projectSessionPlan(update["entries"])
+		entry.planState = plan
+		return []map[string]any{{"type": "plan", "planState": cloneSessionPlan(plan)}}
+	case "current_mode_update":
+		modeID := textValue(update["currentModeId"])
+		if !validSessionModeID(modeID) {
+			return nil
+		}
+		if !modeAdvertised(entry.modes, modeID) || entry.modes.CurrentModeID == modeID {
+			return nil
+		}
+		entry.modes.CurrentModeID = modeID
+		return []map[string]any{{"type": "current-mode", "currentModeId": modeID}}
 	case "agent_thought_chunk":
 		text := textValue(mapValue(update["content"])["text"])
 		appendMessageBlock(entry, "assistant", map[string]any{"type": "thinking", "thinking": text})

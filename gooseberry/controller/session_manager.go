@@ -60,6 +60,8 @@ type sessionEntry struct {
 	pendingToolOutputs map[string]toolOutput
 	appAttachments     map[string]appAttachmentState
 	commands           []map[string]any
+	modes              *SessionModeState
+	planState          *SessionPlanState
 	agentIdentity      string
 	consumedQuestions  map[string]bool
 	drainScheduled     bool
@@ -211,6 +213,7 @@ func (m *SessionManager) create(ctx context.Context, projectID, cwd string, mode
 	entry.configOptions = jsonValues(response.ConfigOptions)
 	entry.thinkingLevel = thinkingFromOptions(entry.configOptions)
 	entry.model = modelFromSetup(entry.configOptions, response.Meta)
+	entry.modes = projectSessionModes(response.Modes)
 	entry.attached = generation
 	entry.agentIdentity = agentProfileIdentity(profile, generation)
 	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: sessionID, CWD: admitted}); err != nil {
@@ -252,6 +255,7 @@ func (m *SessionManager) create(ctx context.Context, projectID, cwd string, mode
 		"model":         entry.model,
 		"thinkingLevel": entry.thinkingLevel,
 		"commands":      cloneSlashCommands(entry.commands),
+		"modes":         cloneSessionModes(entry.modes),
 	}
 	var once sync.Once
 	releaseEntry = false
@@ -394,6 +398,7 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	replay.configOptions = jsonValues(response.ConfigOptions)
 	replay.model = modelFromSetup(replay.configOptions, response.Meta)
 	replay.thinkingLevel = thinkingFromOptions(replay.configOptions)
+	replay.modes = projectSessionModes(response.Modes)
 	// session/load replays a completed transcript. Message and tool chunks seen
 	// during that RPC describe history, not a live prompt.
 	replay.streaming = false
@@ -420,6 +425,8 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.pendingToolOutputs = replay.pendingToolOutputs
 	entry.appAttachments = replay.appAttachments
 	entry.commands = replay.commands
+	entry.modes = replay.modes
+	entry.planState = replay.planState
 	entry.agentIdentity = replay.agentIdentity
 	entry.attached = replay.attached
 	entry.projectionID = replay.projectionID
@@ -606,6 +613,49 @@ func (m *SessionManager) SetThinking(ctx context.Context, sessionID, level strin
 	entry.state.Lock()
 	entry.configOptions = options
 	entry.thinkingLevel = level
+	entry.state.Unlock()
+	return nil
+}
+
+func (m *SessionManager) SetMode(ctx context.Context, sessionID, modeID string) error {
+	if !validSessionModeID(modeID) {
+		return fmt.Errorf("invalid session mode")
+	}
+	entry, err := m.entry(sessionID)
+	if err != nil {
+		return err
+	}
+	defer m.releaseEntry(entry)
+	if err := m.lockEntry(sessionID, entry); err != nil {
+		return err
+	}
+	defer entry.op.Unlock()
+	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
+		return err
+	}
+	entry.state.Lock()
+	advertised := modeAdvertised(entry.modes, modeID)
+	current := entry.modes != nil && entry.modes.CurrentModeID == modeID
+	entry.state.Unlock()
+	if !advertised {
+		return fmt.Errorf("session mode is not available")
+	}
+	if current {
+		return nil
+	}
+	if err := m.client.SetMode(entry.context(ctx), acp.SetSessionModeRequest{SessionId: acp.SessionId(sessionID), ModeId: acp.SessionModeId(modeID)}); err != nil {
+		return err
+	}
+	entry.state.Lock()
+	if !modeAdvertised(entry.modes, modeID) {
+		entry.state.Unlock()
+		return fmt.Errorf("session modes changed while applying the selection")
+	}
+	changed := entry.modes.CurrentModeID != modeID
+	entry.modes.CurrentModeID = modeID
+	if changed {
+		m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "current-mode", "currentModeId": modeID}})
+	}
 	entry.state.Unlock()
 	return nil
 }
@@ -925,7 +975,7 @@ func (m *SessionManager) evictLocked() {
 			for toolCallID, state := range entry.appAttachments {
 				attachments[toolCallID] = state.attachment
 			}
-			encoded, err := json.Marshal([]any{entry.messages, entry.pendingToolOutputs, attachments})
+			encoded, err := json.Marshal([]any{entry.messages, entry.pendingToolOutputs, attachments, entry.modes, entry.planState})
 			if err != nil {
 				// A projection that cannot be measured must not bypass the budget.
 				delete(m.sessions, id)

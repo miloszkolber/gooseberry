@@ -40,8 +40,11 @@ test("session lifecycle titles are normalized and bounded", () => {
 
 test("session fork is a typed project-scoped WebSocket method", () => {
 	const params: WsParams<"session.fork"> = { projectId: "project", sessionId: "source" };
+	const mode: WsParams<"session.setMode"> = { sessionId: "source", modeId: "review" };
 	expect(WS_METHODS.sessionFork).toBe("session.fork");
+	expect(WS_METHODS.sessionSetMode).toBe("session.setMode");
 	expect(params).toEqual({ projectId: "project", sessionId: "source" });
+	expect(mode.modeId).toBe("review");
 });
 
 test("uncertain queued delivery has an atomic typed retry", () => {
@@ -89,7 +92,7 @@ test("extension and tool administration methods expose only browser-safe typed i
 		available: [],
 		warningCount: 1,
 	};
-	expect(PROTOCOL_VERSION).toBe(77);
+	expect(PROTOCOL_VERSION).toBe(78);
 	expect(WS_METHODS.gooseExtensionAdd).toBe("goose.extensionAdd");
 	expect(add).toEqual({ name: "developer", enabled: true });
 	expect(permission.permission).toBe("ask_before");

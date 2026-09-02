@@ -186,6 +186,21 @@ export interface SessionStats {
 	>;
 	contextUsage?: ContextUsage;
 }
+
+export interface SessionModeState {
+	currentModeId: string;
+	availableModes: { id: string; name: string; description?: string }[];
+}
+
+export interface SessionPlanState {
+	entries: {
+		content: string;
+		priority: "high" | "medium" | "low";
+		status: "pending" | "in_progress" | "completed";
+	}[];
+	truncated?: boolean;
+}
+
 export interface SessionSummary {
 	sessionId: string;
 	projectId: string;
@@ -260,6 +275,8 @@ export type AgentEvent =
 	  }
 	| { type: "agent_start" }
 	| { type: "commands"; commands: SlashCommandInfo[] }
+	| { type: "current-mode"; currentModeId: string }
+	| { type: "plan"; planState: SessionPlanState }
 	| ({ type: "queue_update" } & SessionQueueState)
 	| { type: "message_start"; message: AgentMessage }
 	| {
