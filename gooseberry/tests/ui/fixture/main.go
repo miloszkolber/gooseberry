@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	controller "github.com/miloszkolber/gooseberry/controller"
+	controller "github.com/miloszkolber/gooseberry/internal/controller"
+	"github.com/miloszkolber/gooseberry/internal/persist"
+	"github.com/miloszkolber/gooseberry/internal/workspace"
 )
 
 const (
@@ -58,7 +60,7 @@ func run() error {
 	if err := seedProject(root, data); err != nil {
 		return err
 	}
-	policy, err := controller.NewPathPolicy([]string{root}, false)
+	policy, err := workspace.NewPathPolicy([]string{root}, false)
 	if err != nil {
 		return err
 	}
@@ -165,7 +167,7 @@ func seedProject(root, data string) error {
 	if err := os.WriteFile(filepath.Join(root, "dirty.go"), []byte("package fixture\n\nconst Current = \"uncommitted change\"\n"), 0o600); err != nil {
 		return err
 	}
-	projects := []controller.Project{{
+	projects := []workspace.Project{{
 		ID: projectID, Name: "Fixture", Roots: []string{root}, Slug: "fixture", LastOpened: 1,
 	}}
 	encoded, err := json.MarshalIndent(projects, "", "\t")
@@ -175,7 +177,7 @@ func seedProject(root, data string) error {
 	if err := os.WriteFile(filepath.Join(data, "projects.json"), append(encoded, '\n'), 0o600); err != nil {
 		return err
 	}
-	records := controller.NewSessionRecords(controller.Store{Dir: data})
+	records := controller.NewSessionRecords(persist.Store{Dir: data})
 	return records.Record(controller.ProjectSessionRecord{ProjectID: projectID, SessionID: sessionID, CWD: root})
 }
 

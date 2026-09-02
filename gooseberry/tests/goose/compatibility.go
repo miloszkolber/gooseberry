@@ -17,7 +17,7 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
-	"github.com/miloszkolber/gooseberry/controller"
+	"github.com/miloszkolber/gooseberry/internal/controller"
 )
 
 func main() {

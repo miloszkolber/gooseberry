@@ -16,7 +16,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "bun run build:go && bun run build:web",
-		"build:go": "go build -trimpath -o dist/gooseberry . && go build -trimpath -o dist/gooseberry-browser ./cmd/browser",
+		"build:go": "go build -trimpath -o dist/gooseberry ./cmd/gooseberry && go build -trimpath -o dist/gooseberry-browser ./cmd/gooseberry-browser",
 		"dev:web": "bun --filter @gooseberry/web dev",
 		"build:web": "bun --filter @gooseberry/web build",
 		"typecheck": "bun --filter @gooseberry/contracts typecheck && bun --filter @gooseberry/web typecheck && tsc --noEmit -p tests/tsconfig.json",
