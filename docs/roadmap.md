@@ -1,6 +1,6 @@
 # Roadmap
 
-The [baseline](baseline.md) describes Gooseberry today. Goose remains the default runtime and conversation store.
+Current behavior is documented in the [README](../README.md), [architecture](architecture.md) and [Goose/ACP contract](acp.md). Goose remains the runtime and conversation store.
 
 ## Conditional
 

@@ -4,15 +4,13 @@ Gooseberry is a focused Web UI for Goose.
 
 Read these files before changing the product:
 
-1. `docs/baseline.md` is the canonical current product definition.
-2. `docs/architecture.md` defines the intended boundaries.
-3. `docs/integration.md` defines the Goose service boundary.
-4. `docs/acp.md` records the current ACP projection.
-5. `docs/goose.md` documents Goose integration and Gooseberry additions.
-6. `docs/models.md` defines provider and model projection.
-7. `docs/security.md` defines authority and credential boundaries.
-8. `docs/deployment.md` defines host Goose and Compose deployment.
-9. `docs/roadmap.md` contains candidate future improvements.
+1. `README.md` defines the product surface.
+2. `docs/architecture.md` defines process, source and state boundaries.
+3. `docs/acp.md` defines the Goose and ACP contract.
+4. `docs/security.md` defines authority and credential boundaries.
+5. `docs/deployment.md` defines host Goose and container deployment.
+6. `docs/development.md` defines verification and performance checks.
+7. `docs/roadmap.md` contains candidate future improvements.
 
 Product and engineering documentation belongs under `docs/`. Runtime prompt text may remain beside the small integration that owns it.
 
@@ -48,10 +46,10 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Engineering approach
 
-- Keep only behavior required by the baseline. Add an abstraction only when retained behavior requires it.
-- Keep frontend contracts as small as the baseline permits.
+- Keep the documented behavior intact. Add an abstraction only when retained behavior requires it.
+- Keep frontend contracts as small as the documented surface permits.
 - Classify dormant protocol methods and UI hooks before changing them. Wire retained functionality; do not remove it merely as cleanup.
-- Keep final Docker images non-root, read-only, multi-stage, and free of source, tests, compilers, caches, and unused native runtimes.
+- Keep final Docker images non-root and read-only, with no source, tests, compilers, caches or unused native runtimes. The application is assembled without a shell or package manager; the browser retains the slim runtime Chromium needs.
 
 ## Source naming
 
@@ -63,14 +61,17 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 ## Verification
 
 - Run the narrowest relevant check during development.
-- Test observable retained behavior and meaningful security/failure boundaries.
-- Keep TypeScript and upstream Goose compatibility tests in `gooseberry/tests/`. Go tests that exercise private package state stay beside their package.
+- Keep all tests under `gooseberry/tests/`.
+- Add small regression tests for observable contracts and realistic failure modes at persistence, concurrency, authorization, protocol, filesystem, performance and fragile UI boundaries.
+- Do not test copied types, constants, trivial forwarding or implementation details.
 - Use broader integration/image checks for changes crossing Goose, browser, or persistence boundaries.
 - Before committing, review stale imports, protocol fields, scripts, documentation, generated files, and dependency-lock entries.
 
 ## Git history
 
 - Keep changes in separate, coherent commits. Do not squash or amend commits, or rewrite existing history, unless the user explicitly asks.
+- Write outcome-specific imperative subjects. Avoid vague `update`, `cleanup`, or `fixes` subjects and commits that mix unrelated work.
+- Use the canonical identity `Miłosz Kolber <143708325+miloszkolber@users.noreply.github.com>`.
 
 ## Current stack
 

@@ -1,6 +1,6 @@
 # Development
 
-Use the Go and Bun versions pinned in `Dockerfile`, `go.mod` and `package.json`. Prefer disposable containers for tooling.
+Use the Go and Bun versions pinned by `Dockerfile`, `go.mod` and `package.json`. Disposable containers are preferred for extra tooling.
 
 ## Checks
 
@@ -16,42 +16,32 @@ go test -race ./...
 go vet ./...
 ```
 
-TypeScript tests live in `tests/contracts` and `tests/webui`; Go package tests stay beside their code. Bun's hoisted dependencies serve the shared tests, and typechecking includes `tests/tsconfig.json`. The build produces both executables, static assets and the bundle-budget check.
+All tests live under `gooseberry/tests`. Add small regression tests for observable contracts and realistic failure modes at persistence, concurrency, authorization, protocol, filesystem, performance and fragile UI boundaries. Do not test copied types, constants or implementation details.
 
-Add focused regressions for brittle boundaries:
+Use temporary state and synthetic credentials. Run race tests for concurrent state or lifecycle changes. Visual acceptance requires real interactions and screenshots, not only component rendering.
 
-- Reconnect/replay, stale notifications, concurrent chats and slow clients.
-- Interrupted persistence, backups, read limits, symlinks and multiple roots.
-- Session ownership, single-use permissions/questions and secret handling.
-- Browser authentication, cancellation, cleanup and quotas.
-- Stale UI reads, tab closure, streaming, keyboard focus and narrow layouts.
+## Browser acceptance
 
-Use temporary state and synthetic credentials. Run race tests for concurrent state or lifecycle changes. Visual acceptance requires actual interactions and screenshots.
-
-Run the browser gate from the repository root. It uses a disposable image, a synthetic ACP agent and the browser service's Chromium package layer:
+From the repository root:
 
 ```bash
 docker build -f gooseberry/Dockerfile --target ui-acceptance -t gooseberry-ui-acceptance .
 docker run --rm --network none --shm-size 256m gooseberry-ui-acceptance
 ```
 
-The gate covers commit selection, source/image previews, streaming tab recovery, reconnect, dialog focus and narrow-screen overflow. Mount `/artifacts` when you want to keep its screenshots.
+The gate covers commit selection, source and image previews, streaming tab recovery, reconnects, dialog focus and narrow-screen overflow. Mount `/artifacts` to retain screenshots.
 
 ## Goose compatibility
 
-Against an isolated Goose service:
+Run the probe against isolated Goose state, never live user state:
 
 ```bash
 go run ./tests/goose -url ws://127.0.0.1:3284/acp
 ```
 
-Set `GOOSE_SERVER__SECRET_KEY` in the probe's private environment. It checks authentication, selected session/provider/settings responses and reconnect persistence, including a preference write. Keep it away from live user state.
-
-Optional `-source /path/to/upstream` checks method registrations. Runtime probes do not establish every provider, tool or extension's compatibility; see [ACP coverage](acp.md).
+Set `GOOSE_SERVER__SECRET_KEY` in the probe's private environment. The optional `-source /path/to/upstream` mode checks method registration. Runtime probes cover selected authentication, session, provider, setting and reconnect paths; they do not prove every provider or extension.
 
 ## Images
-
-From the repository root:
 
 ```bash
 docker build -f gooseberry/Dockerfile --target gooseberry -t gooseberry:local .
@@ -59,14 +49,26 @@ docker build -f gooseberry/Dockerfile --target browser -t gooseberry-browser:loc
 sh gooseberry/tests/deployment/compose.test.sh
 ```
 
-The Compose fixture requires Docker Compose and `jq`; it checks configuration, not running services. Apple `container` supports isolated Linux checks on macOS but does not establish Compose host-network behavior.
+The application build verifies every Git command used by Gooseberry against its assembled runtime. That final image has no shell or package manager. The browser keeps Debian Trixie slim, Chromium, required fonts and `tini`. Both production services run non-root with read-only filesystems, dropped capabilities and bounded writable mounts.
 
-For packaging changes, check both architectures, state/environment isolation, non-root/read-only operation, licenses, health and shutdown. Exercise authenticated MCP, HTTP commands and a Chromium screenshot through the application artifact proxy.
+Check both architectures after packaging changes. Exercise state and environment isolation, licenses, health, shutdown, authenticated MCP/HTTP and a Chromium screenshot through the application artifact proxy. Apple `container` is useful for disposable Linux image checks on macOS; it does not reproduce Docker Compose host-network semantics.
 
 ## Performance
 
-The initial JavaScript budget is **500,000 raw bytes**, including eager imports. Keep large views/grammars lazy and transcript lists virtualized.
+The initial JavaScript budget is **500,000 raw bytes**, including eager imports. The current production build is **435,841 raw bytes**. Keep large views and grammars lazy and transcript lists virtualized.
 
-The controller comparison target is no more than **5%** above the reference workload. Deployment-host enforcement is deferred. The opt-in [comparison probe](performance.md#run-a-comparison) measures project lists, one-MiB files, images and concurrent clients. Keep authorization, replay and I/O limits intact.
+The controller target is a median round-p95 no more than **5% above the reference workload**. Prepare a fixture once, mount it read-only into two isolated applications and compare exact builds:
 
-[Performance](performance.md) owns measurements and targets. `GOGC=200` trades memory for fewer collections; measure before changing it.
+```bash
+go run ./tests/performance -prepare /tmp/gooseberry-fixtures
+go run ./tests/performance \
+  -candidate http://127.0.0.1:7312 -candidate-id '<revision or image digest>' \
+  -reference http://127.0.0.1:7313 -reference-id '<revision or image digest>' \
+  -fixtures /tmp/gooseberry-fixtures -project /projects/benchmark \
+  -host '<host, limits, images, toolchains, GOGC and browser load>' \
+  > performance.jsonl
+```
+
+Set the candidate and reference tokens in the private environment. The probe alternates five rounds and validates project lists, one-MiB files, images and eight-client throughput outside the timers. Keep authentication, limits, storage and browser load identical. Deployment-host enforcement, long-history acceptance and native x86-64 browser checks remain [deferred](roadmap.md#deferred).
+
+`GOGC=200` reduces collection frequency in the application image. Measure latency and memory before changing it.

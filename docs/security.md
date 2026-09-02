@@ -6,7 +6,7 @@ Gooseberry is for one trusted user. Host Goose tools run with that user's permis
 
 The application mounts its state and admitted project roots. The browser mounts only its state and artifacts. Goose configuration and provider credentials stay on the host.
 
-Both containers run non-root with read-only filesystems and bounded writable tmpfs. Browser subprocess environments are filtered; browser sessions share one UID and filesystem. Session IDs are not security identities.
+Both containers run non-root with read-only filesystems, all capabilities dropped, new privileges disabled and bounded writable tmpfs. The application image has no shell or package manager. Browser subprocess environments are filtered; browser sessions share one UID and filesystem. Session IDs are not security identities.
 
 Chromium uses `--no-sandbox`: its internal sandbox is disabled. Container/mount isolation does not replace it. Host networking permits access to local services; private-network and cloud-metadata egress restrictions are the operator's responsibility. Treat page content as untrusted.
 

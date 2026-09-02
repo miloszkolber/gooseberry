@@ -1,34 +1,40 @@
 # Gooseberry
 
-A self-hosted workspace for [Goose](https://github.com/aaif-goose/goose): conversations, project files and agent work in one Web UI.
+Gooseberry is a self-hosted Web UI for [Goose](https://github.com/aaif-goose/goose). It groups conversations, project files and agent work without replacing Goose's models, tools or configuration.
 
 ## Features
 
-- Concurrent chats with streaming replies, images, steering, follow-up queues, search and forks.
+- Concurrent persistent chats with streaming, images, steering, queues, search and forks.
 - Projects spanning multiple directories and Git repositories.
-- Read-only file previews, source highlighting and commit, branch-base or working-tree diffs.
-- Goals, tasks, permission prompts and custom agent mentions.
-- Goose provider, model, extension, recipe and schedule controls.
-- Browser automation with MCP tools and screenshot previews.
+- Read-only source and image previews with working-tree, commit and branch-base diffs.
+- Goals, tasks, permission prompts, plans, modes and custom agent mentions.
+- Provider, model, extension, recipe, schedule and tool controls supplied by Goose.
+- Browser automation over MCP and isolated interactive App views.
 
-Goose handles conversations, models and tools on your host. Gooseberry runs a Go application with a React frontend and a separate browser service, each in its own container.
+Goose runs on the host. Two containers provide the application and the browser service. Project roots are mounted only into the application; the browser has separate state and no project or Goose configuration mounts.
 
-## Get started
+## Run
 
-You need Linux x86-64 or arm64, Docker Compose and an [official Goose release](docs/goose.md).
+You need Linux x86-64 or arm64, Docker Compose and the [supported official Goose release](docs/acp.md#supported-goose-release).
 
-Follow the [setup guide](docs/deployment.md) to configure Goose, secrets and project mounts, then start:
+```bash
+git clone https://github.com/miloszkolber/gooseberry.git
+cd gooseberry
+cp .gooseberry.example .gooseberry
+```
+
+Configure Goose, secrets, state directories and project mounts using the [deployment guide](docs/deployment.md), then start both services:
 
 ```bash
 docker compose --env-file .gooseberry up -d --build
 ```
 
-Open **http://127.0.0.1:7312**, configure a provider and create a project.
+Open <http://127.0.0.1:7312>, configure a provider and create a project.
 
-Gooseberry is for one trusted user. Goose tools have your host permissions; read the [security notes](docs/security.md) before exposing the services.
+Gooseberry is designed for one trusted user. Goose tools run with the host user's permissions; read the [security model](docs/security.md) before exposing either service.
 
 ## Documentation
 
-[Setup](docs/deployment.md) · [Features](docs/baseline.md) · [Architecture](docs/architecture.md) · [Development](docs/development.md) · [ACP coverage](docs/acp.md) · [Roadmap](docs/roadmap.md)
+[Architecture](docs/architecture.md) · [Deployment](docs/deployment.md) · [Goose and ACP](docs/acp.md) · [Development](docs/development.md) · [Security](docs/security.md) · [Roadmap](docs/roadmap.md)
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
