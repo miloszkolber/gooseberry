@@ -533,6 +533,8 @@ test("missed deletion reconciliation tombstones late hydration", () => {
 			transcript: null,
 			messageCount: 0,
 		},
+		null,
+		null,
 	);
 	expect(useAppStore.getState().sessions.deleted).toBeUndefined();
 	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
@@ -584,6 +586,64 @@ test("session goal state keeps loading, ready, and error transitions isolated to
 	});
 });
 
+test("mode and plan events update live state while a replay snapshot replaces it authoritatively", () => {
+	const modes = {
+		currentModeId: "ask",
+		availableModes: [
+			{ id: "ask", name: "Ask" },
+			{ id: "code", name: "Code" },
+		],
+	};
+	useAppStore.getState().openChatSession("p1", "mode-plan", null, "medium", modes);
+	useAppStore.getState().handleAgentEvent({ type: "run-start" }, "mode-plan");
+	useAppStore
+		.getState()
+		.handleAgentEvent({ type: "current-mode", currentModeId: "code" }, "mode-plan");
+	useAppStore.getState().handleAgentEvent(
+		{
+			type: "plan",
+			planState: {
+				entries: [{ content: "Inspect", priority: "high", status: "in_progress" }],
+			},
+		},
+		"mode-plan",
+	);
+	expect(useAppStore.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("code");
+	expect(useAppStore.getState().sessions["mode-plan"]?.planState?.entries[0]?.content).toBe(
+		"Inspect",
+	);
+
+	useAppStore.getState().replaceTranscriptSnapshot(
+		"mode-plan",
+		{
+			sessionId: "mode-plan",
+			projectId: "p1",
+			cwd: "/workspace",
+			title: "Mode and plan",
+			model: null,
+			thinkingLevel: "off",
+			isStreaming: false,
+			messageCount: 0,
+			updatedAt: 42,
+			live: true,
+			archived: false,
+		},
+		{
+			turns: [],
+			toolResults: {},
+			askAnswers: {},
+			turnIdByMessageIndex: {},
+			currentAssistantId: null,
+			transcript: null,
+			messageCount: 0,
+		},
+		{ currentModeId: "review", availableModes: [{ id: "review", name: "Review" }] },
+		null,
+	);
+	expect(useAppStore.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("review");
+	expect(useAppStore.getState().sessions["mode-plan"]?.planState).toBeNull();
+});
+
 test("session hydration restores controller queues and question replies", () => {
 	useAppStore.getState().hydrateSession(
 		{
@@ -615,6 +675,8 @@ test("session hydration restores controller queues and question replies", () => 
 			transcript: null,
 			messageCount: 0,
 		},
+		null,
+		null,
 	);
 	const result = { answers: [], cancelled: true };
 	useAppStore.getState().setAskAnswer("s1", "question-1", result);

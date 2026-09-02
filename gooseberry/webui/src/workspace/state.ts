@@ -4,6 +4,8 @@ import type {
 	Project,
 	ProjectFsChangedPayload,
 	SessionLifecycleChangedPayload,
+	SessionModeState,
+	SessionPlanState,
 	SessionQueueState,
 	SessionSummary,
 	ThinkingLevel,
@@ -123,6 +125,7 @@ export interface WorkspaceState {
 		sessionId: string,
 		model: WireModel | null,
 		thinkingLevel: ThinkingLevel,
+		modes?: SessionModeState | null,
 		syncedTick?: number,
 		options?: ContentOpenOptions,
 	) => void;
@@ -147,6 +150,8 @@ export interface WorkspaceState {
 	hydrateSession: (
 		summary: SessionSummary,
 		hydrated: HydratedRuntime,
+		modes: SessionModeState | null,
+		planState: SessionPlanState | null,
 		activate?: boolean,
 		syncedTick?: number,
 		options?: ContentOpenOptions,
@@ -781,7 +786,15 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 						},
 					},
 		),
-	openChatSession: (projectAreaId, sessionId, model, thinkingLevel, syncedTick, options = {}) =>
+	openChatSession: (
+		projectAreaId,
+		sessionId,
+		model,
+		thinkingLevel,
+		modes = null,
+		syncedTick,
+		options = {},
+	) =>
 		set((s) => {
 			if (s.removedProjectAreaIds[projectAreaId] || isSessionDeleted(s, projectAreaId, sessionId)) {
 				return {};
@@ -812,7 +825,7 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 				navTickByProjectArea:
 					options.activate === false ? s.navTickByProjectArea : bumpNav(s, projectAreaId),
 				sessions: fresh
-					? { ...s.sessions, [sessionId]: createSessionRuntime(model, thinkingLevel) }
+					? { ...s.sessions, [sessionId]: createSessionRuntime(model, thinkingLevel, modes) }
 					: s.sessions,
 				...(fresh
 					? {
@@ -1051,7 +1064,15 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 				},
 			};
 		}),
-	hydrateSession: (summary, hydrated, activate = false, syncedTick, options = {}) =>
+	hydrateSession: (
+		summary,
+		hydrated,
+		modes,
+		planState,
+		activate = false,
+		syncedTick,
+		options = {},
+	) =>
 		set((s) => {
 			if (
 				s.removedProjectAreaIds[summary.projectId] ||
@@ -1062,7 +1083,8 @@ export const createWorkspaceState: StateCreator<AppState, [], [], WorkspaceState
 			if (s.sessions[summary.sessionId]) return {};
 			const wsId = summary.projectId;
 			const runtime: SessionRuntime = {
-				...createSessionRuntime(summary.model, summary.thinkingLevel),
+				...createSessionRuntime(summary.model, summary.thinkingLevel, modes),
+				planState,
 				...(summary.parentSessionId ? { parentSessionId: summary.parentSessionId } : {}),
 				turns: hydrated.turns,
 				toolResults: hydrated.toolResults,

@@ -5,7 +5,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 ## Finish existing behavior
 
 - **Dormant surfaces.** Connect the retained extension-dialog hooks when upstream provides a usable operation. Keep browser MCP guidance aligned with its commands.
-- **Standard ACP plans and modes.** Project plan, plan-update, plan-removed and current-mode updates into small browser-owned views. Keep unstable fields out of persisted Gooseberry state.
 
 ## Session continuity and integration
 
@@ -25,4 +24,5 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 ## Deferred
 
 - **Nested-agent upstream gaps.** Add durable child activity, child approvals, direct asynchronous-child cancellation and Orchestrator nested activity only when Goose exposes reliable methods or replayable events. Do not add a second conversation store.
+- **Unstable named ACP plans.** Add named plan updates and removal only after the ACP capability stabilizes. The stable replacement plan remains the small browser projection.
 - **Deployment acceptance.** Run the [comparison probe](performance.md#run-a-comparison) on the deployment host before enforcing the unchanged 5% controller p95 gate. Include separate application/browser containers, concurrent clients, Chromium activity, reconnect-to-interactive time and long histories. Workstation measurements remain reference evidence. Repeat browser checks on native x86-64.

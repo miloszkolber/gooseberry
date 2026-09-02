@@ -79,6 +79,28 @@ type SessionSettlement struct {
 	ErrorMessage string `json:"errorMessage,omitempty"`
 }
 
+type SessionMode struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+}
+
+type SessionModeState struct {
+	CurrentModeID  string        `json:"currentModeId"`
+	AvailableModes []SessionMode `json:"availableModes"`
+}
+
+type SessionPlanEntry struct {
+	Content  string `json:"content"`
+	Priority string `json:"priority"`
+	Status   string `json:"status"`
+}
+
+type SessionPlanState struct {
+	Entries   []SessionPlanEntry `json:"entries"`
+	Truncated bool               `json:"truncated,omitempty"`
+}
+
 type SessionQueue struct {
 	Revision string      `json:"revision"`
 	Steering []string    `json:"steering"`

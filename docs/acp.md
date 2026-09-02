@@ -32,7 +32,7 @@ Summon child activity is transient and best-effort. Gooseberry keeps the latest 
 
 Standard ACP covers session creation, loading, listing, deletion, forks, prompts, cancellation, configuration, updates and permissions. Goose-specific methods provide steering, rename/archive, search, provider login, model metadata, agents, recipes and schedules. `/compact` is available through Goose's slash commands; `summarize` is a separate file-summary tool.
 
-Standard command and usage updates are projected today. ACP plan and current-mode updates remain roadmap work.
+Standard command, usage, plan and current-mode updates are projected. Chats show the agent's current plan and offer mode selection when the session advertises modes.
 
 The composer receives each session's command catalog through standard ACP updates and refreshes it after reconnects, project `SKILL.md` changes and recipe saves or deletes. Other host-side command changes appear when the chat reconnects or is reopened.
 
@@ -41,6 +41,8 @@ Goose owns conversations and runtime configuration. The browser receives selecte
 Initialization records a small connection profile. Session loading and listing are required; advertised delete, fork, image-prompt and HTTP MCP support controls the matching behavior. Gooseberry recognizes Goose through its ACP identity and `_meta.goose` marker before using Goose-specific methods. The pinned Goose release retains fork support even though it does not advertise that capability.
 
 Compatible ACP agents can use the standard conversation surface when embedded with an explicit endpoint. Live sessions fail closed when the reported generic-agent profile changes. The packaged service accepts only recognized Goose on its default endpoint until persisted session records can be bound to a stable agent identity.
+
+Named plan updates and removals are not advertised. They are unstable in the pinned ACP SDK and would require a larger multi-plan contract; the stable replacement plan remains available without opting into that surface.
 
 ## Gooseberry-owned features
 
