@@ -8,7 +8,7 @@ import {
 	isSessionInventoryCurrent,
 	ToolInventory,
 } from "@/settings/goose-tools-settings";
-import { SettingsNavigation } from "@/settings/settings-dialog";
+import { resolveSettingsSection, SettingsNavigation } from "@/settings/settings-dialog";
 import { SettingsSection } from "@/settings/state";
 import { useAppStore } from "@/store";
 
@@ -76,7 +76,7 @@ test("settings navigation exposes the Tools tab and scrolls on narrow screens", 
 	expect(markup).toContain("overflow-x-auto");
 });
 
-test("generic agent settings expose only agent identity and Signet", () => {
+test("generic agent settings expose agent identity, Signet and System", () => {
 	const profile: AgentProfile = {
 		name: "Example agent",
 		version: "1.2.3",
@@ -105,6 +105,7 @@ test("generic agent settings expose only agent identity and Signet", () => {
 	);
 	expect(markup).toContain(">Agent<");
 	expect(markup).toContain(">Signet<");
+	expect(markup).toContain(">System<");
 	expect(markup).not.toContain(">Goose<");
 	expect(markup).not.toContain(">Automation<");
 	expect(markup).not.toContain(">Providers<");
@@ -112,6 +113,18 @@ test("generic agent settings expose only agent identity and Signet", () => {
 	expect(markup).not.toContain(">Tools<");
 	expect(markup).toContain("Version 1.2.3");
 	expect(markup).toContain("HTTP MCP servers");
+	expect(resolveSettingsSection(SettingsSection.System, profile)).toBe(SettingsSection.System);
+});
+
+test("System remains reachable while agent capabilities are unavailable", () => {
+	const markup = renderToStaticMarkup(
+		<SettingsNavigation section={SettingsSection.System} profilePending />,
+	);
+	expect(resolveSettingsSection(SettingsSection.Tools, null)).toBe(SettingsSection.System);
+	expect(markup).toContain(">System<");
+	expect(markup).not.toContain(">Agent<");
+	expect(markup).not.toContain(">Signet<");
+	expect(markup).not.toContain(">Tools<");
 });
 
 test("session controls are current only after the active target finishes loading", () => {

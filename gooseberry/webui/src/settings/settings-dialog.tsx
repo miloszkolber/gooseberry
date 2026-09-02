@@ -1,3 +1,4 @@
+import type { AgentProfile } from "@gooseberry/contracts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAppStore } from "@/store";
 import { AgentSettings } from "./agent-settings";
@@ -9,6 +10,20 @@ import { restoreSettingsFocus } from "./open-settings";
 import { ProvidersSettings } from "./providers-settings";
 import { SignetSettings } from "./signet-settings";
 import { SettingsSection } from "./state";
+import { SystemSettings } from "./system-settings";
+
+export function resolveSettingsSection(
+	section: SettingsSection,
+	profile: AgentProfile | null,
+): SettingsSection {
+	if (profile === null) return SettingsSection.System;
+	if (!profile.goose || !profile.operations.administration) {
+		return section === SettingsSection.Signet || section === SettingsSection.System
+			? section
+			: SettingsSection.Agent;
+	}
+	return section === SettingsSection.Agent ? SettingsSection.Providers : section;
+}
 
 export function SettingsDialog() {
 	const open = useAppStore((state) => state.settingsOpen);
@@ -17,12 +32,7 @@ export function SettingsDialog() {
 	const profilePending = agentProfile === null;
 	const genericAgent =
 		!profilePending && (!agentProfile.goose || agentProfile.operations.administration === false);
-	const activeSection =
-		genericAgent && section !== SettingsSection.Signet
-			? SettingsSection.Agent
-			: !genericAgent && section === SettingsSection.Agent
-				? SettingsSection.Providers
-				: section;
+	const activeSection = resolveSettingsSection(section, agentProfile);
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && useAppStore.getState().closeSettings()}>
 			<DialogContent
@@ -36,39 +46,34 @@ export function SettingsDialog() {
 				<DialogHeader className="border-border-default border-b px-lg py-md">
 					<DialogTitle>Settings</DialogTitle>
 				</DialogHeader>
-				{profilePending ? (
-					<div
-						role="status"
-						className="flex min-h-40 flex-1 items-center justify-center p-lg text-center tr-text-ui text-text-muted"
-					>
-						Agent capabilities are not available yet.
-					</div>
-				) : (
-					<>
-						<SettingsNavigation section={activeSection} genericAgent={genericAgent} />
-						<div
-							id={`settings-panel-${activeSection}`}
-							role="tabpanel"
-							className="min-h-0 min-w-0 flex-1 overflow-y-auto p-md sm:p-lg"
-						>
-							{activeSection === SettingsSection.Agent ? (
-								<AgentSettings profile={agentProfile} />
-							) : activeSection === SettingsSection.Goose ? (
-								<GooseSettings />
-							) : activeSection === SettingsSection.Models ? (
-								<ModelsSettings />
-							) : activeSection === SettingsSection.Automation ? (
-								<GooseAutomationSettings />
-							) : activeSection === SettingsSection.Tools ? (
-								<GooseToolsSettings />
-							) : activeSection === SettingsSection.Signet ? (
-								<SignetSettings />
-							) : (
-								<ProvidersSettings />
-							)}
-						</div>
-					</>
-				)}
+				<SettingsNavigation
+					section={activeSection}
+					genericAgent={genericAgent}
+					profilePending={profilePending}
+				/>
+				<div
+					id={`settings-panel-${activeSection}`}
+					role="tabpanel"
+					className="min-h-0 min-w-0 flex-1 overflow-y-auto p-md sm:p-lg"
+				>
+					{activeSection === SettingsSection.System ? (
+						<SystemSettings />
+					) : activeSection === SettingsSection.Agent && agentProfile ? (
+						<AgentSettings profile={agentProfile} />
+					) : activeSection === SettingsSection.Goose ? (
+						<GooseSettings />
+					) : activeSection === SettingsSection.Models ? (
+						<ModelsSettings />
+					) : activeSection === SettingsSection.Automation ? (
+						<GooseAutomationSettings />
+					) : activeSection === SettingsSection.Tools ? (
+						<GooseToolsSettings />
+					) : activeSection === SettingsSection.Signet ? (
+						<SignetSettings />
+					) : (
+						<ProvidersSettings />
+					)}
+				</div>
 			</DialogContent>
 		</Dialog>
 	);
@@ -77,9 +82,11 @@ export function SettingsDialog() {
 export function SettingsNavigation({
 	section,
 	genericAgent = false,
+	profilePending = false,
 }: {
 	section: SettingsSection;
 	genericAgent?: boolean;
+	profilePending?: boolean;
 }) {
 	return (
 		<div
@@ -87,7 +94,7 @@ export function SettingsNavigation({
 			className="flex gap-xs overflow-x-auto whitespace-nowrap border-border-default border-b px-md py-sm sm:px-lg"
 			aria-label="Settings"
 		>
-			{genericAgent ? (
+			{profilePending ? null : genericAgent ? (
 				<SettingsTab
 					active={section === SettingsSection.Agent}
 					onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Agent)}
@@ -128,11 +135,19 @@ export function SettingsNavigation({
 					</SettingsTab>
 				</>
 			)}
+			{profilePending ? null : (
+				<SettingsTab
+					active={section === SettingsSection.Signet}
+					onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Signet)}
+				>
+					Signet
+				</SettingsTab>
+			)}
 			<SettingsTab
-				active={section === SettingsSection.Signet}
-				onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Signet)}
+				active={section === SettingsSection.System}
+				onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.System)}
 			>
-				Signet
+				System
 			</SettingsTab>
 		</div>
 	);

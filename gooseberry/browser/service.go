@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,6 +23,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/miloszkolber/gooseberry/internal/diagnostics"
 )
 
 const (
@@ -126,6 +128,10 @@ func quotaError(message string) *serviceError {
 
 type app struct {
 	config         config
+	build          diagnostics.BuildInfo
+	logger         *slog.Logger
+	started        time.Time
+	requests       diagnostics.RequestCounter
 	appViews       *appViewStore
 	accounting     sync.Mutex
 	reservations   map[string]int64
@@ -139,6 +145,10 @@ type app struct {
 }
 
 func newApp(config config) (*app, error) {
+	return newAppWithRuntime(config, diagnostics.NormalizeBuild("", ""), nil)
+}
+
+func newAppWithRuntime(config config, build diagnostics.BuildInfo, logger *slog.Logger) (*app, error) {
 	var err error
 	config, err = validateNetworkConfig(config)
 	if err != nil {
@@ -159,7 +169,11 @@ func newApp(config config) (*app, error) {
 	if _, err := os.Stat(config.BrowserConfig); err != nil {
 		return nil, fmt.Errorf("check browser config: %w", err)
 	}
-	app := &app{config: config, appViews: newAppViewStore(), reservations: map[string]int64{}, artifactUsage: map[string]int64{}, active: map[uint64]context.CancelFunc{}}
+	build = diagnostics.NormalizeBuild(build.Version, build.Revision)
+	if logger == nil {
+		logger = diagnostics.NewLogger("browser", build)
+	}
+	app := &app{config: config, build: build, logger: logger, started: time.Now(), appViews: newAppViewStore(), reservations: map[string]int64{}, artifactUsage: map[string]int64{}, active: map[uint64]context.CancelFunc{}}
 	if err := app.initializeStorage(); err != nil {
 		return nil, err
 	}
@@ -615,7 +629,9 @@ func cleanupCode(err error) bool {
 	return errors.As(err, &failure) && (failure.code == "command_timeout" || failure.code == "output_limit" || failure.code == "child_process" || failure.code == "request_cancelled")
 }
 
-func (a *app) runBrowser(ctx context.Context, request browserRequest) (map[string]any, error) {
+func (a *app) runBrowser(ctx context.Context, request browserRequest) (result map[string]any, resultErr error) {
+	started := a.requests.Begin()
+	defer func() { a.requests.End(started, resultErr != nil) }()
 	ctx, cancel := context.WithTimeout(ctx, a.config.RequestTimeout)
 	a.activeMu.Lock()
 	if a.shuttingDown {
@@ -874,7 +890,7 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (map[strin
 		delete(a.artifactUsage, request.Session)
 		a.accounting.Unlock()
 	}
-	result := map[string]any{"outcome": "completed", "command": request.Command, "code": 0, "stdout": stdoutText, "stderr": stderrText}
+	result = map[string]any{"outcome": "completed", "command": request.Command, "code": 0, "stdout": stdoutText, "stderr": stderrText}
 	if artifact != nil {
 		result["artifact"] = artifact
 	}
@@ -985,7 +1001,7 @@ func browserErrorResult(err error) (int, map[string]any) {
 		}
 		return service.status, map[string]any{"outcome": "rejected", "code": service.code, "warnings": []string{service.message}, "hints": hints}
 	}
-	log.Printf("[gooseberry-browser] request error: %v", err)
+	slog.Error("browser request failed", "error", err)
 	return http.StatusInternalServerError, map[string]any{"outcome": "failed", "code": "internal_error"}
 }
 
@@ -1094,6 +1110,31 @@ func (a *app) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		} else {
 			writeJSON(response, 200, map[string]string{"status": "ok"}, nil)
 		}
+		return
+	}
+	if path == "/readyz" {
+		if request.Method != http.MethodGet {
+			rejectMethod(response, request, http.MethodGet)
+			return
+		}
+		readiness := a.readiness()
+		status := http.StatusOK
+		if !readiness.Ready {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(response, status, readiness, nil)
+		return
+	}
+	if path == "/status" {
+		if request.Method != http.MethodGet {
+			rejectMethod(response, request, http.MethodGet)
+			return
+		}
+		if !a.authorized(request) {
+			writeJSON(response, http.StatusUnauthorized, map[string]any{"outcome": "rejected", "code": "unauthorized"}, nil)
+			return
+		}
+		writeJSON(response, http.StatusOK, a.status(), nil)
 		return
 	}
 	if path == "/v1/browser" && request.Method != http.MethodPost {
