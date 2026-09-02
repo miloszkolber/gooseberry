@@ -17,6 +17,7 @@ import (
 
 const (
 	maxQueuedMessages          = 20
+	maxQueueRecoveryWorkers    = 4
 	inactiveProjectionMaxCount = 24
 	inactiveProjectionMaxBytes = 8 * 1024 * 1024
 	maxPendingCommandCatalogs  = 32
@@ -1119,9 +1120,23 @@ func (m *SessionManager) prepareQueueResume() ([]queueResume, error) {
 }
 
 func (m *SessionManager) resumeQueues(targets []queueResume) {
+	// Admission retains every durable target in shutdown accounting while the
+	// fixed worker pool bounds only this startup sweep.
+	jobs := make(chan queueResume, len(targets))
 	for _, target := range targets {
-		m.scheduleFollowUp(target.sessionID, target.entry)
+		if m.admitFollowUp(target.sessionID, target.entry) {
+			jobs <- target
+		}
 		m.releaseEntry(target.entry)
+	}
+	close(jobs)
+	workers := min(maxQueueRecoveryWorkers, len(jobs))
+	for range workers {
+		go func() {
+			for target := range jobs {
+				m.runFollowUp(target.sessionID, target.entry)
+			}
+		}()
 	}
 }
 

@@ -2,12 +2,19 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func queueTestContext(key, fingerprint byte) context.Context {
@@ -334,5 +341,170 @@ func TestPrepareQueueResumeRestoresOnlyRunnableOwnedSessions(t *testing.T) {
 	manager.mu.Unlock()
 	if blockedLoaded {
 		t.Fatal("blocked queue was loaded into the active worker set")
+	}
+}
+
+func TestResumeQueuesBoundsStartupLoads(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	policy, err := NewPathPolicy([]string{root}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Dir: t.TempDir()}
+	projects := NewProjects(store, policy)
+	project, err := projects.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := NewSessionRecords(store)
+	queues := NewSessionQueues(store)
+	total := maxQueueRecoveryWorkers + 2
+	for index := range total {
+		sessionID := fmt.Sprintf("recover-%d", index)
+		if err := records.Record(ProjectSessionRecord{ProjectID: project.ID, SessionID: sessionID, CWD: project.Roots[0]}); err != nil {
+			t.Fatal(err)
+		}
+		queue := newSessionQueueState()
+		queue.FollowUp = []queuedFollowUp{{ID: fmt.Sprintf("queued-%d", index), Text: fmt.Sprintf("resume %d", index)}}
+		if err := queues.Save(project.ID, sessionID, queue); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loads := make(chan string, total)
+	prompts := make(chan string, total)
+	releaseLoads := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseLoads) }) }
+	defer release()
+	var loadMu sync.Mutex
+	activeLoads, peakLoads := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		var writeMu sync.Mutex
+		write := func(value any) error {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			return writeTestRPC(connection, value)
+		}
+		for {
+			_, payload, err := connection.Read(ctx)
+			if err != nil {
+				return
+			}
+			var rpc struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params map[string]any  `json:"params"`
+			}
+			if json.Unmarshal(payload, &rpc) != nil {
+				return
+			}
+			var result any = map[string]any{}
+			switch rpc.Method {
+			case "initialize":
+				result = testGooseInitializeResponse()
+			case "session/load":
+				sessionID := textValue(rpc.Params["sessionId"])
+				loadMu.Lock()
+				activeLoads++
+				if activeLoads > peakLoads {
+					peakLoads = activeLoads
+				}
+				loadMu.Unlock()
+				select {
+				case loads <- sessionID:
+				case <-ctx.Done():
+					return
+				}
+				requestID := append(json.RawMessage(nil), rpc.ID...)
+				go func() {
+					select {
+					case <-releaseLoads:
+					case <-ctx.Done():
+						return
+					}
+					loadMu.Lock()
+					activeLoads--
+					loadMu.Unlock()
+					_ = write(map[string]any{"jsonrpc": "2.0", "id": requestID, "result": map[string]any{}})
+				}()
+				continue
+			case "session/prompt":
+				sessionID := textValue(rpc.Params["sessionId"])
+				select {
+				case prompts <- sessionID:
+				case <-ctx.Done():
+					return
+				}
+				result = map[string]any{"stopReason": "end_turn"}
+			}
+			if len(rpc.ID) > 0 && write(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result}) != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	manager := NewSessionManager(projects, policy, records, queues, NewObjectives(store), nil)
+	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "fixture", "test", manager)
+	defer client.Close()
+	manager.SetClient(client)
+	targets, err := manager.prepareQueueResume()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != total {
+		t.Fatalf("prepared %d queue recoveries, want %d", len(targets), total)
+	}
+	manager.resumeQueues(targets)
+
+	for range maxQueueRecoveryWorkers {
+		select {
+		case <-loads:
+		case <-ctx.Done():
+			t.Fatal("startup queue workers did not reach the concurrency limit")
+		}
+	}
+	select {
+	case sessionID := <-loads:
+		t.Fatalf("startup loaded %s before a recovery worker was released", sessionID)
+	case <-time.After(100 * time.Millisecond):
+	}
+	loadMu.Lock()
+	peak := peakLoads
+	loadMu.Unlock()
+	if peak != maxQueueRecoveryWorkers {
+		t.Fatalf("peak startup loads = %d, want %d", peak, maxQueueRecoveryWorkers)
+	}
+
+	release()
+	seen := make(map[string]bool, total)
+	for len(seen) < total {
+		select {
+		case sessionID := <-prompts:
+			if seen[sessionID] {
+				t.Fatalf("startup delivered the queue for %s more than once", sessionID)
+			}
+			seen[sessionID] = true
+		case <-ctx.Done():
+			t.Fatalf("startup delivered %d of %d recovered queues", len(seen), total)
+		}
+	}
+	settled := make(chan struct{})
+	go func() {
+		manager.work.Wait()
+		close(settled)
+	}()
+	select {
+	case <-settled:
+	case <-ctx.Done():
+		t.Fatal("recovered queue workers did not settle")
 	}
 }

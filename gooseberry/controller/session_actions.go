@@ -519,12 +519,18 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 }
 
 func (m *SessionManager) scheduleFollowUp(sessionID string, entry *sessionEntry) {
+	if m.admitFollowUp(sessionID, entry) {
+		go m.runFollowUp(sessionID, entry)
+	}
+}
+
+func (m *SessionManager) admitFollowUp(sessionID string, entry *sessionEntry) bool {
 	m.mu.Lock()
 	entry.state.Lock()
 	if m.closed || m.sessions[sessionID] != entry || m.lifecycle[sessionID] || entry.drainScheduled || !runnableFollowUpLocked(entry) {
 		entry.state.Unlock()
 		m.mu.Unlock()
-		return
+		return false
 	}
 	if entry.drainRetry != nil {
 		entry.drainRetry.Stop()
@@ -535,30 +541,32 @@ func (m *SessionManager) scheduleFollowUp(sessionID string, entry *sessionEntry)
 	m.work.Add(1)
 	entry.state.Unlock()
 	m.mu.Unlock()
-	go func() {
-		defer m.releaseWork(entry)
-		retry := false
-		if err := m.lockEntry(sessionID, entry); err == nil {
-			drainErr := m.drainFollowUp(sessionID, entry)
-			retry = drainErr != nil && !errors.Is(drainErr, errAgentIdentityChanged)
-			// Clear the admission flag while still owning op. A queue mutation
-			// cannot observe the old flag and lose its wakeup in this interval.
-			entry.state.Lock()
-			entry.drainScheduled = false
-			if !retry {
-				entry.drainFailures = 0
-			}
-			entry.state.Unlock()
-			entry.op.Unlock()
-		} else {
-			entry.state.Lock()
-			entry.drainScheduled = false
-			entry.state.Unlock()
+	return true
+}
+
+func (m *SessionManager) runFollowUp(sessionID string, entry *sessionEntry) {
+	defer m.releaseWork(entry)
+	retry := false
+	if err := m.lockEntry(sessionID, entry); err == nil {
+		drainErr := m.drainFollowUp(sessionID, entry)
+		retry = drainErr != nil && !errors.Is(drainErr, errAgentIdentityChanged)
+		// Clear the admission flag while still owning op. A queue mutation
+		// cannot observe the old flag and lose its wakeup in this interval.
+		entry.state.Lock()
+		entry.drainScheduled = false
+		if !retry {
+			entry.drainFailures = 0
 		}
-		if retry {
-			m.retryFollowUp(sessionID, entry)
-		}
-	}()
+		entry.state.Unlock()
+		entry.op.Unlock()
+	} else {
+		entry.state.Lock()
+		entry.drainScheduled = false
+		entry.state.Unlock()
+	}
+	if retry {
+		m.retryFollowUp(sessionID, entry)
+	}
 }
 
 func (m *SessionManager) retryFollowUp(sessionID string, entry *sessionEntry) {
