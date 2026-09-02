@@ -6,7 +6,7 @@
 | Application, `:7312` | `gooseberry` container | Web UI, projects, files, Git and objective/question MCP. |
 | Browser, `:8787` | `gooseberry-browser` container | Browser MCP/HTTP, Chromium, artifacts and the Interactive Apps sandbox origin. |
 
-The application connects to Goose over ACP and proxies authenticated browser artifacts. Goose calls the two MCP endpoints. Interactive Apps render on the browser service's separate origin while the application mediates their access to Goose. Both containers use host networking, with independent health checks and shutdown.
+The application connects to Goose over ACP and proxies authenticated browser artifacts. Goose calls the two MCP endpoints. Interactive Apps render on the browser service's separate origin while the application mediates their access to Goose. Both containers use host networking, with independent liveness/readiness checks and shutdown.
 
 ## Source layout
 
@@ -22,6 +22,8 @@ Paths are relative to `gooseberry/`. Both executables share its Go module.
 | `contracts/` | Frontend wire types and validation. |
 
 Coder's ACP SDK and WebSocket library handle agent communication; the MCP Go SDK handles browser MCP. The framing adapter stays small. ACP setup shares work while preserving each caller's deadline, rejects unsupported protocol versions and owns one immutable capability profile per connection. Standard operations are gated by advertised support; Goose-only calls and notifications require a recognized Goose connection.
+
+Local diagnostics use standard-library counters and process snapshots. The authenticated Web UI reads a bounded application, agent and browser status report only when System settings is open; it does not poll or retain diagnostic history.
 
 ## State and concurrency
 

@@ -13,7 +13,6 @@ The [baseline](baseline.md) describes the application today. Priorities are inco
 
 ## Operations and maintenance
 
-- Add useful local readiness/degradation details, build provenance, bounded logs and performance counters without telemetry or another monitoring runtime.
 - Check backup/restore, schema migration and rollback before changing persisted state.
 - Make session deletion recoverable across partial record, objective and queue-store failures without treating older backups as deletion authority.
 - Bound queue-recovery fan-out and compact durable request receipts if persisted queue state approaches its file limit.

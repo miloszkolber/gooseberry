@@ -20,12 +20,12 @@ Goose stores transcripts. The Web UI opens each chat at its newest bounded page,
 
 ## Settings
 
-Settings includes provider setup/login, model visibility and metadata, readiness, preferences and defaults. Users can edit supported agent fields, manage extensions, recipes and schedules, inspect tools and change permissions. Optional Signet configuration is available.
+Settings includes provider setup/login, model visibility and metadata, readiness, preferences and defaults. Users can edit supported agent fields, manage extensions, recipes and schedules, inspect tools and change permissions. System shows local service health, build provenance and bounded request/process counters. Optional Signet configuration is available.
 
 Goose owns the underlying configuration and credentials. [ACP coverage](acp.md) records supported controls and integration limits.
 
 ## Runtime
 
-The single-user deployment uses host Goose and separate application/browser containers built from one Go module. State stays in each service's own directory.
+The single-user deployment uses host Goose and separate application/browser containers built from one Go module. State stays in each service's own directory. Both services emit structured local logs; Compose bounds their retained size.
 
 The Web UI is a read-only project workspace; host Goose tools retain the user's permissions. See [deployment](deployment.md) and [security](security.md).

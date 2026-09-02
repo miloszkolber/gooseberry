@@ -120,15 +120,16 @@ Open **http://127.0.0.1:7312**, configure a provider and create a project.
 | `curl -fsS http://127.0.0.1:7312/livez` | Application liveness. |
 | `curl -fsS http://127.0.0.1:7312/readyz` | ACP connection and required session capabilities, not provider readiness. |
 | `curl -fsS http://127.0.0.1:8787/health` | Browser liveness without starting Chromium. |
+| `curl -fsS http://127.0.0.1:8787/readyz` | Browser executable, configuration and writable state roots without starting Chromium. |
 
-For status and logs:
+Settings → System shows component degradation, build provenance and bounded local counters. For container state and logs:
 
 ```bash
 docker compose --env-file .gooseberry ps
 docker compose --env-file .gooseberry logs --tail=100 gooseberry browser
 ```
 
-Each container is independently healthy; Goose outages affect application readiness.
+Each container is independently healthy; Goose outages affect application readiness. Compose retains at most three 10 MiB local log files per service.
 
 An SSH tunnel keeps the UI on loopback:
 
