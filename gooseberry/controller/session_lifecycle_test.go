@@ -229,6 +229,19 @@ func TestStandardCommandCatalogSurvivesCreateAndLoadBoundaries(t *testing.T) {
 				result = map[string]any{"sessionId": sessionID}
 			case "session/load":
 				sessionID, command = "loaded", "from-load"
+				if writeTestRPC(connection, map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "session/update",
+					"params": map[string]any{
+						"sessionId": sessionID,
+						"update": map[string]any{
+							"sessionUpdate": "agent_message_chunk",
+							"content":       map[string]any{"type": "text", "text": "replayed answer"},
+						},
+					},
+				}); err != nil {
+					return
+				}
 			}
 			if command != "" {
 				if writeTestRPC(connection, map[string]any{
@@ -301,6 +314,9 @@ func TestStandardCommandCatalogSurvivesCreateAndLoadBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAgentCommand(loaded["commands"], "from-load")
+	if loaded["summary"].(SessionSummary).IsStreaming {
+		t.Fatal("completed ACP replay remained marked as streaming")
+	}
 	if !replayCommandsSerialized.Load() {
 		t.Fatal("replay command publication was not observed")
 	}

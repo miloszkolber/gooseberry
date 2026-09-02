@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../components/brand-logo";
 import { Toaster } from "../components/toaster";
 import { type ConnectionStatus, getTransport, logoutController } from "../connection";
+import { openSettingsFrom } from "../settings/open-settings";
 import {
 	type ProjectArea,
 	selectActiveProjectArea,
@@ -253,7 +254,7 @@ export function ShellLayout({
 						title="Settings"
 						onMouseEnter={() => void loadSettingsDialog()}
 						onFocus={() => void loadSettingsDialog()}
-						onClick={() => useAppStore.getState().openSettings()}
+						onClick={(event) => openSettingsFrom(event.currentTarget)}
 						className="flex size-7 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 					>
 						<Settings className="size-4" />
@@ -328,7 +329,7 @@ export function ShellLayout({
 								</button>
 								<button
 									type="button"
-									onClick={() => useAppStore.getState().openSettings()}
+									onClick={(event) => openSettingsFrom(event.currentTarget)}
 									className="rounded-[var(--radius-sm)] px-md py-xs tr-text-ui text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 								>
 									Open settings

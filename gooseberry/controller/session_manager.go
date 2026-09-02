@@ -394,6 +394,9 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	replay.configOptions = jsonValues(response.ConfigOptions)
 	replay.model = modelFromSetup(replay.configOptions, response.Meta)
 	replay.thinkingLevel = thinkingFromOptions(replay.configOptions)
+	// session/load replays a completed transcript. Message and tool chunks seen
+	// during that RPC describe history, not a live prompt.
+	replay.streaming = false
 	replay.attached = generation
 	replay.queue = entry.queue.clone()
 	recoveredDispatch := replay.queue.Dispatch != nil

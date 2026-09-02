@@ -5,6 +5,7 @@ import { GooseAutomationSettings } from "./goose-automation-settings";
 import { GooseSettings } from "./goose-settings";
 import { GooseToolsSettings } from "./goose-tools-settings";
 import { ModelsSettings } from "./models-settings";
+import { restoreSettingsFocus } from "./open-settings";
 import { ProvidersSettings } from "./providers-settings";
 import { SignetSettings } from "./signet-settings";
 import { SettingsSection } from "./state";
@@ -26,6 +27,10 @@ export function SettingsDialog() {
 		<Dialog open={open} onOpenChange={(next) => !next && useAppStore.getState().closeSettings()}>
 			<DialogContent
 				data-testid="settings-dialog"
+				onCloseAutoFocus={(event) => {
+					if (!restoreSettingsFocus()) return;
+					event.preventDefault();
+				}}
 				className="flex max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[64rem] min-w-0 flex-col gap-0 overflow-hidden p-0 sm:max-h-[88vh]"
 			>
 				<DialogHeader className="border-border-default border-b px-lg py-md">
