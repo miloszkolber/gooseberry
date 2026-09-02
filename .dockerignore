@@ -15,6 +15,9 @@
 !gooseberry/controller/**
 !gooseberry/browser/
 !gooseberry/browser/**
+!gooseberry/tests/
+!gooseberry/tests/ui/
+!gooseberry/tests/ui/**
 !gooseberry/contracts/
 !gooseberry/contracts/**
 !gooseberry/webui/

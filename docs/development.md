@@ -28,6 +28,15 @@ Add focused regressions for brittle boundaries:
 
 Use temporary state and synthetic credentials. Run race tests for concurrent state or lifecycle changes. Visual acceptance requires actual interactions and screenshots.
 
+Run the browser gate from the repository root. It uses a disposable image, a synthetic ACP agent and the browser service's Chromium package layer:
+
+```bash
+docker build -f gooseberry/Dockerfile --target ui-acceptance -t gooseberry-ui-acceptance .
+docker run --rm --network none --shm-size 256m gooseberry-ui-acceptance
+```
+
+The gate covers commit selection, source/image previews, streaming tab recovery, reconnect, dialog focus and narrow-screen overflow. Mount `/artifacts` when you want to keep its screenshots.
+
 ## Goose compatibility
 
 Against an isolated Goose service:
