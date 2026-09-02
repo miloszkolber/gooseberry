@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,297 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/coder/websocket"
 )
+
+func TestSessionManagerHonorsAgentCapabilitiesBeforeMutation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	policy, err := NewPathPolicy([]string{root}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Dir: t.TempDir()}
+	projects := NewProjects(store, policy)
+	project, err := projects.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := NewSessionRecords(store)
+	manager := NewSessionManager(projects, policy, records, NewSessionQueues(store), NewObjectives(store), nil)
+	manager.SetObjectiveURL("http://127.0.0.1:7312/mcp/objective")
+	var mode atomic.Int32 // 0: incompatible, 1: compatible, 2: HTTP MCP, 3: sanitized-equivalent replacement.
+	var postInitialize atomic.Int32
+	var gooseMethods atomic.Int32
+	var withoutHTTPMCP atomic.Int32
+	var withHTTPMCP atomic.Int32
+	var loadCalls atomic.Int32
+	var promptCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		for {
+			_, payload, err := connection.Read(ctx)
+			if err != nil {
+				return
+			}
+			var rpc struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params map[string]any  `json:"params"`
+			}
+			if json.Unmarshal(payload, &rpc) != nil {
+				return
+			}
+			result := any(map[string]any{})
+			switch rpc.Method {
+			case "initialize":
+				capabilities := map[string]any{}
+				if mode.Load() > 0 {
+					capabilities = map[string]any{
+						"loadSession":         true,
+						"sessionCapabilities": map[string]any{"list": map[string]any{}},
+						"mcpCapabilities":     map[string]any{"http": mode.Load() >= 2},
+					}
+				}
+				name := "fixture-agent"
+				if mode.Load() == 3 {
+					name = "fixture-\u202eagent"
+				}
+				result = map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": name, "version": "1.0.0"}, "agentCapabilities": capabilities, "authMethods": []any{}}
+			case "session/new":
+				postInitialize.Add(1)
+				count := int32(len(arrayValue(rpc.Params["mcpServers"])))
+				if mode.Load() == 1 {
+					withoutHTTPMCP.Store(count)
+					result = map[string]any{"sessionId": "generic-no-http"}
+				} else {
+					withHTTPMCP.Store(count)
+					result = map[string]any{"sessionId": "generic-http"}
+				}
+			case "session/list":
+				postInitialize.Add(1)
+				result = map[string]any{"sessions": []any{}}
+			case "session/load":
+				postInitialize.Add(1)
+				loadCalls.Add(1)
+				result = map[string]any{}
+			case "session/prompt":
+				postInitialize.Add(1)
+				promptCalls.Add(1)
+				result = map[string]any{"stopReason": "end_turn"}
+			default:
+				postInitialize.Add(1)
+				if strings.HasPrefix(rpc.Method, "_goose/") {
+					gooseMethods.Add(1)
+				}
+			}
+			if len(rpc.ID) > 0 && writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result}) != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "", "test", manager)
+	defer client.Close()
+	manager.SetClient(client)
+
+	_, err = manager.Create(ctx, project.ID, project.Roots[0], nil, "", "client")
+	var coded *codedError
+	if !errors.As(err, &coded) || coded.code != "UNSUPPORTED_AGENT_CAPABILITY" || !strings.Contains(err.Error(), "session/load") || !strings.Contains(err.Error(), "session/list") {
+		t.Fatalf("incompatible create error: %v", err)
+	}
+	stored, listErr := records.List()
+	manager.mu.Lock()
+	live := len(manager.sessions)
+	manager.mu.Unlock()
+	if listErr != nil || len(stored) != 0 || live != 0 || postInitialize.Load() != 0 {
+		t.Fatalf("incompatible create mutated state or reached session/new: records=%#v live=%d requests=%d err=%v", stored, live, postInitialize.Load(), listErr)
+	}
+
+	mode.Store(1)
+	client.Reset()
+	if _, err := manager.Create(ctx, project.ID, project.Roots[0], nil, "", "client"); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := manager.List(ctx, project.ID, false)
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("generic session list: %#v, %v", listed, err)
+	}
+	admin := NewGooseAdmin(client, NewSettings(store, nil))
+	if _, err := admin.providers(ctx, nil); err == nil {
+		t.Fatal("generic agent accepted Goose administration")
+	}
+	if err := manager.Unarchive(ctx, project.ID, "generic-no-http"); err == nil {
+		t.Fatal("generic agent accepted a Goose lifecycle method")
+	}
+	if withoutHTTPMCP.Load() != 0 || gooseMethods.Load() != 0 {
+		t.Fatalf("unsupported capability reached the agent: objective servers=%d, Goose methods=%d", withoutHTTPMCP.Load(), gooseMethods.Load())
+	}
+	if err := manager.Prompt(ctx, "generic-no-http", "", []ImageContent{{Type: "image", MimeType: "image/png", Data: "AA=="}}); !errors.As(err, &coded) || coded.code != "UNSUPPORTED_AGENT_CAPABILITY" {
+		t.Fatalf("unsupported image prompt error: %v", err)
+	}
+	manager.mu.Lock()
+	genericEntry := manager.sessions["generic-no-http"]
+	manager.mu.Unlock()
+	genericEntry.state.Lock()
+	mutatedPrompt := len(genericEntry.messages) != 0 || genericEntry.streaming || genericEntry.promptActive
+	genericEntry.state.Unlock()
+	if promptCalls.Load() != 0 || mutatedPrompt {
+		t.Fatalf("unsupported image prompt mutated the session or reached the agent: requests=%d mutated=%v", promptCalls.Load(), mutatedPrompt)
+	}
+
+	mode.Store(2)
+	client.Reset()
+	if _, err := manager.Create(ctx, project.ID, project.Roots[0], nil, "", "client"); err != nil {
+		t.Fatal(err)
+	}
+	if withHTTPMCP.Load() != 1 {
+		t.Fatalf("advertised HTTP MCP received %d objective servers", withHTTPMCP.Load())
+	}
+	mode.Store(3)
+	client.Reset()
+	if _, err := manager.EnsureAttached(ctx, "generic-http", project.ID, project.Roots[0]); !errors.Is(err, errAgentIdentityChanged) {
+		t.Fatalf("replacement agent inherited the live session: %v", err)
+	}
+	if loadCalls.Load() != 0 {
+		t.Fatal("identity mismatch reached session/load")
+	}
+}
+
+func TestStandardCommandCatalogSurvivesCreateAndLoadBoundaries(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	policy, err := NewPathPolicy([]string{root}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Dir: t.TempDir()}
+	projects := NewProjects(store, policy)
+	project, err := projects.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := NewSessionRecords(store)
+	if err := records.Record(ProjectSessionRecord{ProjectID: project.ID, SessionID: "loaded", CWD: project.Roots[0]}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewSessionManager(projects, policy, records, NewSessionQueues(store), NewObjectives(store), nil)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		for {
+			_, payload, err := connection.Read(ctx)
+			if err != nil {
+				return
+			}
+			var rpc struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if json.Unmarshal(payload, &rpc) != nil {
+				return
+			}
+			result := any(map[string]any{})
+			sessionID, command := "", ""
+			switch rpc.Method {
+			case "initialize":
+				result = map[string]any{
+					"protocolVersion": 1,
+					"agentInfo":       map[string]any{"name": "fixture-agent", "version": "1.0.0"},
+					"agentCapabilities": map[string]any{
+						"loadSession":         true,
+						"sessionCapabilities": map[string]any{"list": map[string]any{}},
+					},
+					"authMethods": []any{},
+				}
+			case "session/new":
+				sessionID, command = "created", "from-create"
+				result = map[string]any{"sessionId": sessionID}
+			case "session/load":
+				sessionID, command = "loaded", "from-load"
+			}
+			if command != "" {
+				if writeTestRPC(connection, map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "session/update",
+					"params": map[string]any{
+						"sessionId": sessionID,
+						"update": map[string]any{
+							"sessionUpdate":     "available_commands_update",
+							"availableCommands": []any{map[string]any{"name": command}},
+						},
+					},
+				}); err != nil {
+					return
+				}
+			}
+			if len(rpc.ID) > 0 && writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result}) != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "", "test", manager)
+	defer client.Close()
+	manager.SetClient(client)
+
+	value, err := manager.CreateDeferred(ctx, project.ID, project.Roots[0], nil, "", "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred := value.(deferredResponse)
+	created := deferred.result.(map[string]any)
+	assertAgentCommand := func(value any, name string) {
+		t.Helper()
+		commands := value.([]map[string]any)
+		if len(commands) != 1 || commands[0]["name"] != name || commands[0]["source"] != "agent" || mapValue(commands[0]["sourceInfo"])["source"] != "Connected agent" {
+			t.Fatalf("agent command catalog: %#v", commands)
+		}
+	}
+	assertAgentCommand(created["commands"], "from-create")
+	deferred.after()
+
+	var replayCommandsSerialized atomic.Bool
+	manager.publish = func(channel string, data any) {
+		if channel != "agent.event" {
+			return
+		}
+		payload := mapValue(data)
+		event := mapValue(payload["event"])
+		commands, _ := event["commands"].([]map[string]any)
+		if event["type"] != "commands" || len(commands) == 0 || commands[0]["name"] != "from-load" {
+			return
+		}
+		manager.mu.Lock()
+		entry := manager.sessions["loaded"]
+		manager.mu.Unlock()
+		if entry == nil {
+			t.Error("replay command publication lost its session")
+			return
+		}
+		if entry.state.TryLock() {
+			entry.state.Unlock()
+			t.Error("replay commands were published outside the session ordering lock")
+			return
+		}
+		replayCommandsSerialized.Store(true)
+	}
+	loaded, err := manager.Messages(ctx, "loaded", project.ID, project.Roots[0], "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAgentCommand(loaded["commands"], "from-load")
+	if !replayCommandsSerialized.Load() {
+		t.Fatal("replay command publication was not observed")
+	}
+}
 
 func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -111,7 +403,7 @@ func TestSessionLifecycleConflictsAndReconnectQueue(t *testing.T) {
 			var result any = map[string]any{}
 			switch rpc.Method {
 			case "initialize":
-				result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+				result = testGooseInitializeResponse()
 			case "session/new":
 				result = map[string]any{"sessionId": "created"}
 			case "session/load":

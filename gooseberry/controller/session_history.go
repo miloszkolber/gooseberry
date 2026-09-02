@@ -73,6 +73,7 @@ func (m *SessionManager) messageSnapshot(ctx context.Context, sessionID, project
 		"summary":      m.summaryLocked(sessionID, entry),
 		"messages":     resultMessages,
 		"pendingTools": pendingToolPreviewsLocked(entry),
+		"commands":     cloneSlashCommands(entry.commands),
 		"page":         page,
 	}
 	var once sync.Once

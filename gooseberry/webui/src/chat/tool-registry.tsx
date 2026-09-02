@@ -90,7 +90,7 @@ export function DefaultToolRenderer({
 			<ToolOutput result={result} error={status === "error"} />
 			{status === "done" &&
 			(toolName === "apps__create_app" || toolName === "apps__iterate_app") ? (
-				<p className="text-text-muted tr-text-metadata">App saved in Goose.</p>
+				<p className="text-text-muted tr-text-metadata">App saved in the agent session.</p>
 			) : null}
 		</div>
 	);

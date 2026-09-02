@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,24 @@ func (e *recordingGooseEvents) Extension(ctx context.Context, method string, _ j
 }
 func (e *recordingGooseEvents) Permission(context.Context, acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	return acp.RequestPermissionResponse{Outcome: acp.NewRequestPermissionOutcomeCancelled()}, nil
+}
+
+func TestGooseSinkRejectsGooseNotificationsFromGenericAgents(t *testing.T) {
+	events := &recordingGooseEvents{}
+	sink := &gooseSink{events: events, generation: 4}
+	if _, err := sink.HandleExtensionMethod(t.Context(), "_goose/unstable/session/update", nil); err == nil {
+		t.Fatal("generic agent notification was accepted")
+	}
+	if len(events.methods) != 0 {
+		t.Fatalf("generic agent notification reached events: %#v", events.methods)
+	}
+	sink.goose.Store(true)
+	if _, err := sink.HandleExtensionMethod(t.Context(), "_goose/unstable/session/update", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(events.methods, []string{"_goose/unstable/session/update"}) || events.generation != 4 {
+		t.Fatalf("recognized Goose notification was not projected: %#v", events.methods)
+	}
 }
 
 func TestGooseClientFramesACPAndOrdersNotifications(t *testing.T) {
@@ -87,7 +106,7 @@ func TestGooseClientFramesACPAndOrdersNotifications(t *testing.T) {
 					serverErrors <- errUnsupportedACPClientMethod
 					return
 				}
-				if err := writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}}); err != nil {
+				if err := writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": testGooseInitializeResponse()}); err != nil {
 					serverErrors <- err
 					return
 				}
@@ -110,7 +129,7 @@ func TestGooseClientFramesACPAndOrdersNotifications(t *testing.T) {
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	result, err := client.Call(ctx, "_goose/unstable/providers/list", map[string]any{})
+	result, err := client.CallGoose(ctx, "_goose/unstable/providers/list", map[string]any{})
 	if err != nil || string(result) != `{"providers":[]}` {
 		t.Fatalf("result %s, err %v", result, err)
 	}
@@ -253,7 +272,7 @@ func TestGooseClientFailedSetupCanRetry(t *testing.T) {
 			}
 			if result := takeGooseReady(t, waiting); result.err == nil {
 				t.Fatal("failed setup reported ready")
-			} else if failure == "unsupported-version" && !strings.Contains(result.err.Error(), "unsupported Goose ACP protocol version") {
+			} else if failure == "unsupported-version" && !strings.Contains(result.err.Error(), "unsupported ACP protocol version") {
 				t.Fatalf("unsupported version error: %v", result.err)
 			} else if failure == "timeout" && !errors.Is(result.err, context.DeadlineExceeded) {
 				t.Fatalf("setup deadline: %v", result.err)
@@ -305,7 +324,14 @@ type gooseSetupRequest struct {
 
 func (r gooseSetupRequest) respond(t *testing.T, version acp.ProtocolVersion) {
 	t.Helper()
-	if err := writeTestRPC(r.connection, map[string]any{"jsonrpc": "2.0", "id": r.id, "result": map[string]any{"protocolVersion": version, "agentCapabilities": map[string]any{}, "authMethods": []any{}}}); err != nil {
+	result := testGooseInitializeResponse()
+	result["protocolVersion"] = version
+	r.respondResult(t, result)
+}
+
+func (r gooseSetupRequest) respondResult(t *testing.T, result map[string]any) {
+	t.Helper()
+	if err := writeTestRPC(r.connection, map[string]any{"jsonrpc": "2.0", "id": r.id, "result": result}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -373,4 +399,192 @@ func writeTestRPC(connection *websocket.Conn, value any) error {
 		return err
 	}
 	return connection.Write(context.Background(), websocket.MessageText, payload)
+}
+
+func TestAgentProfileUsesAdvertisedCapabilitiesAndExactGooseMarker(t *testing.T) {
+	decode := func(value map[string]any) acp.InitializeResponse {
+		t.Helper()
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response acp.InitializeResponse
+		if err := json.Unmarshal(encoded, &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	goose := testGooseInitializeResponse()
+	profile := agentProfile(decode(goose))
+	if !profile.Goose || !profile.Compatible || len(profile.MissingRequired) != 0 {
+		t.Fatalf("recognized Goose profile: %#v", profile)
+	}
+	if cloneAgentProfile(profile).MissingRequired == nil {
+		t.Fatal("compatible profile encoded missingRequired as null")
+	}
+	if !profile.Operations.DeleteSession || !profile.Operations.ForkSession || !profile.Operations.PromptImage || !profile.Operations.HTTPMCP || !profile.Operations.Steer || !profile.Operations.RenameSession || !profile.Operations.ArchiveSession || !profile.Operations.Administration {
+		t.Fatalf("recognized Goose operations: %#v", profile.Operations)
+	}
+
+	generic := testGooseInitializeResponse()
+	generic["agentInfo"] = map[string]any{"name": " Goose\n\u202e", "version": strings.Repeat("v", maxAgentVersionRunes+10) + "\x00"}
+	capabilities := generic["agentCapabilities"].(map[string]any)
+	delete(capabilities, "_meta")
+	capabilities["sessionCapabilities"].(map[string]any)["fork"] = map[string]any{}
+	profile = agentProfile(decode(generic))
+	if profile.Goose || profile.Name != "Goose" || len([]rune(profile.Version)) != maxAgentVersionRunes {
+		t.Fatalf("generic identity recognition/sanitization: %#v", profile)
+	}
+	if !profile.Operations.ForkSession || profile.Operations.Steer || profile.Operations.RenameSession || profile.Operations.ArchiveSession || profile.Operations.Administration {
+		t.Fatalf("generic operations: %#v", profile.Operations)
+	}
+
+	missing := map[string]any{
+		"protocolVersion": 1,
+		"agentInfo":       map[string]any{"name": "agent", "version": "1"},
+		"agentCapabilities": map[string]any{
+			"sessionCapabilities": map[string]any{},
+		},
+		"authMethods": []any{},
+	}
+	profile = agentProfile(decode(missing))
+	if profile.Compatible || !slices.Equal(profile.MissingRequired, []string{"session/load", "session/list"}) {
+		t.Fatalf("missing required capabilities: %#v", profile)
+	}
+}
+
+func TestGooseClientPublishesOnlySuccessfulImmutableProfiles(t *testing.T) {
+	client, requests := newGooseSetupFixture(t, false)
+	profiles := make(chan AgentProfile, 2)
+	client.profileChanged = func(profile AgentProfile) { profiles <- profile }
+
+	type result struct {
+		generation uint64
+		profile    AgentProfile
+		err        error
+	}
+	ready := make(chan result, 1)
+	go func() {
+		generation, profile, err := client.Profile(t.Context())
+		ready <- result{generation: generation, profile: profile, err: err}
+	}()
+	pending := takeGooseSetup(t, requests)
+	incompatible := map[string]any{
+		"protocolVersion": 1,
+		"agentInfo":       map[string]any{"name": "generic", "version": "1.0.0"},
+		"agentCapabilities": map[string]any{
+			"sessionCapabilities": map[string]any{},
+		},
+		"authMethods": []any{},
+	}
+	pending.respondResult(t, incompatible)
+	first := <-ready
+	if first.err != nil || first.generation != 1 || first.profile.Name != "generic" {
+		t.Fatalf("profile result: %#v", first)
+	}
+	var published AgentProfile
+	select {
+	case published = <-profiles:
+	case <-time.After(time.Second):
+		t.Fatal("successful profile was not published")
+	}
+	first.profile.MissingRequired[0] = "mutated-return"
+	published.MissingRequired[0] = "mutated-event"
+	_, stored, err := client.Profile(t.Context())
+	if err != nil || !slices.Equal(stored.MissingRequired, []string{"session/load", "session/list"}) {
+		t.Fatalf("connection profile shared mutable storage: %#v, %v", stored, err)
+	}
+
+	client.Reset()
+	failed := startGooseReady(client, t.Context())
+	failedSetup := takeGooseSetup(t, requests)
+	failedResult := testGooseInitializeResponse()
+	failedResult["protocolVersion"] = acp.ProtocolVersionNumber + 1
+	failedSetup.respondResult(t, failedResult)
+	if result := takeGooseReady(t, failed); result.err == nil {
+		t.Fatal("failed initialize reported ready")
+	}
+	select {
+	case profile := <-profiles:
+		t.Fatalf("failed initialize published a profile: %#v", profile)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAgentProfilePublicationDoesNotRegressToAnOlderGeneration(t *testing.T) {
+	client := &GooseClient{}
+	var published []string
+	publish := func(profile AgentProfile) { published = append(published, profile.Name) }
+	client.publishProfile(2, publish, AgentProfile{Name: "new"})
+	client.publishProfile(1, publish, AgentProfile{Name: "old"})
+	if !slices.Equal(published, []string{"new"}) {
+		t.Fatalf("profile publication regressed: %#v", published)
+	}
+}
+
+func TestGooseClientRejectsUnadvertisedStandardAndGooseOperationsBeforeWire(t *testing.T) {
+	methods := make(chan string, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		for {
+			_, payload, err := connection.Read(t.Context())
+			if err != nil {
+				return
+			}
+			var rpc struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if json.Unmarshal(payload, &rpc) != nil {
+				return
+			}
+			if rpc.Method == "initialize" {
+				result := map[string]any{
+					"protocolVersion": 1,
+					"agentInfo":       map[string]any{"name": "generic", "version": "1"},
+					"agentCapabilities": map[string]any{
+						"sessionCapabilities": map[string]any{},
+					},
+					"authMethods": []any{},
+				}
+				_ = writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result})
+				continue
+			}
+			methods <- rpc.Method
+			_ = writeTestRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "error": map[string]any{"code": -32601, "message": "unexpected wire request"}})
+		}
+	}))
+	defer server.Close()
+	client := NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "", "test", nil)
+	defer client.Close()
+
+	assertUnsupported := func(operation string, err error) {
+		t.Helper()
+		var coded *codedError
+		if !errors.As(err, &coded) || coded.code != "UNSUPPORTED_AGENT_CAPABILITY" {
+			t.Fatalf("%s error: %v", operation, err)
+		}
+	}
+	_, err := client.ListSessions(t.Context(), acp.ListSessionsRequest{})
+	assertUnsupported("list", err)
+	_, err = client.LoadSession(t.Context(), acp.LoadSessionRequest{SessionId: "session", Cwd: "/tmp", McpServers: []acp.McpServer{}})
+	assertUnsupported("load", err)
+	err = client.DeleteSession(t.Context(), "session")
+	assertUnsupported("delete", err)
+	_, err = client.ForkSession(t.Context(), acp.UnstableForkSessionRequest{SessionId: "session", Cwd: "/tmp"})
+	assertUnsupported("fork", err)
+	_, err = client.Prompt(t.Context(), acp.PromptRequest{SessionId: "session", Prompt: []acp.ContentBlock{{Image: &acp.ContentBlockImage{Type: "image", Data: "AA==", MimeType: "image/png"}}}})
+	assertUnsupported("image", err)
+	_, err = client.CallGoose(t.Context(), "_goose/unstable/example", map[string]any{})
+	assertUnsupported("Goose-specific", err)
+	select {
+	case method := <-methods:
+		t.Fatalf("unadvertised operation reached the agent: %s", method)
+	default:
+	}
 }

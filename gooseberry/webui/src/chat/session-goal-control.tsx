@@ -10,9 +10,13 @@ import { errorText, getTransport } from "../connection";
 export function SessionGoalControl({
 	projectAreaId,
 	sessionId,
+	agentCanAccessGoal = true,
+	agentName,
 }: {
 	projectAreaId: string;
 	sessionId: string;
+	agentCanAccessGoal?: boolean;
+	agentName?: string | undefined;
 }) {
 	const runtime = useAppStore((state) => state.sessions[sessionId]);
 	const goalState = runtime?.goal ?? {
@@ -191,7 +195,9 @@ export function SessionGoalControl({
 				<div className="mt-md flex flex-col gap-xs border-border-default border-t pt-md">
 					<div className="flex items-center justify-between gap-sm">
 						<div className="tr-text-ui text-text-default">Agent tasks</div>
-						<span className="text-text-muted tr-text-metadata">Managed by the agent</span>
+						<span className="text-text-muted tr-text-metadata">
+							{agentCanAccessGoal ? "Managed by the agent" : "Agent access unavailable"}
+						</span>
 					</div>
 					{goalState.tasks.map((task) => (
 						<div key={task.id} className="flex items-center gap-xs">
@@ -212,7 +218,11 @@ export function SessionGoalControl({
 						</div>
 					))}
 					{goalState.tasks.length === 0 ? (
-						<div className="text-text-muted tr-text-metadata">No tasks reported.</div>
+						<div className="text-text-muted tr-text-metadata">
+							{agentCanAccessGoal
+								? "No tasks reported."
+								: `${agentName || "The connected agent"} cannot access or update this goal.`}
+						</div>
 					) : null}
 				</div>
 			</PopoverContent>

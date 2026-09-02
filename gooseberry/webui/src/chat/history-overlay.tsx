@@ -65,19 +65,26 @@ function DeleteChatButton({
 	sessionId,
 	isSelected,
 	onDeleteChat,
+	deleteUnavailableReason,
 }: {
 	projectAreaId: string | undefined;
 	sessionId: string;
 	isSelected: boolean;
 	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
+	deleteUnavailableReason?: string | undefined;
 }) {
 	if (!projectAreaId) return null;
 	return (
 		<button
 			type="button"
 			data-testid="history-delete-chat"
-			aria-label="Move chat to trash"
-			title="Move chat to trash"
+			aria-label={
+				deleteUnavailableReason
+					? `Move chat to trash: ${deleteUnavailableReason}`
+					: "Move chat to trash"
+			}
+			title={deleteUnavailableReason ?? "Move chat to trash"}
+			disabled={!!deleteUnavailableReason}
 			onClick={(event) => {
 				event.stopPropagation();
 				onDeleteChat(projectAreaId, sessionId);
@@ -100,6 +107,7 @@ function PromptRow({
 	onPick,
 	onOpenMessage,
 	onDeleteChat,
+	deleteUnavailableReason,
 }: {
 	hit: PromptHit;
 	query: string;
@@ -109,6 +117,7 @@ function PromptRow({
 	onPick: () => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
 	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
+	deleteUnavailableReason?: string | undefined;
 }) {
 	const firstLine = hit.text.split("\n")[0] ?? hit.text;
 	const showChip = (scope.kind === "project" || scope.kind === "all") && !!hit.projectId;
@@ -173,6 +182,7 @@ function PromptRow({
 				sessionId={hit.sessionId}
 				isSelected={isSelected}
 				onDeleteChat={onDeleteChat}
+				deleteUnavailableReason={deleteUnavailableReason}
 			/>
 		</div>
 	);
@@ -184,12 +194,14 @@ function MessageRow({
 	isSelected,
 	onPick,
 	onDeleteChat,
+	deleteUnavailableReason,
 }: {
 	hit: MessageHit;
 	query: string;
 	isSelected: boolean;
 	onPick: () => void;
 	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
+	deleteUnavailableReason?: string | undefined;
 }) {
 	const unmapped = !hit.projectId;
 	return (
@@ -228,6 +240,7 @@ function MessageRow({
 				sessionId={hit.sessionId}
 				isSelected={isSelected}
 				onDeleteChat={onDeleteChat}
+				deleteUnavailableReason={deleteUnavailableReason}
 			/>
 		</div>
 	);
@@ -294,6 +307,7 @@ export interface HistoryOverlayProps {
 	onInsertAndSend: (hit: PromptHit) => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
 	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
+	deleteUnavailableReason?: string | undefined;
 	onSetScope: (kind: HistoryScope["kind"]) => void;
 }
 
@@ -308,6 +322,7 @@ export function HistoryOverlay({
 	onInsertAndSend,
 	onOpenMessage,
 	onDeleteChat,
+	deleteUnavailableReason,
 	onSetScope,
 }: HistoryOverlayProps) {
 	const { open, stage, query, scope, result, selected, error } = state;
@@ -433,6 +448,7 @@ export function HistoryOverlay({
 									onPick={() => onInsert(hit)}
 									onOpenMessage={onOpenMessage}
 									onDeleteChat={onDeleteChat}
+									deleteUnavailableReason={deleteUnavailableReason}
 								/>
 							))}
 						</div>
@@ -456,6 +472,7 @@ export function HistoryOverlay({
 										if (target) onOpenMessage(target);
 									}}
 									onDeleteChat={onDeleteChat}
+									deleteUnavailableReason={deleteUnavailableReason}
 								/>
 							))}
 						</div>
@@ -513,6 +530,11 @@ export function HistoryOverlay({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
+			{deleteUnavailableReason ? (
+				<p className="border-border-default border-b px-sm py-xs text-text-muted tr-text-metadata">
+					{deleteUnavailableReason}
+				</p>
+			) : null}
 			{stage === "zoomed" ? (
 				<div className="flex flex-col overflow-hidden md:flex-row">
 					<div

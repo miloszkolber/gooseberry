@@ -37,6 +37,10 @@ import type { ChatAttachment } from "./types";
 
 export type SubmitBehavior = "send" | "steer" | "queue" | "interrupt";
 
+export function streamingSubmitBehavior(supportsSteer: boolean): "steer" | "queue" {
+	return supportsSteer ? "steer" : "queue";
+}
+
 const STREAMING_SEND_MODES = [
 	{
 		behavior: "queue" as const,
@@ -60,6 +64,12 @@ const STREAMING_SEND_MODES = [
 		testid: "send-mode-interrupt",
 	},
 ];
+
+export function streamingSendModes(supportsSteer: boolean) {
+	return supportsSteer
+		? STREAMING_SEND_MODES
+		: STREAMING_SEND_MODES.filter((mode) => mode.behavior !== "steer");
+}
 
 export type MentionCandidate =
 	| { path: string; name: string; kind: "file" | "dir" }
@@ -173,6 +183,8 @@ interface ComposerProps {
 	) => boolean | undefined;
 	onAbort: () => void;
 	onHistoryOpen?: () => void;
+	supportsImages?: boolean | null;
+	supportsSteer?: boolean;
 }
 
 export interface ComposerHandle {
@@ -194,6 +206,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		onSubmit,
 		onAbort,
 		onHistoryOpen,
+		supportsImages = true,
+		supportsSteer = true,
 	},
 	handleRef,
 ) {
@@ -201,6 +215,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const [caret, setCaret] = useState(value.length);
 	const [images, setImages] = useState<PendingImage[]>([]);
 	const imagesRef = useRef<PendingImage[]>([]);
+	const supportsImagesRef = useRef(supportsImages);
+	supportsImagesRef.current = supportsImages;
+	const imagePromptsEnabled = supportsImages !== false;
 	const commitImages = (next: PendingImage[]) => {
 		imagesRef.current = next;
 		setImages(next);
@@ -224,6 +241,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	useEffect(() => {
 		setMentionActiveIndex((index) => clampedMentionActiveIndex(index, mentionCandidates.length));
 	}, [mentionCandidates.length]);
+	useEffect(() => {
+		if (supportsImages !== false) return;
+		const removedImages = imagesRef.current.length > 0 || pendingImages > 0;
+		imagesRef.current = [];
+		setImages([]);
+		if (removedImages) {
+			setAttachErrors([
+				{
+					id: crypto.randomUUID(),
+					name: "images",
+					reason: "connected agent does not support image prompts",
+				},
+			]);
+		}
+	}, [supportsImages, pendingImages]);
 
 	const mentionOpen = !mentionDismissed && mentionQuery !== null && mentionCandidates.length > 0;
 	const visibleMentionActiveIndex = clampedMentionActiveIndex(
@@ -261,14 +293,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		[onChange, focusSelection],
 	);
 
-	const canSubmit = (raw: string) => pendingImages === 0 && (!!raw.trim() || images.length > 0);
+	const canSubmit = (raw: string) =>
+		pendingImages === 0 && (!!raw.trim() || (imagePromptsEnabled && images.length > 0));
 
 	const submitText = (raw: string, behavior: SubmitBehavior) => {
 		if (!canSubmit(raw)) return;
 		const text = raw.trim();
 		const accepted = onSubmit(
 			text,
-			images.map(({ name, content }) => ({ name, content })),
+			imagePromptsEnabled ? images.map(({ name, content }) => ({ name, content })) : [],
 			behavior,
 		);
 		if (accepted === false) return;
@@ -319,6 +352,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	}));
 
 	const addFiles = async (files: File[]) => {
+		if (!imagePromptsEnabled) return;
 		const picked = files.filter((f) => f.type.startsWith("image/"));
 		if (picked.length === 0) return;
 		setPendingImages((n) => n + picked.length);
@@ -345,8 +379,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					...result.value,
 				});
 			});
-			if (additions.length > 0) commitImages([...imagesRef.current, ...additions]);
-			if (errors.length > 0) setAttachErrors((prev) => [...prev, ...errors]);
+			if (supportsImagesRef.current !== false && additions.length > 0) {
+				commitImages([...imagesRef.current, ...additions]);
+			}
+			if (supportsImagesRef.current !== false && errors.length > 0) {
+				setAttachErrors((prev) => [...prev, ...errors]);
+			}
 		} finally {
 			setPendingImages((n) => n - picked.length);
 		}
@@ -413,28 +451,51 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		}
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
-			const behavior: SubmitBehavior = isStreaming ? "steer" : "send";
+			const behavior: SubmitBehavior = isStreaming
+				? streamingSubmitBehavior(supportsSteer)
+				: "send";
 			submit(behavior);
 		}
 	};
 
 	const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
 		const files = [...e.clipboardData.files];
-		if (files.length > 0) {
+		if (files.length > 0 && imagePromptsEnabled) {
 			e.preventDefault();
 			void addFiles(files);
+		} else if (files.length > 0) {
+			setAttachErrors([
+				{
+					id: crypto.randomUUID(),
+					name: "clipboard image",
+					reason: "connected agent does not support image prompts",
+				},
+			]);
 		}
 	};
 
 	const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
 		if (e.dataTransfer.files.length > 0) {
 			e.preventDefault();
-			void addFiles([...e.dataTransfer.files]);
+			if (imagePromptsEnabled) {
+				void addFiles([...e.dataTransfer.files]);
+			} else {
+				setAttachErrors([
+					{
+						id: crypto.randomUUID(),
+						name: "dropped image",
+						reason: "connected agent does not support image prompts",
+					},
+				]);
+			}
 		}
 	};
 
 	return (
-		<div className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-project-bg">
+		<div
+			className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-project-bg"
+			data-image-prompts={supportsImages === null ? "unknown" : supportsImages}
+		>
 			{mentionOpen ? (
 				<div
 					id={mentionListboxId}
@@ -484,7 +545,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				/>
 			) : null}
 
-			{images.length > 0 || pendingImages > 0 || attachErrors.length > 0 ? (
+			{(imagePromptsEnabled && (images.length > 0 || pendingImages > 0)) ||
+			attachErrors.length > 0 ? (
 				<div className="flex flex-wrap gap-xs px-sm pt-sm" data-testid="composer-images">
 					{attachErrors.map((err) => (
 						<FileChip
@@ -571,7 +633,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 						rows={4}
 						placeholder={
 							isStreaming
-								? "Enter steers at the next step · Cmd/Ctrl+Enter queues for when it finishes"
+								? supportsSteer
+									? "Enter steers at the next step · Cmd/Ctrl+Enter queues for when it finishes"
+									: "Enter queues a follow-up for when the agent finishes"
 								: "Message the agent…  (@ files · / commands · Enter to send)"
 						}
 						className="relative min-h-[108px] w-full resize-none rounded-[var(--radius-sm)] bg-transparent px-md py-sm tr-text-ui text-text-default outline-none placeholder:text-text-muted"
@@ -614,7 +678,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 								</PopoverTrigger>
 								<PopoverContent side="top" align="end" className="w-[320px] p-xs">
 									<div className="flex flex-col gap-2xs">
-										{STREAMING_SEND_MODES.map((mode) => (
+										{streamingSendModes(supportsSteer).map((mode) => (
 											<button
 												key={mode.behavior}
 												type="button"
@@ -642,8 +706,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 						<button
 							type="button"
 							data-testid="chat-send"
-							aria-label={isStreaming ? "Steer" : "Send"}
-							onClick={() => submit(isStreaming ? "steer" : "send")}
+							aria-label={isStreaming ? (supportsSteer ? "Steer" : "Queue follow-up") : "Send"}
+							onClick={() => submit(isStreaming ? streamingSubmitBehavior(supportsSteer) : "send")}
 							disabled={!canSubmit(value)}
 							className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-control-primary-bg text-control-primary-text hover:bg-control-primary-bg-hovered disabled:pointer-events-none disabled:bg-control-primary-disabled-bg disabled:text-control-primary-disabled-text"
 						>

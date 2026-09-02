@@ -1,4 +1,5 @@
 import type {
+	AgentProfile,
 	AppConfig,
 	LoginPush,
 	PermissionRequest,
@@ -49,7 +50,11 @@ export function initTransport(): WsTransport {
 				Array.isArray(welcome.recentProjects) ? welcome.recentProjects : welcome.projects,
 				welcome.config,
 				Array.isArray(welcome.pendingPermissions) ? welcome.pendingPermissions : [],
+				welcome.agentProfile,
 			);
+	});
+	transport.subscribe(WS_CHANNELS.agentProfileChanged, (data) => {
+		useAppStore.getState().replaceAgentProfile(data as AgentProfile);
 	});
 
 	transport.subscribe(WS_CHANNELS.projectUpdated, (data) => {

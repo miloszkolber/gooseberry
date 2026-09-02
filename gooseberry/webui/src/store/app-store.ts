@@ -1,4 +1,4 @@
-import type { AppConfig, PermissionRequest, Project } from "@gooseberry/contracts";
+import type { AgentProfile, AppConfig, PermissionRequest, Project } from "@gooseberry/contracts";
 import { create } from "zustand";
 import { type ChatState, createChatState } from "@/chat/state";
 import { type ConnectionState, createConnectionState } from "@/connection/state";
@@ -44,6 +44,7 @@ export interface AppState extends WorkspaceState, ChatState, SettingsState, Conn
 		recentProjects: Project[],
 		config?: AppConfig,
 		pendingPermissions?: PermissionRequest[],
+		agentProfile?: AgentProfile,
 	) => void;
 	pushToast: (toast: Omit<Toast, "id">) => string;
 	dismissToast: (id: string) => void;
@@ -76,12 +77,14 @@ export const useAppStore = create<AppState>((...args) => {
 			recentProjects,
 			config,
 			pendingPermissions = [],
+			agentProfile,
 		) =>
 			set((state) => ({
 				...projectSnapshot(state, projects, recentProjects),
 				protocolVersion,
 				...(config ? { config } : {}),
 				pendingPermissions: pendingPermissionSnapshot(pendingPermissions),
+				agentProfile: agentProfile ?? null,
 				welcomeGeneration: state.welcomeGeneration + 1,
 			})),
 		pushToast: (toast) => {

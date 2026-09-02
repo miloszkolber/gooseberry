@@ -19,7 +19,7 @@ func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
 	apply := func(id string, update map[string]any) any {
 		t.Helper()
 		update["toolCallId"] = id
-		return applySessionUpdate(entry, "tool_call_update", update, false)[0]["tool"]
+		return applySessionUpdate(entry, "tool_call_update", update, gooseACPUpdate)[0]["tool"]
 	}
 	apply("image", map[string]any{"status": "in_progress", "content": image})
 	apply("other", map[string]any{"status": "in_progress", "rawOutput": "previous"})
@@ -45,18 +45,22 @@ func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
 	entry.replay.attached = 2
 	manager := &SessionManager{sessions: map[string]*sessionEntry{"chat": entry}}
 	start := map[string]any{"sessionId": "chat", "update": summonToolStart("replayed", "delegate")}
-	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(2)), start, false); err != nil {
+	gooseContext := func(generation uint64) context.Context {
+		ctx := context.WithValue(context.Background(), connectionGenerationKey{}, generation)
+		return context.WithValue(ctx, recognizedGooseConnectionKey{}, true)
+	}
+	if err := manager.applyUpdate(gooseContext(2), start, false); err != nil {
 		t.Fatal(err)
 	}
 	fresh := subagentToolUpdate("replayed", "child-fresh", "developer__read")
 	fresh["rawOutput"] = "new output"
 	update := map[string]any{"sessionId": "chat", "update": fresh}
-	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(2)), update, false); err != nil {
+	if err := manager.applyUpdate(gooseContext(2), update, false); err != nil {
 		t.Fatal(err)
 	}
 	stale := subagentToolUpdate("replayed", "child-stale", "developer__write")
 	stale["rawOutput"] = "stale output"
-	if err := manager.applyUpdate(context.WithValue(context.Background(), connectionGenerationKey{}, uint64(1)), map[string]any{"sessionId": "chat", "update": stale}, false); err != nil {
+	if err := manager.applyUpdate(gooseContext(1), map[string]any{"sessionId": "chat", "update": stale}, false); err != nil {
 		t.Fatal(err)
 	}
 	projected := entry.replay.pendingToolOutputs["replayed"]
@@ -67,11 +71,11 @@ func TestToolOutputSurvivesPartialUpdatesAndInterleavedReplay(t *testing.T) {
 
 func TestPendingToolPreviewsAreSafeStableAndDetached(t *testing.T) {
 	entry := newSessionEntry("chat", "project", "/project", "", "")
-	applySessionUpdate(entry, "tool_call", summonToolStart("z-call", "delegate"), false)
+	applySessionUpdate(entry, "tool_call", summonToolStart("z-call", "delegate"), gooseACPUpdate)
 	update := subagentToolUpdate("z-call", "child", "developer__read")
 	update["rawOutput"] = map[string]any{"nested": []any{map[string]any{"value": "original"}}}
-	applySessionUpdate(entry, "tool_call_update", update, false)
-	applySessionUpdate(entry, "tool_call", map[string]any{"toolCallId": "a-call", "title": "ordinary"}, false)
+	applySessionUpdate(entry, "tool_call_update", update, gooseACPUpdate)
+	applySessionUpdate(entry, "tool_call", map[string]any{"toolCallId": "a-call", "title": "ordinary"}, gooseACPUpdate)
 	entry.appAttachments = map[string]appAttachmentState{
 		"z-call": {attachment: AppAttachment{ToolName: "apps__show", ExtensionName: "apps", ResourceURI: "ui://apps/view"}},
 		"orphan": {attachment: AppAttachment{ToolName: "private", ExtensionName: "private", ResourceURI: "ui://private/view"}},
@@ -101,8 +105,8 @@ func TestPendingToolPreviewsAreSafeStableAndDetached(t *testing.T) {
 	}
 
 	reused := newSessionEntry("reused", "project", "/project", "", "")
-	applySessionUpdate(reused, "tool_call_update", map[string]any{"toolCallId": "same", "status": "completed", "rawOutput": "old"}, false)
-	applySessionUpdate(reused, "tool_call", map[string]any{"toolCallId": "same", "title": "new"}, false)
+	applySessionUpdate(reused, "tool_call_update", map[string]any{"toolCallId": "same", "status": "completed", "rawOutput": "old"}, gooseACPUpdate)
+	applySessionUpdate(reused, "tool_call", map[string]any{"toolCallId": "same", "title": "new"}, gooseACPUpdate)
 	preview := mapValue(pendingToolPreviewsLocked(reused)[0])
 	if preview["toolCallId"] != "same" || preview["output"] != nil {
 		t.Fatalf("reused active tool exposed its older result: %#v", preview)
@@ -126,7 +130,7 @@ func TestAvailableCommandsUpdateProjectsOneBoundedSafeCatalog(t *testing.T) {
 		raw = append(raw, map[string]any{"name": fmt.Sprintf("command-%03d", index)})
 	}
 	entry := newSessionEntry("chat", "project", "/project", "", "")
-	events := applySessionUpdate(entry, "available_commands_update", map[string]any{"availableCommands": raw}, false)
+	events := applySessionUpdate(entry, "available_commands_update", map[string]any{"availableCommands": raw}, gooseACPUpdate)
 	if len(events) != 1 || events[0]["type"] != "commands" {
 		t.Fatalf("command event: %#v", events)
 	}
@@ -164,6 +168,66 @@ func TestAvailableCommandsUpdateProjectsOneBoundedSafeCatalog(t *testing.T) {
 	projectedRich := projectSlashCommands(rich)
 	if len(projectedRich) != maxSlashCommands || projectedRich[len(projectedRich)-1]["description"] != nil {
 		t.Fatalf("optional metadata displaced command names: count=%d last=%#v", len(projectedRich), projectedRich[len(projectedRich)-1])
+	}
+}
+
+func TestGenericACPUpdatesIgnoreGooseMetadata(t *testing.T) {
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	entry.runID = "old-goose-run"
+	start := summonToolStart("call", "delegate")
+	start["title"] = "safe title"
+	events := applySessionUpdate(entry, "tool_call", start, agentACPUpdate)
+	if len(events) != 1 || events[0]["toolName"] != "safe title" || entry.pendingToolOutputs["call"].SubagentActivityTool {
+		t.Fatalf("generic tool trusted Goose identity metadata: %#v", events)
+	}
+	update := subagentToolUpdate("call", "child", "developer__read")
+	update["status"] = "completed"
+	update["rawOutput"] = "safe output"
+	meta := mapValue(update["_meta"])
+	meta["goose"] = map[string]any{"mcpApp": map[string]any{
+		"toolName": "apps__show", "toolNameIsActual": true, "extensionName": "apps", "resourceUri": "ui://apps/view",
+	}}
+	events = applySessionUpdate(entry, "tool_call_update", update, agentACPUpdate)
+	if len(events) != 1 || events[0]["app"] != nil || events[0]["subagentActivity"] != nil || len(entry.appAttachments) != 0 {
+		t.Fatalf("generic tool update trusted Goose metadata: %#v", events)
+	}
+	details := mapValue(mapValue(entry.messages[len(entry.messages)-1])["details"])
+	if _, exists := mapValue(details["_meta"])["goose"]; exists {
+		t.Fatalf("Goose metadata escaped through generic transcript details: %#v", details)
+	}
+	applySessionUpdate(entry, "session_info_update", map[string]any{
+		"title": "Generic",
+		"_meta": map[string]any{"goose": map[string]any{"activeRunId": "forged"}},
+	}, agentACPUpdate)
+	if entry.runID != "" {
+		t.Fatalf("generic session info retained a Goose run id: %q", entry.runID)
+	}
+	commands := applySessionUpdate(entry, "available_commands_update", map[string]any{
+		"availableCommands": []any{map[string]any{"name": "review"}},
+	}, agentACPUpdate)[0]["commands"].([]map[string]any)
+	if len(commands) != 1 || commands[0]["source"] != "agent" || mapValue(commands[0]["sourceInfo"])["source"] != "Connected agent" {
+		t.Fatalf("standard command was attributed to Goose: %#v", commands)
+	}
+}
+
+func TestStandardACPUsageUsesContextShapeWithoutInventingTokenTotals(t *testing.T) {
+	entry := newSessionEntry("chat", "project", "/project", "", "")
+	events := applySessionUpdate(entry, "usage_update", map[string]any{
+		"size": float64(100),
+		"used": float64(40),
+		"cost": map[string]any{"amount": 1.25, "currency": "EUR"},
+	}, agentACPUpdate)
+	if len(events) != 2 || events[0]["type"] != "usage" || events[1]["type"] != "context" {
+		t.Fatalf("standard usage events: %#v", events)
+	}
+	if entry.stats.ContextUsage["contextWindow"] != int64(100) || entry.stats.ContextUsage["tokens"] != int64(40) || entry.stats.ContextUsage["percent"] != float64(40) {
+		t.Fatalf("standard context usage: %#v", entry.stats.ContextUsage)
+	}
+	if entry.stats.Tokens != (SessionTokens{}) || entry.stats.Reported["input"] || entry.stats.Reported["output"] || entry.stats.Reported["total"] {
+		t.Fatalf("standard usage invented token totals: %#v", entry.stats)
+	}
+	if entry.stats.Cost != 1.25 || entry.stats.CostCurrency != "EUR" || !entry.stats.Reported["cost"] {
+		t.Fatalf("standard cost projection: %#v", entry.stats)
 	}
 }
 
@@ -236,8 +300,8 @@ func TestSubagentActivityRequiresTrustedSummonAndStaysBounded(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			entry := newSessionEntry("chat", "project", "/project", "", "")
-			applySessionUpdate(entry, "tool_call", test.start, false)
-			events := applySessionUpdate(entry, "tool_call_update", test.update, false)
+			applySessionUpdate(entry, "tool_call", test.start, gooseACPUpdate)
+			events := applySessionUpdate(entry, "tool_call_update", test.update, gooseACPUpdate)
 			if len(events) != 1 {
 				t.Fatalf("tool update emitted %d events", len(events))
 			}
@@ -260,10 +324,10 @@ func TestSubagentActivityRequiresTrustedSummonAndStaysBounded(t *testing.T) {
 	}
 
 	entry := newSessionEntry("chat", "project", "/project", "", "")
-	applySessionUpdate(entry, "tool_call", summonToolStart("bounded", "delegate"), false)
+	applySessionUpdate(entry, "tool_call", summonToolStart("bounded", "delegate"), gooseACPUpdate)
 	var latest map[string]any
 	for index := 0; index < maxSubagentActivityEvents+2; index++ {
-		latest = applySessionUpdate(entry, "tool_call_update", subagentToolUpdate("bounded", fmt.Sprintf("child-%02d", index), fmt.Sprintf("tool-%02d", index)), false)[0]
+		latest = applySessionUpdate(entry, "tool_call_update", subagentToolUpdate("bounded", fmt.Sprintf("child-%02d", index), fmt.Sprintf("tool-%02d", index)), gooseACPUpdate)[0]
 	}
 	activity := mapValue(latest["subagentActivity"])
 	activityEvents := arrayValue(activity["events"])
@@ -271,7 +335,7 @@ func TestSubagentActivityRequiresTrustedSummonAndStaysBounded(t *testing.T) {
 		t.Fatalf("activity did not retain the latest bounded window: %#v", activity)
 	}
 
-	finished := applySessionUpdate(entry, "tool_call_update", map[string]any{"toolCallId": "bounded", "status": "completed"}, false)[0]
+	finished := applySessionUpdate(entry, "tool_call_update", map[string]any{"toolCallId": "bounded", "status": "completed"}, gooseACPUpdate)[0]
 	finalActivity := mapValue(finished["subagentActivity"])
 	historyActivity := mapValue(mapValue(entry.messages[len(entry.messages)-1])["subagentActivity"])
 	if !reflect.DeepEqual(finalActivity, historyActivity) {
@@ -285,8 +349,8 @@ func TestSubagentActivityRequiresTrustedSummonAndStaysBounded(t *testing.T) {
 		t.Fatal("live event and retained transcript shared mutable activity")
 	}
 
-	applySessionUpdate(entry, "tool_call", summonToolStart("bounded", "load"), false)
-	reused := applySessionUpdate(entry, "tool_call_update", subagentToolUpdate("bounded", "child-new", "developer__read"), false)[0]
+	applySessionUpdate(entry, "tool_call", summonToolStart("bounded", "load"), gooseACPUpdate)
+	reused := applySessionUpdate(entry, "tool_call_update", subagentToolUpdate("bounded", "child-new", "developer__read"), gooseACPUpdate)[0]
 	reusedActivity := mapValue(reused["subagentActivity"])
 	if len(arrayValue(reusedActivity["events"])) != 1 || reusedActivity["truncated"] != nil {
 		t.Fatalf("reused tool id retained old activity: %#v", reusedActivity)
@@ -329,7 +393,7 @@ func TestMCPAppProjectionRequiresTrustedGooseAttachment(t *testing.T) {
 			"resourceUri":      "ui://apps/fixture",
 		}}},
 	}
-	event := applySessionUpdate(entry, "tool_call_update", base, false)[0]
+	event := applySessionUpdate(entry, "tool_call_update", base, gooseACPUpdate)[0]
 	if event["app"] != nil || len(entry.appAttachments) != 0 {
 		t.Fatal("extension-shaped metadata was treated as a trusted App attachment")
 	}
@@ -341,7 +405,7 @@ func TestMCPAppProjectionRequiresTrustedGooseAttachment(t *testing.T) {
 		"mimeType": "text/html;profile=mcp-app",
 		"text":     "<main>Fixture</main>",
 	}}}
-	event = applySessionUpdate(entry, "tool_call_update", base, false)[0]
+	event = applySessionUpdate(entry, "tool_call_update", base, gooseACPUpdate)[0]
 	projected := mapValue(event["app"])
 	if projected["extensionName"] != "apps" || projected["resourceUri"] != "ui://apps/fixture" {
 		t.Fatalf("trusted attachment projection: %#v", projected)
@@ -360,7 +424,7 @@ func TestMCPAppProjectionRequiresTrustedGooseAttachment(t *testing.T) {
 		"sessionUpdate": "tool_call_update",
 		"toolCallId":    "app-call",
 		"status":        "completed",
-	}, false)[0]
+	}, gooseACPUpdate)[0]
 	finalApp := mapValue(finished["app"])
 	messageApp := mapValue(mapValue(entry.messages[len(entry.messages)-1])["app"])
 	if finalApp["toolName"] != "apps__create_app" || !reflect.DeepEqual(finalApp, messageApp) {
@@ -369,13 +433,13 @@ func TestMCPAppProjectionRequiresTrustedGooseAttachment(t *testing.T) {
 	direct := cloneJSON(base).(map[string]any)
 	direct["toolCallId"] = "direct-app"
 	direct["status"] = "completed"
-	applySessionUpdate(entry, "tool_call_update", direct, false)
+	applySessionUpdate(entry, "tool_call_update", direct, gooseACPUpdate)
 	details := mapValue(mapValue(entry.messages[len(entry.messages)-1])["details"])
 	encodedDetails, _ := json.Marshal(details)
 	if strings.Contains(string(encodedDetails), "<main>Fixture</main>") || mapValue(mapValue(details["_meta"])["goose"])["mcpApp"] != nil {
 		t.Fatalf("resolved App resource escaped through raw transcript details: %#v", details)
 	}
-	applySessionUpdate(entry, "tool_call", map[string]any{"toolCallId": "app-call", "title": "replacement"}, false)
+	applySessionUpdate(entry, "tool_call", map[string]any{"toolCallId": "app-call", "title": "replacement"}, gooseACPUpdate)
 	if _, retained := entry.appAttachments["app-call"]; retained {
 		t.Fatal("a reused tool call id retained the previous App authority")
 	}
