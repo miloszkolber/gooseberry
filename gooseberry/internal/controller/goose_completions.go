@@ -26,10 +26,7 @@ func (a *GooseAdmin) completions(ctx context.Context, method string, request map
 		if err != nil {
 			return nil, err
 		}
-		if len(project.Roots) == 0 {
-			return []any{}, nil
-		}
-		cwd, err := a.sessions.projects.AssertRoot(project.ID, project.Roots[0])
+		cwd, err := project.Root()
 		if err != nil {
 			return nil, err
 		}

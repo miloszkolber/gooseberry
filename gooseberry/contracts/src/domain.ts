@@ -215,6 +215,7 @@ export function normalizeProjectIcon(value: unknown): ProjectIcon {
 export interface Project {
 	id: string;
 	name: string;
+	/** Singleton for wire and persisted-state compatibility. */
 	roots: string[];
 	slug: string;
 	lastOpened: number;

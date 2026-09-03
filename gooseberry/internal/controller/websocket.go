@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	BrowserProtocolVersion  = 80
+	BrowserProtocolVersion  = 81
 	maxWSRequestBytes       = 32 * 1024 * 1024
 	maxConcurrentWSRequests = 256
 )

@@ -312,7 +312,7 @@ func measure(t target, root string, data fixtures) (measurement, error) {
 		validate func([]byte) error
 	}{
 		{"png_http", 60, func() ([]byte, error) {
-			return t.http(http.MethodGet, "/files/"+url.PathEscape(project.ID)+"/0/transfer.png", nil)
+			return t.http(http.MethodGet, "/files/"+url.PathEscape(project.ID)+"/transfer.png", nil)
 		}, func(body []byte) error {
 			if !bytes.Equal(body, data.png) {
 				return fmt.Errorf("PNG content mismatch")

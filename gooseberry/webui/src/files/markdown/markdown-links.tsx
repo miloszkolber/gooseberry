@@ -43,14 +43,12 @@ function encodePath(path: string): string {
 export function projectFileUrl(
 	httpBase: string,
 	projectAreaId: string,
-	rootIndex: number,
 	fromPath: string,
 	source: string,
 ): string | undefined {
-	if (!Number.isInteger(rootIndex) || rootIndex < 0) return undefined;
 	const target = resolveRelativePath(fromPath, source);
 	if (!target) return undefined;
-	return `${httpBase}/files/${encodeURIComponent(projectAreaId)}/${rootIndex}/${encodePath(target)}`;
+	return `${httpBase}/files/${encodeURIComponent(projectAreaId)}/${encodePath(target)}`;
 }
 
 interface MdNode {
@@ -91,12 +89,7 @@ function scrollToAnchor(id: string): void {
 		?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-export function documentComponents(ctx: {
-	projectAreaId: string;
-	root: string;
-	rootIndex: number;
-	path: string;
-}): Components {
+export function documentComponents(ctx: { projectAreaId: string; path: string }): Components {
 	function DocumentLink({ href, children }: { href?: string; children?: ReactNode }) {
 		const kind = classifyHref(href);
 		if (kind === "anchor" && href) {
@@ -119,8 +112,7 @@ export function documentComponents(ctx: {
 					onClick={(e) => {
 						e.preventDefault();
 						const target = resolveRelativePath(ctx.path, splitHash(href).path);
-						if (target)
-							void openFileInTab(ctx.projectAreaId, target, "preview", undefined, ctx.root);
+						if (target) void openFileInTab(ctx.projectAreaId, target, "preview");
 					}}
 				>
 					{children}
@@ -137,7 +129,7 @@ export function documentComponents(ctx: {
 	function DocumentImage({ src, alt, title }: { src?: string; alt?: string; title?: string }) {
 		const resolved =
 			classifyHref(src) === "relative" && src
-				? projectFileUrl(getTransport().httpBase(), ctx.projectAreaId, ctx.rootIndex, ctx.path, src)
+				? projectFileUrl(getTransport().httpBase(), ctx.projectAreaId, ctx.path, src)
 				: src;
 		return <img src={resolved} alt={alt ?? ""} title={title} />;
 	}

@@ -58,7 +58,7 @@ import type {
 	TextResourceAttachment,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 80;
+export const PROTOCOL_VERSION = 81;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -90,8 +90,6 @@ export interface PermissionResolvedPayload {
 
 export const WS_METHODS = {
 	projectOpen: "project.open",
-	projectAddRoot: "project.addRoot",
-	projectRemoveRoot: "project.removeRoot",
 	projectUpdate: "project.update",
 	projectList: "project.list",
 	projectClose: "project.close",
@@ -247,8 +245,6 @@ export type SessionMessagesResult =
 
 export interface WsMethodMap {
 	"project.open": { params: { path: string }; result: Project };
-	"project.addRoot": { params: { id: string; path: string }; result: Project };
-	"project.removeRoot": { params: { id: string; path: string }; result: Project };
 	"project.update": {
 		params: { id: string; name?: string; icon?: Project["icon"] };
 		result: Project;
@@ -260,9 +256,9 @@ export interface WsMethodMap {
 		result: ProjectWatchReadyResult;
 	};
 	"git.listRepositories": { params: { projectId: string }; result: GitRepositoryList };
-	"fs.readDir": { params: { projectId: string; root: string; path: string }; result: FileListing };
+	"fs.readDir": { params: { projectId: string; path: string }; result: FileListing };
 	"fs.readFile": {
-		params: { projectId: string; root: string; path: string };
+		params: { projectId: string; path: string };
 		result: { content: string };
 	};
 	"git.status": {

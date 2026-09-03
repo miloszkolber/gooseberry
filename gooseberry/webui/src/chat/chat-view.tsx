@@ -539,7 +539,7 @@ export default function ChatView({
 		let cancelled = false;
 		const timer = setTimeout(() => {
 			getTransport()
-				.request("fs.readDir", { projectId: projectAreaId, root: projectAreaRoot ?? "", path: dir })
+				.request("fs.readDir", { projectId: projectAreaId, path: dir })
 				.then((listing) => listing.nodes)
 				.then((nodes) => {
 					if (cancelled) return;

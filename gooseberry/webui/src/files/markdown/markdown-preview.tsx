@@ -31,19 +31,15 @@ const DOCUMENT_PROSE = [
 export function MarkdownDocument({
 	content,
 	projectAreaId,
-	root,
-	rootIndex,
 	path,
 }: {
 	content: string;
 	projectAreaId: string;
-	root: string;
-	rootIndex: number;
 	path: string;
 }) {
 	const components = useMemo(
-		() => documentComponents({ projectAreaId, root, rootIndex, path }),
-		[path, projectAreaId, root, rootIndex],
+		() => documentComponents({ projectAreaId, path }),
+		[path, projectAreaId],
 	);
 	return (
 		<Markdown
@@ -58,26 +54,16 @@ export function MarkdownDocument({
 export default function MarkdownPreview({
 	content,
 	projectAreaId,
-	root,
-	rootIndex,
 	path,
 }: {
 	content: string;
 	projectAreaId: string;
-	root: string;
-	rootIndex: number;
 	path: string;
 }) {
 	return (
 		<div data-testid="markdown-preview" className="h-full overflow-auto bg-container-project-bg">
 			<article className="mx-auto max-w-[78ch] px-xl py-lg">
-				<MarkdownDocument
-					content={content}
-					projectAreaId={projectAreaId}
-					root={root}
-					rootIndex={rootIndex}
-					path={path}
-				/>
+				<MarkdownDocument content={content} projectAreaId={projectAreaId} path={path} />
 			</article>
 		</div>
 	);

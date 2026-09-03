@@ -16,23 +16,13 @@ export function FileTree({
 	projectAreaId: string;
 	onOpen?: () => void;
 }) {
-	const roots = useAppStore(
-		(state) => state.projects.find((project) => project.id === projectAreaId)?.roots ?? [],
+	const root = useAppStore(
+		(state) => state.projects.find((project) => project.id === projectAreaId)?.roots[0] ?? "",
 	);
-	if (roots.length === 0)
-		return <p className="px-xs py-xs tr-text-metadata text-text-muted">No roots</p>;
+	if (!root) return <p className="px-xs py-xs tr-text-metadata text-text-muted">No root</p>;
 	return (
 		<div className="flex flex-col">
-			{roots.map((root) => (
-				<section key={root}>
-					{roots.length > 1 ? (
-						<div className="truncate px-xs py-xs tr-text-eyebrow text-text-muted" title={root}>
-							{root.split("/").pop() || root}
-						</div>
-					) : null}
-					<RootTree projectAreaId={projectAreaId} root={root} onOpen={onOpen} />
-				</section>
-			))}
+			<RootTree projectAreaId={projectAreaId} root={root} onOpen={onOpen} />
 		</div>
 	);
 }
@@ -64,7 +54,7 @@ function RootTree({
 
 	const { reload } = useProjectRead(
 		projectAreaId,
-		(id) => getTransport().request("fs.readDir", { projectId: id, root, path: "." }),
+		(id) => getTransport().request("fs.readDir", { projectId: id, path: "." }),
 		{
 			onResult: (result) => {
 				setNodes(result.nodes);
@@ -154,7 +144,7 @@ function FileNodeRow({
 		(id) =>
 			resolveFolderChain(node, (path) =>
 				getTransport()
-					.request("fs.readDir", { projectId: id, root, path })
+					.request("fs.readDir", { projectId: id, path })
 					.then((listing) => listing.nodes),
 			),
 		{
@@ -182,7 +172,7 @@ function FileNodeRow({
 		if (nextExpanded) reload();
 	};
 	const open = (intent: TabIntent) =>
-		void openFileInTab(projectAreaId, node.path, intent, undefined, root).then((opened) => {
+		void openFileInTab(projectAreaId, node.path, intent).then((opened) => {
 			if (opened) onOpen?.();
 		});
 

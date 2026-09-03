@@ -3,11 +3,10 @@ import { MessageSquare, Plus, Settings2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { errorText, getTransport } from "../../connection";
-import { chatTabId, projectArea, selectActiveProjectArea, toast, useAppStore } from "../../store";
+import { chatTabId, toast, useAppStore } from "../../store";
 import { enterDefaultProjectArea } from "../navigation/default-project-area";
 import { openChatInTab } from "../navigation/open-chat";
 import { AddProjectMenu } from "./add-project-menu";
-import { DirectoryPickerDialog } from "./directory-picker-dialog";
 import { ProjectCustomizationDialog } from "./project-customization-dialog";
 import { ProjectIcon } from "./project-icon";
 import { useOpenProject } from "./use-open-project";
@@ -94,9 +93,7 @@ export function ProjectTree() {
 	const projects = useAppStore((state) => state.projects);
 	const recentProjects = useAppStore((state) => state.recentProjects);
 	const selectedProjectId = useAppStore((state) => state.selectedProjectId);
-	const activeRoot = useAppStore((state) => selectActiveProjectArea(state)?.root ?? null);
 	const addButton = useRef<HTMLButtonElement>(null);
-	const [rootPickerProject, setRootPickerProject] = useState<Project | null>(null);
 	const [customizeProject, setCustomizeProject] = useState<Project | null>(null);
 
 	const selectProject = async (project: Project) => {
@@ -111,35 +108,6 @@ export function ProjectTree() {
 			.request("project.close", { id: project.id })
 			.catch((error) => toast.error(errorText(error), `Couldn't close ${project.name}`));
 	};
-	const addRoot = async (project: Project, path: string) => {
-		try {
-			const updated = await getTransport().request("project.addRoot", { id: project.id, path });
-			useAppStore.getState().applyProjectUpdated(updated);
-			useAppStore
-				.getState()
-				.setProjectAreas(updated.id, [projectArea(updated, activeRoot ?? undefined)]);
-		} catch (error) {
-			toast.error(errorText(error), "Couldn't add the project root");
-		}
-	};
-	const removeRoot = async (project: Project, path: string) => {
-		try {
-			const updated = await getTransport().request("project.removeRoot", { id: project.id, path });
-			useAppStore.getState().applyProjectUpdated(updated);
-			useAppStore
-				.getState()
-				.setProjectAreas(updated.id, [projectArea(updated, activeRoot ?? undefined)]);
-		} catch (error) {
-			toast.error(errorText(error), "Couldn't remove the project root");
-		}
-	};
-	const selectRoot = (project: Project, root: string) => {
-		const area = projectArea(project, root);
-		const store = useAppStore.getState();
-		store.setProjectAreas(project.id, [area]);
-		store.activateProjectArea(area);
-	};
-
 	return (
 		<nav className="flex flex-col gap-sm">
 			<header className="flex h-7 items-center justify-between pr-xs pl-sm">
@@ -173,7 +141,7 @@ export function ProjectTree() {
 									data-project-id={project.id}
 									data-selected={selected || undefined}
 									onClick={() => void selectProject(project)}
-									title={project.roots.join("\n")}
+									title={project.roots[0]}
 									className="flex min-w-0 flex-1 items-center gap-sm rounded-[var(--radius-sm)] px-sm py-xs text-left outline-none hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary data-[selected]:bg-control-bg-selected"
 								>
 									<ProjectIcon
@@ -185,9 +153,7 @@ export function ProjectTree() {
 											{project.name}
 										</span>
 										<span className="block truncate tr-text-metadata text-text-muted">
-											{project.roots.length === 1
-												? project.roots[0]
-												: `${project.roots.length} roots`}
+											{project.roots[0]}
 										</span>
 									</span>
 								</button>
@@ -213,42 +179,6 @@ export function ProjectTree() {
 							{selected ? (
 								<ul className="flex w-full flex-col gap-2xs py-2xs pl-lg">
 									<ProjectSessions project={project} />
-									<li className="px-sm pt-xs text-text-muted tr-text-eyebrow">Roots</li>
-									{project.roots.map((root) => (
-										<li
-											key={root}
-											className="flex min-w-0 items-center gap-xs px-sm tr-text-metadata text-text-muted"
-										>
-											<button
-												type="button"
-												data-active={activeRoot === root || undefined}
-												onClick={() => selectRoot(project, root)}
-												className="min-w-0 flex-1 truncate text-left hover:text-text-default data-[active]:text-primary"
-												title={`Use ${root} as the working directory for new chats`}
-											>
-												{root}
-											</button>
-											{project.roots.length > 1 ? (
-												<button
-													type="button"
-													aria-label={`Remove root ${root}`}
-													onClick={() => void removeRoot(project, root)}
-												>
-													<X className="size-3" />
-												</button>
-											) : null}
-										</li>
-									))}
-									<li>
-										<button
-											type="button"
-											onClick={() => setRootPickerProject(project)}
-											className="flex items-center gap-xs px-sm py-2xs tr-text-metadata text-text-muted hover:text-text-default"
-										>
-											<Plus className="size-3" />
-											Add root
-										</button>
-									</li>
 								</ul>
 							) : null}
 						</li>
@@ -261,17 +191,6 @@ export function ProjectTree() {
 				</p>
 			) : null}
 			{dialogs}
-			<DirectoryPickerDialog
-				open={rootPickerProject !== null}
-				onOpenChange={(open) => {
-					if (!open) setRootPickerProject(null);
-				}}
-				onSelect={(path) => {
-					const project = rootPickerProject;
-					setRootPickerProject(null);
-					if (project) void addRoot(project, path);
-				}}
-			/>
 			{customizeProject ? (
 				<ProjectCustomizationDialog
 					project={customizeProject}

@@ -82,53 +82,6 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 			return nil, fmt.Errorf("malformed project request")
 		}
 		return h.Projects.Open(request.Path)
-	case "project.addRoot":
-		var request struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		}
-		if err := decodeParams(raw, &request); err != nil || request.ID == "" || request.Path == "" {
-			return nil, fmt.Errorf("malformed project request")
-		}
-		project, err := h.Projects.AddRoot(request.ID, request.Path)
-		if err == nil && h.Git != nil {
-			h.Git.Invalidate(request.ID)
-		}
-		if err == nil && h.Watches != nil {
-			err = h.Watches.Reconcile(request.ID)
-		}
-		return project, err
-	case "project.removeRoot":
-		var request struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		}
-		if err := decodeParams(raw, &request); err != nil || request.ID == "" || request.Path == "" {
-			return nil, fmt.Errorf("malformed project request")
-		}
-		if h.Sessions != nil {
-			root, err := h.Projects.AssertRoot(request.ID, request.Path)
-			if err != nil {
-				return nil, err
-			}
-			records, err := h.Sessions.records.List()
-			if err != nil {
-				return nil, err
-			}
-			for _, record := range records {
-				if record.ProjectID == request.ID && workspace.Within(root, record.CWD) {
-					return nil, fmt.Errorf("move or delete sessions using this root before removing it")
-				}
-			}
-		}
-		project, err := h.Projects.RemoveRoot(request.ID, request.Path)
-		if err == nil && h.Git != nil {
-			h.Git.Invalidate(request.ID)
-		}
-		if err == nil && h.Watches != nil {
-			err = h.Watches.Reconcile(request.ID)
-		}
-		return project, err
 	case "project.update":
 		var request struct {
 			ID   string  `json:"id"`
@@ -202,7 +155,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err := h.ensureWatch(request.ProjectID); err != nil {
 			return nil, err
 		}
-		return h.Files.ReadDir(request.ProjectID, request.Root, request.Path)
+		return h.Files.ReadDir(request.ProjectID, request.Path)
 	case "fs.readFile":
 		var request fileRequest
 		if err := decodeParams(raw, &request); err != nil || !request.valid() {
@@ -211,7 +164,7 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		if err := h.ensureWatch(request.ProjectID); err != nil {
 			return nil, err
 		}
-		content, err := h.Files.ReadFile(request.ProjectID, request.Root, request.Path)
+		content, err := h.Files.ReadFile(request.ProjectID, request.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -716,7 +669,6 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 
 type fileRequest struct {
 	ProjectID string `json:"projectId"`
-	Root      string `json:"root"`
 	Path      string `json:"path"`
 }
 
@@ -741,7 +693,7 @@ func (h CoreHandler) ensureWatch(projectID string) error {
 }
 
 func (r fileRequest) valid() bool {
-	return r.ProjectID != "" && r.Root != "" && !containsNUL(r.ProjectID) && !containsNUL(r.Root) && !containsNUL(r.Path)
+	return r.ProjectID != "" && !containsNUL(r.ProjectID) && !containsNUL(r.Path)
 }
 
 func decodeParams(raw json.RawMessage, target any) error {

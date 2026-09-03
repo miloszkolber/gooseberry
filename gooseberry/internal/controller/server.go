@@ -192,23 +192,22 @@ func (h *HTTPHandler) serveProjectImage(response http.ResponseWriter, request *h
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(request.URL.EscapedPath(), "/files/"), "/")
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		http.NotFound(response, request)
 		return
 	}
 	projectID, firstErr := url.PathUnescape(parts[0])
-	rootIndex, secondErr := strconv.Atoi(parts[1])
-	relative, thirdErr := url.PathUnescape(strings.Join(parts[2:], "/"))
-	if firstErr != nil || secondErr != nil || thirdErr != nil || rootIndex < 0 {
+	relative, secondErr := url.PathUnescape(strings.Join(parts[1:], "/"))
+	if firstErr != nil || secondErr != nil {
 		http.NotFound(response, request)
 		return
 	}
-	project, err := h.Projects.Get(projectID)
-	if err != nil || rootIndex >= len(project.Roots) {
+	root, err := h.Projects.Root(projectID)
+	if err != nil {
 		http.NotFound(response, request)
 		return
 	}
-	_, file, err := h.Files.ResolveInRoot(project.Roots[rootIndex], relative)
+	_, file, err := h.Files.ResolveInRoot(root, relative)
 	if err != nil {
 		http.NotFound(response, request)
 		return

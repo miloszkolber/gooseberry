@@ -29,8 +29,8 @@ func NewFiles(projects *Projects, policy *PathPolicy) *Files {
 	return &Files{projects: projects, policy: policy}
 }
 
-func (f *Files) ReadDir(projectID, requestedRoot, path string) (FileListing, error) {
-	root, absolute, err := f.resolve(projectID, requestedRoot, path)
+func (f *Files) ReadDir(projectID, path string) (FileListing, error) {
+	root, absolute, err := f.resolve(projectID, path)
 	if err != nil {
 		return FileListing{}, err
 	}
@@ -85,8 +85,8 @@ func (f *Files) ReadDir(projectID, requestedRoot, path string) (FileListing, err
 	return FileListing{Nodes: nodes, Complete: complete, Warnings: warnings}, nil
 }
 
-func (f *Files) ReadFile(projectID, requestedRoot, path string) (string, error) {
-	_, absolute, err := f.resolve(projectID, requestedRoot, path)
+func (f *Files) ReadFile(projectID, path string) (string, error) {
+	_, absolute, err := f.resolve(projectID, path)
 	if err != nil {
 		return "", err
 	}
@@ -97,8 +97,8 @@ func (f *Files) ReadFile(projectID, requestedRoot, path string) (string, error) 
 	return string(content), nil
 }
 
-func (f *Files) resolve(projectID, requestedRoot, path string) (string, string, error) {
-	root, err := f.projects.AssertRoot(projectID, requestedRoot)
+func (f *Files) resolve(projectID, path string) (string, string, error) {
+	root, err := f.projects.Root(projectID)
 	if err != nil {
 		return "", "", err
 	}

@@ -20,11 +20,6 @@ export function FilePane({ tab }: { tab: FileTab }) {
 	// loadedTick also acknowledges unrelated changes; only relevant reads reload the image.
 	const [imageRevision, setImageRevision] = useState(tab.loadedTick ?? 0);
 	const setFileTabView = useAppStore((state) => state.setFileTabView);
-	const rootIndex = useAppStore(
-		(state) =>
-			state.projects.find((project) => project.id === tab.projectAreaId)?.roots.indexOf(tab.root) ??
-			-1,
-	);
 
 	useLiveTabContent(tab, {
 		read: () =>
@@ -32,7 +27,6 @@ export function FilePane({ tab }: { tab: FileTab }) {
 				? Promise.resolve({ content: "" })
 				: getTransport().request("fs.readFile", {
 						projectId: tab.projectAreaId,
-						root: tab.root,
 						path: tab.path,
 					}),
 		applyFresh: ({ content }, tick) => {
@@ -43,13 +37,7 @@ export function FilePane({ tab }: { tab: FileTab }) {
 			useAppStore.getState().updateFileTabContent(tab.projectAreaId, tab.id, tab.content, tick),
 	});
 	if (image) {
-		const url = projectFileUrl(
-			getTransport().httpBase(),
-			tab.projectAreaId,
-			rootIndex,
-			"",
-			tab.path,
-		);
+		const url = projectFileUrl(getTransport().httpBase(), tab.projectAreaId, "", tab.path);
 		const source = url ? `${url}?v=${imageRevision}` : undefined;
 		return (
 			<div className="flex h-full min-h-0 flex-col">
@@ -115,8 +103,6 @@ export function FilePane({ tab }: { tab: FileTab }) {
 						<MarkdownPreview
 							content={tab.content}
 							projectAreaId={tab.projectAreaId}
-							root={tab.root}
-							rootIndex={rootIndex}
 							path={tab.path}
 						/>
 					</Suspense>

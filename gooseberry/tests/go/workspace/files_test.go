@@ -1,6 +1,7 @@
 package workspace_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,12 +17,9 @@ import (
 func TestProjectsAndFilesPreserveAuthorityAcrossRestart(t *testing.T) {
 	mount := t.TempDir()
 	root := filepath.Join(mount, "project")
-	second := filepath.Join(mount, "second")
 	outside := t.TempDir()
-	for _, path := range []string{root, second} {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "visible.txt"), []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
@@ -40,22 +38,17 @@ func TestProjectsAndFilesPreserveAuthorityAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err = projects.AddRoot(project.ID, second)
-	if err != nil || len(project.Roots) != 2 {
-		t.Fatalf("add root: %#v, %v", project, err)
-	}
-
 	files := workspace.NewFiles(projects, policy)
-	listing, err := files.ReadDir(project.ID, root, ".")
+	listing, err := files.ReadDir(project.ID, ".")
 	if err != nil || len(listing.Nodes) != 1 || listing.Nodes[0].Name != "visible.txt" {
 		t.Fatalf("unsafe directory listing: %#v, %v", listing, err)
 	}
-	content, err := files.ReadFile(project.ID, root, "visible.txt")
+	content, err := files.ReadFile(project.ID, "visible.txt")
 	if err != nil || content != "hello" {
 		t.Fatalf("read file: %q, %v", content, err)
 	}
-	for _, path := range []string{"../second", filepath.Join(second, "elsewhere.txt"), "escape/secret.txt", "."} {
-		if _, err := files.ReadFile(project.ID, root, path); err == nil {
+	for _, path := range []string{"../elsewhere.txt", "escape/secret.txt", "."} {
+		if _, err := files.ReadFile(project.ID, path); err == nil {
 			t.Fatalf("accepted unsafe file path %q", path)
 		}
 	}
@@ -71,7 +64,7 @@ func TestProjectsAndFilesPreserveAuthorityAcrossRestart(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := files.ReadFile(project.ID, root, "large.txt"); err == nil {
+	if _, err := files.ReadFile(project.ID, "large.txt"); err == nil {
 		t.Fatal("accepted an oversized preview")
 	}
 
@@ -98,7 +91,7 @@ func TestProjectsAndFilesPreserveAuthorityAcrossRestart(t *testing.T) {
 	}
 	restarted := workspace.NewProjects(store, policy)
 	recovered, err := restarted.Get(project.ID)
-	if err != nil || recovered.Name != firstName || len(recovered.Roots) != 2 {
+	if err != nil || recovered.Name != firstName || len(recovered.Roots) != 1 {
 		t.Fatalf("restart did not recover the last valid backup: %#v, %v", recovered, err)
 	}
 	// The running owner intentionally keeps its validated snapshot. Recovery is
@@ -106,6 +99,104 @@ func TestProjectsAndFilesPreserveAuthorityAcrossRestart(t *testing.T) {
 	current, err = projects.Get(project.ID)
 	if err != nil || current.Name != secondName {
 		t.Fatalf("external state mutation displaced the live snapshot: %#v, %v", current, err)
+	}
+}
+
+func TestProjectsSplitLegacyRootsIntoIndependentProjects(t *testing.T) {
+	mount := t.TempDir()
+	first, second, third := filepath.Join(mount, "first"), filepath.Join(mount, "second"), filepath.Join(mount, "third")
+	for _, path := range []string{first, second, third} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy, err := workspace.NewPathPolicy([]string{mount}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := persist.Store{Dir: t.TempDir()}
+	legacy := []map[string]any{
+		{"id": "primary", "name": "Primary", "roots": []string{first, second}, "slug": "primary", "lastOpened": 42, "icon": "rocket", "closed": true},
+		{"id": "other", "name": "second", "roots": []string{third}, "slug": "second", "lastOpened": 7},
+	}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Dir, "projects.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projects := workspace.NewProjects(store, policy)
+	listed, err := projects.List(true)
+	if err != nil || len(listed) != 3 {
+		t.Fatalf("legacy split: %#v, %v", listed, err)
+	}
+	primary, err := projects.Get("primary")
+	if err != nil || primary.Roots[0] != first || primary.Name != "Primary" {
+		t.Fatalf("primary project was not retained: %#v, %v", primary, err)
+	}
+	var extra workspace.Project
+	for _, project := range listed {
+		if len(project.Roots) != 1 {
+			t.Fatalf("project keeps multiple roots: %#v", project)
+		}
+		if project.Roots[0] == second {
+			extra = project
+		}
+	}
+	if extra.ID == "" || extra.ID == "primary" || extra.Name != "second (2)" || extra.Slug == "second" || extra.Icon != "rocket" || !extra.Closed || extra.LastOpened != 42 {
+		t.Fatalf("legacy extra did not become an independent preserved project: %#v", extra)
+	}
+	persisted, err := os.ReadFile(filepath.Join(store.Dir, "projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var normalized []struct {
+		Roots []string `json:"roots"`
+	}
+	if err := json.Unmarshal(persisted, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range normalized {
+		if len(project.Roots) != 1 || project.Roots[0] == "" {
+			t.Fatalf("migration persisted invalid roots: %#v", project)
+		}
+	}
+	if _, err := projects.Open(""); err == nil {
+		t.Fatal("accepted an empty project root")
+	}
+}
+
+func TestOpeningDirectoriesCreatesIndependentSingleRootProjects(t *testing.T) {
+	mount := t.TempDir()
+	first, second := filepath.Join(mount, "first"), filepath.Join(mount, "second")
+	for _, path := range []string{first, second} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy, err := workspace.NewPathPolicy([]string{mount}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := workspace.NewProjects(persist.Store{Dir: t.TempDir()}, policy)
+	firstProject, err := projects.Open(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projects.Close(firstProject.ID); err != nil {
+		t.Fatal(err)
+	}
+	secondProject, err := projects.Open(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := projects.Open(first)
+	if err != nil || reopened.ID != firstProject.ID || reopened.Closed || len(reopened.Roots) != 1 || reopened.Roots[0] != first {
+		t.Fatalf("first project did not reopen as its own single-root project: %#v, %v", reopened, err)
+	}
+	if secondProject.ID == firstProject.ID || len(secondProject.Roots) != 1 || secondProject.Roots[0] != second {
+		t.Fatalf("second directory joined the existing project: %#v", secondProject)
 	}
 }
 

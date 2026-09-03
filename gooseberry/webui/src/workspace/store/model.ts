@@ -10,8 +10,8 @@ export interface ProjectArea {
 	kind: "project";
 }
 
-export function projectArea(project: Project, selectedRoot = project.roots[0] ?? ""): ProjectArea {
-	const root = project.roots.includes(selectedRoot) ? selectedRoot : (project.roots[0] ?? "");
+export function projectArea(project: Project): ProjectArea {
+	const root = project.roots[0] ?? "";
 	return {
 		id: project.id,
 		projectId: project.id,

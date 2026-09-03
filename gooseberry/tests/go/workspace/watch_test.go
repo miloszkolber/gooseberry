@@ -12,10 +12,10 @@ import (
 	"github.com/miloszkolber/gooseberry/internal/workspace"
 )
 
-func TestProjectWatchReconcilesRootsAndInvalidatesGitDiscovery(t *testing.T) {
+func TestProjectWatchTracksItsSoleRootAndInvalidatesGitDiscovery(t *testing.T) {
 	mount := t.TempDir()
-	first, second := filepath.Join(mount, "first"), filepath.Join(mount, "second")
-	for _, path := range []string{filepath.Join(first, "existing"), second} {
+	first := filepath.Join(mount, "first")
+	for _, path := range []string{filepath.Join(first, "existing")} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -29,11 +29,7 @@ func TestProjectWatchReconcilesRootsAndInvalidatesGitDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err = projects.AddRoot(project.ID, second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, second = project.Roots[0], project.Roots[1]
+	first = project.Roots[0]
 	git := workspace.NewGit(projects, policy)
 	if repositories, err := git.ListRepositories(context.Background(), project.ID); err != nil || len(repositories.Repositories) != 0 {
 		t.Fatalf("initial repository discovery: %#v, %v", repositories, err)
@@ -78,13 +74,6 @@ func TestProjectWatchReconcilesRootsAndInvalidatesGitDiscovery(t *testing.T) {
 	waitFor(func(change workspace.ProjectFsChange) bool {
 		return change.Root == first && change.Path == "existing/deep.txt"
 	})
-	if err := os.WriteFile(filepath.Join(second, "same.txt"), []byte("changed"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(func(change workspace.ProjectFsChange) bool {
-		return change.Root == second && change.Path == "same.txt"
-	})
-
 	runGit(t, first, "init", "-b", "main")
 	waitFor(func(change workspace.ProjectFsChange) bool {
 		return change.Root == first && (change.Path == ".git" || strings.HasPrefix(change.Path, ".git/"))
@@ -101,22 +90,6 @@ func TestProjectWatchReconcilesRootsAndInvalidatesGitDiscovery(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if _, err := projects.RemoveRoot(project.ID, second); err != nil {
-		t.Fatal(err)
-	}
-	if err := watches.Reconcile(project.ID); err != nil {
-		t.Fatal(err)
-	}
-	for draining := true; draining; {
-		select {
-		case <-events:
-		default:
-			draining = false
-		}
-	}
-	if err := os.WriteFile(filepath.Join(second, "removed.txt"), []byte("changed"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(first, "kept.txt"), []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -126,9 +99,6 @@ func TestProjectWatchReconcilesRootsAndInvalidatesGitDiscovery(t *testing.T) {
 		select {
 		case event := <-events:
 			for _, change := range event.Changes {
-				if change.Root == second {
-					t.Fatal("removed root still emitted filesystem events")
-				}
 				if change.Root == first && change.Path == "kept.txt" {
 					watches.Stop(project.ID)
 					return

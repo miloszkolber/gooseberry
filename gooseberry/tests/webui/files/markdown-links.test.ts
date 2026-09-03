@@ -9,13 +9,12 @@ test("resolves Markdown files inside the originating project root", () => {
 		projectFileUrl(
 			"http://controller.test:7312",
 			"project one",
-			1,
 			"docs/guide.md",
 			"../images/diagram one.png",
 		),
-	).toBe("http://controller.test:7312/files/project%20one/1/images/diagram%20one.png");
+	).toBe("http://controller.test:7312/files/project%20one/images/diagram%20one.png");
 });
 
-test("does not construct a file URL after the originating root is removed", () => {
-	expect(projectFileUrl("", "project", -1, "README.md", "image.png")).toBeUndefined();
+test("does not construct a file URL without a target path", () => {
+	expect(projectFileUrl("", "project", "README.md", "")).toBeUndefined();
 });

@@ -20,7 +20,7 @@ Paths are relative to `gooseberry/`.
 | `cmd/gooseberry-browser/` | Browser entry point. |
 | `internal/controller/` | ACP, application HTTP/MCP and conversation lifecycle. |
 | `internal/browser/` | Browser MCP/HTTP, process lifecycle, guidance and quotas. |
-| `internal/workspace/` | Project roots, bounded file access, Git and filesystem watches. |
+| `internal/workspace/` | Project roots, bounded file access, Git discovery and filesystem watches. |
 | `internal/persist/` | Atomic application state storage. |
 | `internal/identifier/` | Random identifier generation. |
 | `internal/diagnostics/` | Build information, counters and structured logging. |

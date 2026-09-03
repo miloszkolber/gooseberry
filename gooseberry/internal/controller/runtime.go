@@ -81,6 +81,13 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	store := persist.Store{Dir: config.DataDir}
 	projects := workspace.NewProjects(store, config.Policy)
 	files := workspace.NewFiles(projects, config.Policy)
+	records := NewSessionRecords(store)
+	queues := NewSessionQueues(store)
+	objectives := NewObjectives(store)
+	deletions := NewSessionDeletions(store)
+	if err := migrateProjectRoots(projects, config.Policy, records, queues, objectives, deletions, store); err != nil {
+		return nil, fmt.Errorf("migrate project roots: %w", err)
+	}
 	var socket *WebSocketServer
 	publish := func(channel string, data any) {
 		if socket != nil {
@@ -89,7 +96,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	}
 	projects.SetPublisher(func(project workspace.Project) { publish("project.updated", project) })
 	settings := NewSettings(store, func(value AppConfig) { publish("settings.changed", value) })
-	sessions := NewSessionManager(projects, config.Policy, NewSessionRecords(store), NewSessionQueues(store), NewObjectives(store), publish)
+	sessions := NewSessionManager(projects, config.Policy, records, queues, objectives, publish)
 	client := NewGooseClient(config.GooseURL, strings.TrimSpace(config.Getenv("GOOSEBERRY_GOOSE_SECRET_KEY")), config.AppVersion, sessions)
 	client.profileChanged = func(profile AgentProfile) { publish("agent.profileChanged", profile) }
 	sessions.SetClient(client)

@@ -159,7 +159,7 @@ export function GooseSettings() {
 	const [models, setModels] = useState<WireModel[]>([]);
 	const [providers, setProviders] = useState<ProviderStatus[]>([]);
 	const [catalogProjectId, setCatalogProjectId] = useState("");
-	const [catalogRoot, setCatalogRoot] = useState("");
+	const catalogRoot = projects.find((project) => project.id === catalogProjectId)?.roots[0] ?? "";
 	const [agents, setAgents] = useState<GooseAgentCatalogEntry[]>([]);
 	const [draft, setDraft] = useState<AgentDraft>(emptyAgent);
 	const [editing, setEditing] = useState<GooseAgentCatalogEntry | null>(null);
@@ -215,8 +215,6 @@ export function GooseSettings() {
 		() => models.filter((model) => model.available && !model.hidden),
 		[models],
 	);
-	const catalogProject = projects.find((project) => project.id === catalogProjectId);
-	const draftProject = projects.find((project) => project.id === draft.projectId);
 
 	const savePreferences = async () => {
 		const hasThreshold = thresholdPercent.trim() !== "";
@@ -478,7 +476,6 @@ export function GooseSettings() {
 							onChange={(event) => {
 								sequence.current++;
 								setCatalogProjectId(event.target.value);
-								setCatalogRoot("");
 								setEditing(null);
 								setDraft(emptyAgent());
 							}}
@@ -492,30 +489,6 @@ export function GooseSettings() {
 							))}
 						</select>
 					</label>
-					{catalogProject ? (
-						<label className="flex flex-col gap-xs text-text-muted tr-text-metadata">
-							Admitted root
-							<select
-								data-testid="agent-catalog-root"
-								value={catalogRoot}
-								disabled={busy}
-								onChange={(event) => {
-									sequence.current++;
-									setCatalogRoot(event.target.value);
-									setEditing(null);
-									setDraft(emptyAgent());
-								}}
-								className="rounded border border-border-default bg-control-bg px-sm py-xs text-text-default"
-							>
-								<option value="">Choose root</option>
-								{catalogProject.roots.map((root) => (
-									<option key={root} value={root}>
-										{root}
-									</option>
-								))}
-							</select>
-						</label>
-					) : null}
 				</div>
 				{loading ? (
 					<p className="text-text-muted">Loading Goose settings…</p>
@@ -642,50 +615,30 @@ export function GooseSettings() {
 								</select>
 							</label>
 							{draft.scope === "project" ? (
-								<>
-									<label className="flex flex-col gap-xs">
-										Admitted project
-										<select
-											value={draft.projectId}
-											disabled={busy}
-											onChange={(event) =>
-												setDraft((current) => ({
-													...current,
-													projectId: event.target.value,
-													root: "",
-												}))
-											}
-											className="rounded border border-border-default bg-control-bg px-sm py-xs"
-										>
-											<option value="">Choose project</option>
-											{projects.map((project) => (
-												<option key={project.id} value={project.id}>
-													{project.name}
-												</option>
-											))}
-										</select>
-									</label>
-									{draftProject ? (
-										<label className="flex flex-col gap-xs">
-											Admitted root
-											<select
-												value={draft.root}
-												disabled={busy}
-												onChange={(event) =>
-													setDraft((current) => ({ ...current, root: event.target.value }))
-												}
-												className="rounded border border-border-default bg-control-bg px-sm py-xs"
-											>
-												<option value="">Choose root</option>
-												{draftProject.roots.map((root) => (
-													<option key={root} value={root}>
-														{root}
-													</option>
-												))}
-											</select>
-										</label>
-									) : null}
-								</>
+								<label className="flex flex-col gap-xs">
+									Admitted project
+									<select
+										value={draft.projectId}
+										disabled={busy}
+										onChange={(event) =>
+											setDraft((current) => ({
+												...current,
+												projectId: event.target.value,
+												root:
+													projects.find((project) => project.id === event.target.value)?.roots[0] ??
+													"",
+											}))
+										}
+										className="rounded border border-border-default bg-control-bg px-sm py-xs"
+									>
+										<option value="">Choose project</option>
+										{projects.map((project) => (
+											<option key={project.id} value={project.id}>
+												{project.name}
+											</option>
+										))}
+									</select>
+								</label>
 							) : null}
 						</>
 					) : null}

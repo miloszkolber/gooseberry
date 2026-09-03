@@ -4,7 +4,7 @@ Gooseberry is for one trusted user. Host Goose tools run with that user's permis
 
 ## Isolation
 
-The application mounts its state and admitted project roots. The browser mounts only its state and artifacts. Goose configuration and provider credentials stay on the host.
+The application mounts its state and admitted project root directories. The browser mounts only its state and artifacts. Goose configuration and provider credentials stay on the host.
 
 Both containers run non-root with read-only filesystems, all capabilities dropped, new privileges disabled and bounded writable tmpfs. The application image has no shell or package manager. Browser subprocess environments are filtered; browser sessions share one UID and filesystem. Session IDs are not security identities.
 
@@ -31,8 +31,8 @@ Remote browser binding always requires authentication. Its MCP Host/Origin check
 
 Provider setup forwards credentials to Goose and excludes them from replay, logs and snapshots. Settings responses omit raw extension commands, environment values, schemas and diagnostics.
 
-Every file read checks admitted roots and resolved paths, including cached reads. Limits apply during I/O. Image delivery uses same-origin/no-store protections. Git runs with restricted configuration, hooks and filesystem monitors disabled.
+Every file read checks the admitted project root and resolved paths, including cached reads. Limits apply during I/O. Image delivery uses same-origin/no-store protections. Git runs with restricted configuration, hooks and filesystem monitors disabled.
 
-Session operations verify project ownership. Permission/question replies are single-use. Agent edits recheck opaque source IDs, writability and project roots inside mutation locks; recipe saves retain Goose's security scan.
+Session operations verify project ownership. Permission/question replies are single-use. Agent edits recheck opaque source IDs, writability and the project root inside mutation locks; recipe saves retain Goose's security scan.
 
 See [deployment](deployment.md) for private setup and backups, and [development](development.md) for boundary tests.

@@ -58,7 +58,7 @@ type Git struct {
 }
 
 type repositoryDiscovery struct {
-	roots    string
+	root     string
 	paths    []string
 	complete bool
 	done     chan struct{}
@@ -188,13 +188,14 @@ func (g *Git) sharedStatus(ctx context.Context, project Project, repository stri
 }
 
 func (g *Git) repositories(ctx context.Context, project Project) (repositoryDiscovery, error) {
-	roots := append([]string(nil), project.Roots...)
-	sort.Strings(roots)
-	generation := strings.Join(roots, "\x00")
+	root, err := project.Root()
+	if err != nil {
+		return repositoryDiscovery{}, err
+	}
 	g.mu.Lock()
 	cached := g.cache[project.ID]
-	if cached == nil || cached.roots != generation {
-		cached = &repositoryDiscovery{roots: generation, done: make(chan struct{})}
+	if cached == nil || cached.root != root {
+		cached = &repositoryDiscovery{root: root, done: make(chan struct{})}
 		g.cache[project.ID] = cached
 		go func() {
 			bounded, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -234,86 +235,84 @@ func (g *Git) discover(ctx context.Context, project Project) (repositoryDiscover
 	result := repositoryDiscovery{complete: true}
 	seen := make(map[string]bool)
 	visited, scanned, queuedCount, probes := 0, 0, 0, 0
-	for _, configuredRoot := range project.Roots {
-		root, err := g.policy.Directory(configuredRoot, "Project root")
-		if err != nil {
-			return repositoryDiscovery{}, err
+	configuredRoot, err := project.Root()
+	if err != nil {
+		return repositoryDiscovery{}, err
+	}
+	root, err := g.policy.Directory(configuredRoot, "Project root")
+	if err != nil {
+		return repositoryDiscovery{}, err
+	}
+	queue := []queued{{path: root}}
+	queuedCount++
+	for len(queue) > 0 && len(result.paths) < 64 {
+		if ctx.Err() != nil {
+			return repositoryDiscovery{}, ctx.Err()
 		}
-		if queuedCount >= 4_000 {
+		if visited >= 20_000 || scanned >= 20_000 {
 			result.complete = false
 			break
 		}
-		queue := []queued{{path: root}}
-		queuedCount++
-		for len(queue) > 0 && len(result.paths) < 64 {
-			if ctx.Err() != nil {
-				return repositoryDiscovery{}, ctx.Err()
-			}
-			if visited >= 20_000 || scanned >= 20_000 {
+		current := queue[0]
+		queue = queue[1:]
+		visited++
+		canonical, err := filepath.EvalSymlinks(current.path)
+		if err != nil || seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		if _, err := os.Lstat(filepath.Join(canonical, ".git")); err == nil {
+			if probes >= 256 {
 				result.complete = false
 				break
 			}
-			current := queue[0]
-			queue = queue[1:]
-			visited++
-			canonical, err := filepath.EvalSymlinks(current.path)
-			if err != nil || seen[canonical] {
-				continue
-			}
-			seen[canonical] = true
-			if _, err := os.Lstat(filepath.Join(canonical, ".git")); err == nil {
-				if probes >= 256 {
-					result.complete = false
-					break
+			probes++
+			probe := runGit(ctx, canonical, []string{"rev-parse", "--show-toplevel"}, gitOutputLimit)
+			if probe.ok {
+				top, evalErr := filepath.EvalSymlinks(strings.TrimSpace(probe.out))
+				if evalErr == nil && top == canonical {
+					result.paths = append(result.paths, canonical)
 				}
-				probes++
-				probe := runGit(ctx, canonical, []string{"rev-parse", "--show-toplevel"}, gitOutputLimit)
-				if probe.ok {
-					top, evalErr := filepath.EvalSymlinks(strings.TrimSpace(probe.out))
-					if evalErr == nil && top == canonical {
-						result.paths = append(result.paths, canonical)
-					}
-				}
-			}
-			if current.depth >= 5 {
-				continue
-			}
-			directory, readErr := os.Open(canonical)
-			if readErr != nil {
-				continue
-			}
-		readEntries:
-			for scanned < 20_000 && queuedCount < 4_000 {
-				entries, readErr := directory.ReadDir(min(discoveryReadBatch, 20_000-scanned))
-				if len(entries) == 0 {
-					if readErr != nil && readErr != io.EOF {
-						result.complete = false
-					}
-					break
-				}
-				for _, entry := range entries {
-					scanned++
-					if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || discoveryIgnored[entry.Name()] {
-						continue
-					}
-					queue = append(queue, queued{path: filepath.Join(canonical, entry.Name()), depth: current.depth + 1})
-					queuedCount++
-					if queuedCount >= 4_000 {
-						break readEntries
-					}
-				}
-				if readErr == io.EOF {
-					break
-				}
-			}
-			_ = directory.Close()
-			if scanned >= 20_000 || queuedCount >= 4_000 {
-				result.complete = false
 			}
 		}
-		if len(queue) > 0 || len(result.paths) >= 64 {
+		if current.depth >= 5 {
+			continue
+		}
+		directory, readErr := os.Open(canonical)
+		if readErr != nil {
+			continue
+		}
+	readEntries:
+		for scanned < 20_000 && queuedCount < 4_000 {
+			entries, readErr := directory.ReadDir(min(discoveryReadBatch, 20_000-scanned))
+			if len(entries) == 0 {
+				if readErr != nil && readErr != io.EOF {
+					result.complete = false
+				}
+				break
+			}
+			for _, entry := range entries {
+				scanned++
+				if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || discoveryIgnored[entry.Name()] {
+					continue
+				}
+				queue = append(queue, queued{path: filepath.Join(canonical, entry.Name()), depth: current.depth + 1})
+				queuedCount++
+				if queuedCount >= 4_000 {
+					break readEntries
+				}
+			}
+			if readErr == io.EOF {
+				break
+			}
+		}
+		_ = directory.Close()
+		if scanned >= 20_000 || queuedCount >= 4_000 {
 			result.complete = false
 		}
+	}
+	if len(queue) > 0 || len(result.paths) >= 64 {
+		result.complete = false
 	}
 	sort.Strings(result.paths)
 	return result, nil
@@ -363,15 +362,13 @@ func gitHead(ctx context.Context, repository string) GitHead {
 }
 
 func projectRelativePath(project Project, repository string) string {
-	for _, root := range project.Roots {
-		if !Within(root, repository) {
-			continue
-		}
-		relative, _ := filepath.Rel(root, repository)
-		if relative == "." {
-			return filepath.Base(root)
-		}
-		return filepath.Join(filepath.Base(root), relative)
+	root, err := project.Root()
+	if err != nil || !Within(root, repository) {
+		return filepath.Base(repository)
 	}
-	return filepath.Base(repository)
+	relative, _ := filepath.Rel(root, repository)
+	if relative == "." {
+		return filepath.Base(root)
+	}
+	return filepath.Join(filepath.Base(root), relative)
 }

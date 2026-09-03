@@ -945,12 +945,12 @@ func (m *SessionManager) SetLeases(clientKey string, revision uint64, requested 
 			}
 			directories[record.CWD] = cwd
 		}
-		admitted := false
-		for _, root := range project.Roots {
-			admitted = admitted || workspace.Within(root, cwd)
+		root, rootErr := project.Root()
+		if rootErr != nil {
+			return rootErr
 		}
-		if !admitted {
-			return fmt.Errorf("session directory is outside the project roots")
+		if !workspace.Within(root, cwd) {
+			return fmt.Errorf("session directory is outside the project root")
 		}
 		next.sessions[lease.SessionID] = lease.ProjectID
 	}

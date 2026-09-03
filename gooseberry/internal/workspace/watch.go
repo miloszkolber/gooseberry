@@ -37,7 +37,7 @@ type ProjectWatches struct {
 type projectWatch struct {
 	owner      *ProjectWatches
 	id         string
-	roots      []string
+	root       string
 	native     *fsnotify.Watcher
 	dirs       map[string]bool
 	stop, done chan struct{}
@@ -65,7 +65,11 @@ func (w *ProjectWatches) ensure(projectID string, onlyActive bool) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	if current != nil && slices.Equal(current.roots, project.Roots) {
+	root, err := project.Root()
+	if err != nil {
+		return false, err
+	}
+	if current != nil && current.root == root {
 		return false, nil
 	}
 	if current != nil {
@@ -76,15 +80,13 @@ func (w *ProjectWatches) ensure(projectID string, onlyActive bool) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("could not start project filesystem notifications")
 	}
-	state := &projectWatch{owner: w, id: projectID, roots: append([]string{}, project.Roots...), native: native, dirs: make(map[string]bool), stop: make(chan struct{}), done: make(chan struct{})}
-	for _, root := range state.roots {
-		if err := native.Add(root); err != nil {
-			native.Close()
-			return false, fmt.Errorf("could not watch an admitted project root")
-		}
-		state.dirs[root] = true
-		state.addTree(root)
+	state := &projectWatch{owner: w, id: projectID, root: root, native: native, dirs: make(map[string]bool), stop: make(chan struct{}), done: make(chan struct{})}
+	if err := native.Add(root); err != nil {
+		native.Close()
+		return false, fmt.Errorf("could not watch the admitted project root")
 	}
+	state.dirs[root] = true
+	state.addTree(root)
 	w.active[projectID] = state
 	go state.run()
 	return true, nil
@@ -225,17 +227,14 @@ func (s *projectWatch) run() {
 					s.truncated = true
 				}
 			}
-			for _, root := range s.roots {
-				if !Within(root, path) {
-					continue
-				}
-				relative, err := filepath.Rel(root, path)
+			if Within(s.root, path) {
+				relative, err := filepath.Rel(s.root, path)
 				if err != nil {
 					s.truncated = true
 					continue
 				}
 				relative = filepath.ToSlash(relative)
-				change := ProjectFsChange{Root: root, Path: relative}
+				change := ProjectFsChange{Root: s.root, Path: relative}
 				if len(changes) < 500 || changes[change] {
 					changes[change] = true
 				} else {
@@ -254,9 +253,7 @@ func (s *projectWatch) run() {
 			if s.owner.git != nil {
 				s.owner.git.Invalidate(s.id)
 			}
-			for _, root := range s.roots {
-				s.addTree(root)
-			}
+			s.addTree(s.root)
 			schedule()
 		case <-tick:
 			tick = nil

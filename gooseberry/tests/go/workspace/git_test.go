@@ -114,6 +114,33 @@ func TestGitLinkedWorktreeKeepsRepositoryAndDiffScopeBoundaries(t *testing.T) {
 	}
 }
 
+func TestGitDiscoversMultipleRepositoriesBelowOneProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	first, second := filepath.Join(root, "services", "first"), filepath.Join(root, "tools", "second")
+	for _, repository := range []string{first, second} {
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repository, "init", "-b", "main")
+	}
+	policy, err := workspace.NewPathPolicy([]string{root}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := workspace.NewProjects(persist.Store{Dir: t.TempDir()}, policy)
+	project, err := projects.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := workspace.NewGit(projects, policy).ListRepositories(context.Background(), project.ID)
+	if err != nil || !list.Complete || len(list.Repositories) != 2 {
+		t.Fatalf("nested repository discovery: %#v, %v", list, err)
+	}
+	if list.Repositories[0].Root != first || list.Repositories[1].Root != second {
+		t.Fatalf("nested repository roots: %#v", list.Repositories)
+	}
+}
+
 func TestGitPreservesOddPathsAndRejectsUnsafeOrUnreadablePreviews(t *testing.T) {
 	service, project, repository := newGitFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

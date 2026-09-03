@@ -30,7 +30,7 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Product boundary
 
-- A project is one or more admitted directory roots. It may contain zero, one, or several Git repositories.
+- A project has exactly one admitted directory root. It may contain zero, one, or several Git repositories.
 - Group persistent Goose sessions by project, not by one required Git repository or worktree.
 - Keep Git observational in the UI: discovery, branch/HEAD, status, changed files, and readable diffs. Agents change Git through Goose tools.
 - Keep a bounded read-only file tree and Shiki source preview. Do not add editing, Monaco, LSP, debugger, or collaborative IDE behavior.

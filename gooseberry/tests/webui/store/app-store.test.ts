@@ -30,13 +30,11 @@ const genericProfile: AgentProfile = {
 	},
 };
 
-test("a project area can select any admitted project root for new chats", () => {
-	const multiRoot = { ...project, roots: ["/tmp/project", "/tmp/other"] };
-	expect(projectArea(multiRoot, "/tmp/other").root).toBe("/tmp/other");
-	expect(projectArea(multiRoot, "/tmp/missing").root).toBe("/tmp/project");
+test("a project area always uses the project's sole root", () => {
+	expect(projectArea(project).root).toBe("/tmp/project");
 });
 
-test("content identity keeps same-path files and diffs isolated by their owning root", () => {
+test("content identity keeps file and repository previews isolated", () => {
 	const state = useAppStore.getState();
 	state.openTab(
 		{
@@ -47,18 +45,6 @@ test("content identity keeps same-path files and diffs isolated by their owning 
 			name: "README.md",
 			path: "README.md",
 			content: "first",
-		},
-		"keep",
-	);
-	state.openTab(
-		{
-			kind: "file",
-			id: "file-b",
-			projectAreaId: "p1",
-			root: "/tmp/other",
-			name: "README.md",
-			path: "README.md",
-			content: "second",
 		},
 		"keep",
 	);
@@ -82,7 +68,7 @@ test("content identity keeps same-path files and diffs isolated by their owning 
 			kind: "diff",
 			id: "diff-b",
 			projectAreaId: "p1",
-			repository: "/tmp/other/repo",
+			repository: "/tmp/project/other-repo",
 			name: "file.ts",
 			path: "src/file.ts",
 			scope: { kind: "commit", sha: "bbbb" },
@@ -112,7 +98,7 @@ test("content identity keeps same-path files and diffs isolated by their owning 
 			"keep",
 		);
 	}
-	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(6);
+	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(5);
 });
 
 test("browser panel tabs retain distinct random panel lifecycles", () => {

@@ -111,10 +111,9 @@ export function openFileInTab(
 	reported: string,
 	intent: TabIntent,
 	_requestedNavigation?: unknown,
-	root?: string,
 ): Promise<boolean> {
 	const projectArea = selectProjectAreaById(useAppStore.getState(), projectAreaId);
-	const selectedRoot = root ?? projectArea?.root ?? "";
+	const selectedRoot = projectArea?.root ?? "";
 	const path = projectRelativePath(reported, selectedRoot);
 	const id = tupleKey("file", projectAreaId, selectedRoot, path);
 	return openReadTab(
@@ -127,7 +126,6 @@ export function openFileInTab(
 				? Promise.resolve({ content: "" })
 				: getTransport().request("fs.readFile", {
 						projectId: projectAreaId,
-						root: selectedRoot,
 						path,
 					}),
 		({ content }, loadedTick) => ({
