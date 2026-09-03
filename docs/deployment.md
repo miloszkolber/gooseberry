@@ -6,14 +6,17 @@ Gooseberry supports Linux x86-64 and arm64. It needs Docker Engine with Compose 
 
 Install the GNU archive recorded in [`upstream.json`](../gooseberry/tests/goose/upstream.json), verify its SHA-256 and run `goose --version`. Keep Goose configuration and credentials on the host.
 
+Disable Goose telemetry in `~/.config/goose/config.yaml`:
+
+```yaml
+telemetry_enabled: false
+```
+
 Create `~/.config/goose/service.env` with mode `0600`. Generate separate values with `openssl rand -hex 32`:
 
 ```dotenv
 GOOSE_SERVER__SECRET_KEY=replace-with-a-random-goose-secret
 GOOSEBERRY_BROWSER_TOKEN=replace-with-a-different-random-browser-token
-GOOSE_TELEMETRY_OFF=true
-GOOSE_TELEMETRY_ENABLED=false
-OTEL_SDK_DISABLED=true
 ```
 
 Leave tracing credentials unset unless you use them. Start Goose on loopback; include the scheduler flag when you want schedule controls:
