@@ -38,7 +38,7 @@ func (e *recordingEvents) snapshot() []string {
 func gooseInitializeResponse() map[string]any {
 	return map[string]any{
 		"protocolVersion": 1,
-		"agentInfo":       map[string]any{"name": "goose", "version": "1.48.0"},
+		"agentInfo":       map[string]any{"name": "goose", "version": "1.49.0"},
 		"agentCapabilities": map[string]any{
 			"_meta":       map[string]any{"goose": map[string]any{}},
 			"loadSession": true,

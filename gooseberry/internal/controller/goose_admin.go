@@ -434,15 +434,22 @@ func (a *GooseAdmin) ResetPreferences(ctx context.Context, keys []string) (Goose
 		return GoosePreferences{}, fmt.Errorf("malformed Goose preferences request")
 	}
 	seen := make(map[string]bool)
+	configKeys := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if seen[key] || (key != "autoCompactThreshold" && key != "gooseThinkingEffort") {
 			return GoosePreferences{}, fmt.Errorf("malformed Goose preferences request")
 		}
 		seen[key] = true
+		if key == "autoCompactThreshold" {
+			configKeys = append(configKeys, "GOOSE_AUTO_COMPACT_THRESHOLD")
+		} else {
+			configKeys = append(configKeys, "GOOSE_THINKING_EFFORT")
+		}
 	}
-	var ignored any
-	if err := a.call(ctx, "_goose/unstable/preferences/remove", map[string]any{"keys": keys}, &ignored); err != nil {
-		return GoosePreferences{}, err
+	for _, key := range configKeys {
+		if err := a.call(ctx, "_goose/unstable/config/remove", map[string]any{"key": key, "isSecret": false}, nil); err != nil {
+			return GoosePreferences{}, err
+		}
 	}
 	return a.ReadPreferences(ctx)
 }

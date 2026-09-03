@@ -20,7 +20,7 @@ Session command catalogs come from standard ACP updates. They refresh after reco
 
 ## Built-in extensions
 
-Extensions execute inside Goose. The Web UI manages the configuration Goose exposes and renders text, images, structured results and escaped resources.
+Extensions execute inside Goose. The Web UI manages the configuration Goose exposes and renders text, images, structured results and escaped resources. Goose 1.49 keeps configured state authoritative over ACP and publishes its bundled extension definitions with the client source, which Gooseberry uses only as the addable built-in catalog.
 
 | Extension | Web UI coverage |
 | --- | --- |
@@ -38,7 +38,7 @@ Extensions execute inside Goose. The Web UI manages the configuration Goose expo
 | `todo` | Goose checklist results, separate from Gooseberry goals and tasks. |
 | `tom` | Context injection; no separate UI control is required. |
 
-The list follows the [supported Goose registry](https://github.com/aaif-goose/goose/blob/25021517f12cab87c94bed0874fe7d28168dc264/crates/goose/src/agents/platform_extensions/mod.rs). Goose omits scheduler and orchestrator from its normal extension catalogs. Summon child activity is transient and bounded; child approvals remain in Auto mode because [Goose does not yet forward them](https://github.com/aaif-goose/goose/blob/25021517f12cab87c94bed0874fe7d28168dc264/crates/goose/src/agents/platform_extensions/summon.rs#L1376).
+The list follows the [supported Goose registry](https://github.com/aaif-goose/goose/blob/71fc4be1ed729e26b1dc0a4466abdd03be548a53/crates/goose/src/agents/platform_extensions/mod.rs). Goose omits scheduler and orchestrator from its normal extension catalogs. Summon child activity is transient and bounded; child approvals remain in Auto mode because [Goose does not yet forward them](https://github.com/aaif-goose/goose/blob/71fc4be1ed729e26b1dc0a4466abdd03be548a53/crates/goose/src/agents/platform_extensions/summon.rs).
 
 Interactive Apps use trusted `ui://` metadata from Goose. Gooseberry mediates resource reads and tool calls through the attached project, session, tool call and extension. The HTML runs on the browser service's separate origin with a bounded policy and a short-lived ticket.
 

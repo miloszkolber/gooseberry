@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -110,8 +111,76 @@ func checkMethods(source, controllerDir string) error {
 			return fmt.Errorf("candidate Goose no longer registers required method %s; review compatibility before updating pins", method)
 		}
 	}
+	if err := checkExtensionShapes(source); err != nil {
+		return err
+	}
+	if err := checkBundledExtensions(source, controllerDir); err != nil {
+		return err
+	}
 	fmt.Printf("verified %d required Goose methods and notifications\n", len(required))
 	return nil
+}
+
+func checkBundledExtensions(source, controllerDir string) error {
+	upstream, err := os.ReadFile(filepath.Join(source, "ui/desktop/src/components/settings/extensions/bundled-extensions.json"))
+	if err != nil {
+		return err
+	}
+	local, err := os.ReadFile(filepath.Join(controllerDir, "bundled-extensions.json"))
+	if err != nil {
+		return err
+	}
+	var upstreamValue, localValue any
+	if err := json.Unmarshal(upstream, &upstreamValue); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(local, &localValue); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(upstreamValue, localValue) {
+		return fmt.Errorf("Gooseberry bundled extension catalog does not match the candidate Goose source")
+	}
+	return nil
+}
+
+func checkExtensionShapes(source string) error {
+	raw, err := os.ReadFile(filepath.Join(source, "crates/goose/acp-schema.json"))
+	if err != nil {
+		return err
+	}
+	var schema struct {
+		Definitions map[string]struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return err
+	}
+	for definition, required := range map[string][]string{
+		"RemoveSessionExtensionRequest_unstable": {"sessionId", "extensionKey"},
+		"SessionExtensionEntry":                  {"extension", "extensionKey"},
+	} {
+		shape, ok := schema.Definitions[definition]
+		if !ok {
+			return fmt.Errorf("candidate Goose schema omitted %s", definition)
+		}
+		for _, property := range required {
+			if _, ok := shape.Properties[property]; !ok || !containsString(shape.Required, property) {
+				return fmt.Errorf("candidate Goose schema %s does not require %s", definition, property)
+			}
+		}
+	}
+	return nil
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func checkRuntime(url string) error {

@@ -23,8 +23,13 @@ func TestMethodGateRejectsRemovedRegistrationAndUnknownDynamicCalls(t *testing.T
 	dispatch := "#[custom_method(ProvidersRequest)]"
 	consumer := "package controller\nconst method = \"_goose/unstable/providers/list\"\nconst notification = \"_goose/unstable/session/update\"\n"
 	metadataPath := filepath.Join(source, "crates/goose/acp-meta.json")
+	schemaPath := filepath.Join(source, "crates/goose/acp-schema.json")
+	bundledPath := filepath.Join(source, "ui/desktop/src/components/settings/extensions/bundled-extensions.json")
 	dispatchPath := filepath.Join(source, "crates/goose/src/acp/server/custom_dispatch.rs")
 	consumerPath := filepath.Join(controllerDir, "client.go")
+	write(schemaPath, `{"$defs":{"RemoveSessionExtensionRequest_unstable":{"properties":{"sessionId":{},"extensionKey":{}},"required":["sessionId","extensionKey"]},"SessionExtensionEntry":{"properties":{"extension":{},"extensionKey":{}},"required":["extension","extensionKey"]}}}`)
+	write(bundledPath, `[{"name":"developer"}]`)
+	write(filepath.Join(controllerDir, "bundled-extensions.json"), `[{"name":"developer"}]`)
 	for _, scenario := range []struct {
 		name, metadata, dispatch, consumer string
 		fails                              bool
@@ -43,5 +48,20 @@ func TestMethodGateRejectsRemovedRegistrationAndUnknownDynamicCalls(t *testing.T
 				t.Fatalf("checkMethods() = %v, want failure %v", err, scenario.fails)
 			}
 		})
+	}
+}
+
+func TestExtensionShapeGateRejectsObsoleteSessionIdentity(t *testing.T) {
+	source := t.TempDir()
+	path := filepath.Join(source, "crates/goose/acp-schema.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	obsolete := `{"$defs":{"RemoveSessionExtensionRequest_unstable":{"properties":{"sessionId":{},"name":{}},"required":["sessionId","name"]},"SessionExtensionEntry":{"properties":{"extension":{}},"required":["extension"]}}}`
+	if err := os.WriteFile(path, []byte(obsolete), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkExtensionShapes(source); err == nil {
+		t.Fatal("obsolete session extension schema passed compatibility gate")
 	}
 }

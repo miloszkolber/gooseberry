@@ -41,9 +41,9 @@ import type {
 	GooseAutomationSchedule,
 	GooseAutomationSession,
 	GooseExtensionCatalog,
-	GooseExtensionSummary,
 	GoosePreferences,
 	GooseProviderDefaults,
+	GooseSessionExtensionSummary,
 	GooseToolPermission,
 	GooseToolSummary,
 	HistoryScope,
@@ -58,7 +58,7 @@ import type {
 	TextResourceAttachment,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 81;
+export const PROTOCOL_VERSION = 82;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -581,15 +581,15 @@ export interface WsMethodMap {
 	"goose.extensionRemove": { params: { configKey: string }; result: GooseExtensionCatalog };
 	"session.extensionList": {
 		params: { projectId: string; sessionId: string };
-		result: GooseExtensionSummary[];
+		result: GooseSessionExtensionSummary[];
 	};
 	"session.extensionAdd": {
 		params: { projectId: string; sessionId: string; name: string };
-		result: GooseExtensionSummary[];
+		result: GooseSessionExtensionSummary[];
 	};
 	"session.extensionRemove": {
-		params: { projectId: string; sessionId: string; name: string };
-		result: GooseExtensionSummary[];
+		params: { projectId: string; sessionId: string; extensionKey: string };
+		result: GooseSessionExtensionSummary[];
 	};
 	"session.toolList": {
 		params: { projectId: string; sessionId: string };

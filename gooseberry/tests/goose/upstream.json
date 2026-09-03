@@ -1,14 +1,14 @@
 {
 	"repository": "aaif-goose/goose",
-	"version": "v1.48.0",
+	"version": "v1.49.0",
 	"artifacts": {
 		"arm64": {
 			"name": "goose-aarch64-unknown-linux-gnu.tar.gz",
-			"sha256": "b6506e73ec15637ac7cd8d3c09df97f5eeff5400946a9e8f0d4c8f5905e53f3b"
+			"sha256": "833be4a86ed47e39e19f96e3fce01ee6170599c6e1220248c4e38187d245d3cc"
 		},
 		"amd64": {
 			"name": "goose-x86_64-unknown-linux-gnu.tar.gz",
-			"sha256": "3c38c790723fde4532357f35346b7190bd70d198e6be559f9ffeac4cf7c98152"
+			"sha256": "38d5035e4a786f6b62abe0cd0f2bef7e6ac8041e3e006e2000561dd8df6aead3"
 		}
 	}
 }

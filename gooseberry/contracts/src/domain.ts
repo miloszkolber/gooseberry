@@ -136,6 +136,11 @@ export interface GooseConfiguredExtensionSummary extends GooseExtensionSummary {
 	configKey?: string;
 }
 
+/** Session state includes Goose's authoritative key for safe removal. */
+export interface GooseSessionExtensionSummary extends GooseExtensionSummary {
+	extensionKey: string;
+}
+
 export interface GooseExtensionCatalog {
 	configured: GooseConfiguredExtensionSummary[];
 	available: GooseExtensionSummary[];

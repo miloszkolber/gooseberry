@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -78,6 +79,85 @@ func TestGooseAdminModelsRequireExplicitProviderConfiguration(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing providers: %#v", want)
+	}
+}
+
+func TestGooseAdminUsesReleaseMatchedExtensionsAndGenericPreferenceRemoval(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	var removed []string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(response, request, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer connection.CloseNow()
+		for {
+			_, payload, err := connection.Read(context.Background())
+			if err != nil {
+				return
+			}
+			var rpc struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params map[string]any  `json:"params"`
+			}
+			if json.Unmarshal(payload, &rpc) != nil {
+				return
+			}
+			mu.Lock()
+			methods = append(methods, rpc.Method)
+			mu.Unlock()
+			var result any = map[string]any{}
+			switch rpc.Method {
+			case "initialize":
+				result = gooseInitializeResponse()
+			case "_goose/unstable/config/extensions/list":
+				result = map[string]any{"extensions": []any{}, "warnings": []any{}}
+			case "_goose/unstable/config/remove":
+				mu.Lock()
+				removed = append(removed, rpc.Params["key"].(string))
+				mu.Unlock()
+			case "_goose/unstable/preferences/read":
+				result = map[string]any{"values": []any{
+					map[string]any{"key": "autoCompactThreshold", "value": nil},
+					map[string]any{"key": "gooseThinkingEffort", "value": nil},
+				}}
+			}
+			if writeRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result}) != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	client := controller.NewGooseClient("ws"+strings.TrimPrefix(server.URL, "http"), "", "test", nil)
+	defer client.Close()
+	admin := controller.NewGooseAdmin(client, controller.NewSettings(persist.Store{Dir: t.TempDir()}, nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	catalogValue, err := admin.Handle(ctx, "goose.extensionList", []byte(`{}`), "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogValue.(map[string]any)
+	available := catalog["available"].([]map[string]any)
+	if len(available) != 5 || available[0]["name"] != "developer" || available[4]["name"] != "tutorial" {
+		t.Fatalf("unexpected bundled extension catalog: %#v", available)
+	}
+	if _, err := admin.ResetPreferences(ctx, []string{"autoCompactThreshold", "gooseThinkingEffort"}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(removed, ",") != "GOOSE_AUTO_COMPACT_THRESHOLD,GOOSE_THINKING_EFFORT" {
+		t.Fatalf("removed keys = %v", removed)
+	}
+	for _, method := range methods {
+		if method == "_goose/unstable/extensions/available" || method == "_goose/unstable/preferences/remove" {
+			t.Fatalf("called removed Goose method %s", method)
+		}
 	}
 }
 

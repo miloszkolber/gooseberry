@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,6 +12,14 @@ type gooseExtension struct {
 	raw     map[string]any
 	summary map[string]any
 }
+
+// Goose 1.49 moved its bundled extension catalog out of ACP and into clients.
+// Goose remains authoritative for configured state.
+//
+//go:embed bundled-extensions.json
+var bundledGooseExtensionsJSON []byte
+
+var bundledGooseExtensions = mustBundledGooseExtensions()
 
 func (a *GooseAdmin) Handle(ctx context.Context, method string, raw json.RawMessage, clientKey string) (any, error) {
 	var request map[string]any
@@ -59,11 +68,7 @@ func (a *GooseAdmin) Handle(ctx context.Context, method string, raw json.RawMess
 			if findExtension(configured, "name", name) != nil {
 				return nil, fmt.Errorf("extension is already configured: %s", name)
 			}
-			available, _, err := a.extensions(ctx, "_goose/unstable/extensions/available", nil, false)
-			if err != nil {
-				return nil, err
-			}
-			extension := findExtension(available, "name", name)
+			extension := findExtension(bundledGooseExtensions, "name", name)
 			if extension == nil {
 				return nil, fmt.Errorf("unknown available extension: %s", name)
 			}
@@ -109,11 +114,7 @@ func (a *GooseAdmin) extensionCatalog(ctx context.Context) (map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
-	available, _, err := a.extensions(ctx, "_goose/unstable/extensions/available", nil, false)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"configured": extensionSummaries(configured), "available": extensionSummaries(available), "warningCount": warnings}, nil
+	return map[string]any{"configured": extensionSummaries(configured), "available": extensionSummaries(bundledGooseExtensions), "warningCount": warnings}, nil
 }
 
 func (a *GooseAdmin) extensions(ctx context.Context, method string, params map[string]any, configured bool) ([]gooseExtension, int, error) {
@@ -133,49 +134,24 @@ func (a *GooseAdmin) extensions(ctx context.Context, method string, params map[s
 		if configured {
 			raw = mapValue(value["extension"])
 		}
-		kind := textValue(raw["type"])
-		if kind != "builtin" && kind != "platform" && kind != "mcp" {
-			return nil, 0, fmt.Errorf("Goose extension has an unsupported type")
-		}
-		nameValue := raw["name"]
-		if kind == "mcp" {
-			nameValue = mapValue(raw["server"])["name"]
-		}
-		name, err := requiredIdentifier(nameValue, "Extension name")
+		extension, err := summarizeExtension(raw)
 		if err != nil {
 			return nil, 0, err
-		}
-		summary := map[string]any{"name": name, "type": kind}
-		if description, ok := raw["description"].(string); ok {
-			summary["description"] = description
-		}
-		if bundled, ok := raw["bundled"].(bool); ok {
-			summary["bundled"] = bundled
-		}
-		if display, ok := firstString(raw["displayName"], raw["display_name"]); ok {
-			summary["displayName"] = display
-		}
-		tools := stringValues(raw["availableTools"])
-		if len(tools) == 0 {
-			tools = stringValues(raw["available_tools"])
-		}
-		if len(tools) > 0 {
-			summary["availableTools"] = tools
 		}
 		if configured {
 			enabled, ok := value["enabled"].(bool)
 			if !ok {
 				return nil, 0, fmt.Errorf("Goose configured extension is missing enabled")
 			}
-			summary["enabled"] = enabled
+			extension.summary["enabled"] = enabled
 			if key, exists := value["configKey"]; exists && key != nil {
 				if _, err := requiredIdentifier(key, "Extension config key"); err != nil {
 					return nil, 0, err
 				}
-				summary["configKey"] = key
+				extension.summary["configKey"] = key
 			}
 		}
-		result = append(result, gooseExtension{raw: raw, summary: summary})
+		result = append(result, extension)
 	}
 	warnings := 0
 	for _, warning := range response.Warnings {
@@ -258,20 +234,16 @@ func (a *GooseAdmin) sessionAdministration(ctx context.Context, method string, r
 		return a.sessionTools(ctx, sessionID)
 	}
 	if mutation {
-		name, err := requiredIdentifier(request["name"], "Extension name")
-		if err != nil {
-			return nil, err
-		}
 		if method == "session.extensionAdd" {
+			name, err := requiredIdentifier(request["name"], "Extension name")
+			if err != nil {
+				return nil, err
+			}
 			configured, _, err := a.extensions(ctx, "_goose/unstable/config/extensions/list", nil, true)
 			if err != nil {
 				return nil, err
 			}
-			available, _, err := a.extensions(ctx, "_goose/unstable/extensions/available", nil, false)
-			if err != nil {
-				return nil, err
-			}
-			extension := findExtension(append(configured, available...), "name", name)
+			extension := findExtension(append(configured, bundledGooseExtensions...), "name", name)
 			if extension == nil {
 				return nil, fmt.Errorf("unknown extension: %s", name)
 			}
@@ -279,20 +251,55 @@ func (a *GooseAdmin) sessionAdministration(ctx context.Context, method string, r
 				return nil, err
 			}
 		} else {
-			active, _, err := a.extensions(ctx, "_goose/unstable/session/extensions/list", params, false)
+			key, err := requiredIdentifier(request["extensionKey"], "Session extension key")
 			if err != nil {
 				return nil, err
 			}
-			if findExtension(active, "name", name) == nil {
-				return nil, fmt.Errorf("extension is not active for this chat: %s", name)
+			active, err := a.sessionExtensions(ctx, params)
+			if err != nil {
+				return nil, err
 			}
-			if err := a.call(ctx, "_goose/unstable/session/extensions/remove", map[string]any{"sessionId": sessionID, "name": name}, nil); err != nil {
+			if findExtension(active, "extensionKey", key) == nil {
+				return nil, fmt.Errorf("extension is not active for this chat")
+			}
+			if err := a.call(ctx, "_goose/unstable/session/extensions/remove", map[string]any{"sessionId": sessionID, "extensionKey": key}, nil); err != nil {
 				return nil, err
 			}
 		}
 	}
-	extensions, _, err := a.extensions(ctx, "_goose/unstable/session/extensions/list", params, false)
+	extensions, err := a.sessionExtensions(ctx, params)
 	return extensionSummaries(extensions), err
+}
+
+func (a *GooseAdmin) sessionExtensions(ctx context.Context, params map[string]any) ([]gooseExtension, error) {
+	var response struct {
+		Extensions []struct {
+			Extension    map[string]any `json:"extension"`
+			ExtensionKey string         `json:"extensionKey"`
+		} `json:"extensions"`
+	}
+	if err := a.call(ctx, "_goose/unstable/session/extensions/list", params, &response); err != nil {
+		return nil, err
+	}
+	result := make([]gooseExtension, 0, len(response.Extensions))
+	keys := make(map[string]bool, len(response.Extensions))
+	for _, entry := range response.Extensions {
+		key, err := requiredIdentifier(entry.ExtensionKey, "Session extension key")
+		if err != nil {
+			return nil, err
+		}
+		if keys[key] {
+			return nil, fmt.Errorf("Goose session extension key is duplicated: %s", key)
+		}
+		keys[key] = true
+		extension, err := summarizeExtension(entry.Extension)
+		if err != nil {
+			return nil, err
+		}
+		extension.summary["extensionKey"] = key
+		result = append(result, extension)
+	}
+	return result, nil
 }
 
 func (a *GooseAdmin) sessionTools(ctx context.Context, sessionID string) ([]map[string]any, error) {
@@ -365,4 +372,58 @@ func findExtension(values []gooseExtension, key, value string) *gooseExtension {
 		}
 	}
 	return nil
+}
+
+func mustBundledGooseExtensions() []gooseExtension {
+	var definitions []map[string]any
+	if err := json.Unmarshal(bundledGooseExtensionsJSON, &definitions); err != nil {
+		panic(err)
+	}
+	result := make([]gooseExtension, 0, len(definitions))
+	for _, definition := range definitions {
+		raw := map[string]any{
+			"type": definition["type"], "name": definition["name"],
+			"display_name": definition["display_name"], "description": definition["description"],
+			"timeout": definition["timeout"], "bundled": definition["bundled"],
+		}
+		for key, value := range raw {
+			if value == nil {
+				delete(raw, key)
+			}
+		}
+		extension, err := summarizeExtension(raw)
+		if err != nil {
+			panic(err)
+		}
+		result = append(result, extension)
+	}
+	return result
+}
+
+func summarizeExtension(raw map[string]any) (gooseExtension, error) {
+	kind := textValue(raw["type"])
+	if kind != "builtin" && kind != "platform" && kind != "mcp" {
+		return gooseExtension{}, fmt.Errorf("Goose extension has an unsupported type")
+	}
+	nameValue := raw["name"]
+	if kind == "mcp" {
+		nameValue = mapValue(raw["server"])["name"]
+	}
+	name, err := requiredIdentifier(nameValue, "Extension name")
+	if err != nil {
+		return gooseExtension{}, err
+	}
+	summary := map[string]any{"name": name, "type": kind}
+	copyFields(summary, raw, "description", "bundled")
+	if display, ok := firstString(raw["displayName"], raw["display_name"]); ok {
+		summary["displayName"] = display
+	}
+	tools := stringValues(raw["availableTools"])
+	if len(tools) == 0 {
+		tools = stringValues(raw["available_tools"])
+	}
+	if len(tools) > 0 {
+		summary["availableTools"] = tools
+	}
+	return gooseExtension{raw: raw, summary: summary}, nil
 }

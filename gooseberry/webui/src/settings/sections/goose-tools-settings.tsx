@@ -1,6 +1,7 @@
 import type {
 	GooseExtensionCatalog,
 	GooseExtensionSummary,
+	GooseSessionExtensionSummary,
 	GooseToolPermission,
 	GooseToolSummary,
 } from "@gooseberry/contracts";
@@ -24,7 +25,7 @@ export function GooseToolsSettings() {
 	const activeProjectId = activeArea?.projectId ?? null;
 	const activeSessionId = activeTab?.kind === "chat" ? activeTab.sessionId : null;
 	const [catalog, setCatalog] = useState<GooseExtensionCatalog | null>(null);
-	const [extensions, setExtensions] = useState<GooseExtensionSummary[]>([]);
+	const [extensions, setExtensions] = useState<GooseSessionExtensionSummary[]>([]);
 	const [tools, setTools] = useState<GooseToolSummary[]>([]);
 	const [loadedSessionTarget, setLoadedSessionTarget] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
@@ -258,7 +259,7 @@ export function GooseToolsSettings() {
 						<div className="flex flex-wrap gap-sm">
 							{extensions.map((extension) => (
 								<div
-									key={extension.name}
+									key={extension.extensionKey}
 									className="flex items-center gap-xs rounded-[var(--radius-sm)] border border-border-default p-xs"
 								>
 									<span className="text-text-default tr-text-ui">
@@ -270,10 +271,10 @@ export function GooseToolsSettings() {
 										disabled={busy !== null}
 										aria-label={`Remove ${extension.displayName ?? extension.name} from active chat`}
 										onClick={() =>
-											void mutate(`session-remove:${extension.name}`, () =>
+											void mutate(`session-remove:${extension.extensionKey}`, () =>
 												getTransport().request("session.extensionRemove", {
 													...sessionParams(),
-													name: extension.name,
+													extensionKey: extension.extensionKey,
 												}),
 											)
 										}
