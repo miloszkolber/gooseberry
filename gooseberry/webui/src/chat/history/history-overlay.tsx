@@ -1,6 +1,6 @@
 import type { HistoryScope, MessageHit, PromptHit } from "@gooseberry/contracts";
 import { Check, CornerUpRight, Trash2 } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -60,6 +60,12 @@ function Highlight({ text, query }: { text: string; query: string }) {
 	);
 }
 
+function historyOptionKey(item: HistorySelection): string {
+	return item.kind === "prompt"
+		? `p:${item.hit.sessionId}:${item.hit.messageIndex ?? item.hit.timestamp}`
+		: `m:${item.hit.sessionId}:${item.hit.messageIndex}`;
+}
+
 function DeleteChatButton({
 	projectAreaId,
 	sessionId,
@@ -104,6 +110,7 @@ function PromptRow({
 	scope,
 	projectAreaName,
 	isSelected,
+	optionId,
 	onPick,
 	onOpenMessage,
 	onDeleteChat,
@@ -114,6 +121,7 @@ function PromptRow({
 	scope: HistoryScope;
 	projectAreaName: string | undefined;
 	isSelected: boolean;
+	optionId: string;
 	onPick: () => void;
 	onOpenMessage: (target: ChatLocationRequest) => void;
 	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
@@ -123,10 +131,12 @@ function PromptRow({
 	const showChip = (scope.kind === "project" || scope.kind === "all") && !!hit.projectId;
 	const target = jumpTarget(hit);
 	return (
-		<div
+		<li
 			data-testid="history-item"
 			data-kind="prompt"
 			data-selected={isSelected}
+			id={optionId}
+			aria-current={isSelected}
 			className={`group flex w-full items-center gap-xs rounded-[var(--radius-sm)] border-l-2 py-xs pl-sm pr-xs text-left tr-text-ui ${
 				isSelected
 					? "border-l-primary bg-control-bg-selected text-text-default"
@@ -184,7 +194,7 @@ function PromptRow({
 				onDeleteChat={onDeleteChat}
 				deleteUnavailableReason={deleteUnavailableReason}
 			/>
-		</div>
+		</li>
 	);
 }
 
@@ -192,6 +202,7 @@ function MessageRow({
 	hit,
 	query,
 	isSelected,
+	optionId,
 	onPick,
 	onDeleteChat,
 	deleteUnavailableReason,
@@ -199,16 +210,19 @@ function MessageRow({
 	hit: MessageHit;
 	query: string;
 	isSelected: boolean;
+	optionId: string;
 	onPick: () => void;
 	onDeleteChat: (projectAreaId: string, sessionId: string) => void;
 	deleteUnavailableReason?: string | undefined;
 }) {
 	const unmapped = !hit.projectId;
 	return (
-		<div
+		<li
 			data-testid="history-item"
 			data-kind="message"
 			data-selected={isSelected}
+			id={optionId}
+			aria-current={isSelected}
 			className={`group flex w-full items-center gap-xs rounded-[var(--radius-sm)] border-l-2 pr-xs tr-text-ui ${
 				isSelected
 					? "border-l-primary bg-control-bg-selected text-text-default"
@@ -242,7 +256,7 @@ function MessageRow({
 				onDeleteChat={onDeleteChat}
 				deleteUnavailableReason={deleteUnavailableReason}
 			/>
-		</div>
+		</li>
 	);
 }
 
@@ -328,6 +342,7 @@ export function HistoryOverlay({
 	const { open, stage, query, scope, result, selected, error } = state;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const resultsRef = useRef<HTMLDivElement>(null);
+	const resultsId = useId();
 	const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
 
 	useEffect(() => {
@@ -352,11 +367,9 @@ export function HistoryOverlay({
 
 	const selectedKey = useMemo(() => {
 		const sel = resolveHistorySelection(stage, result, selected);
-		if (!sel) return null;
-		return sel.kind === "prompt"
-			? `p:${sel.hit.sessionId}:${sel.hit.messageIndex ?? sel.hit.timestamp}`
-			: `m:${sel.hit.sessionId}:${sel.hit.messageIndex}`;
+		return sel ? historyOptionKey(sel) : null;
 	}, [stage, result, selected]);
+	const selectedStatusId = `${resultsId}-selection`;
 
 	useEffect(() => {
 		if (selectedKey === null) return;
@@ -404,6 +417,12 @@ export function HistoryOverlay({
 	const isEmpty = !!result && !result.indexing && !hasResults;
 
 	const selectedItem = resolveHistorySelection(stage, result, selected);
+	const selectionCount = result
+		? result.prompts.length + (stage === "zoomed" ? result.messages.length : 0)
+		: 0;
+	const selectedAnnouncement = selectedItem
+		? `Selected ${selected + 1} of ${selectionCount}: ${selectedItem.hit.text.split("\n")[0] ?? selectedItem.hit.text}`
+		: "No history result selected";
 	const selectedProjectAreaName = selectedItem?.hit.projectId
 		? projectAreaNames[selectedItem.hit.projectId]
 		: undefined;
@@ -437,20 +456,23 @@ export function HistoryOverlay({
 									{promptCount}/{result.promptTotal}
 								</span>
 							</div>
-							{result.prompts.map((hit, i) => (
-								<PromptRow
-									key={`${hit.sessionId}:${hit.messageIndex}`}
-									hit={hit}
-									query={query}
-									scope={scope}
-									projectAreaName={hit.projectId ? projectAreaNames[hit.projectId] : undefined}
-									isSelected={i === selected}
-									onPick={() => onInsert(hit)}
-									onOpenMessage={onOpenMessage}
-									onDeleteChat={onDeleteChat}
-									deleteUnavailableReason={deleteUnavailableReason}
-								/>
-							))}
+							<ul aria-label="Prompt history results" className="flex flex-col gap-0.5">
+								{result.prompts.map((hit, i) => (
+									<PromptRow
+										key={`${hit.sessionId}:${hit.messageIndex}`}
+										hit={hit}
+										query={query}
+										scope={scope}
+										projectAreaName={hit.projectId ? projectAreaNames[hit.projectId] : undefined}
+										isSelected={i === selected}
+										optionId={`${resultsId}-option-p:${hit.sessionId}:${hit.messageIndex ?? hit.timestamp}`}
+										onPick={() => onInsert(hit)}
+										onOpenMessage={onOpenMessage}
+										onDeleteChat={onDeleteChat}
+										deleteUnavailableReason={deleteUnavailableReason}
+									/>
+								))}
+							</ul>
 						</div>
 					) : null}
 					{stage === "zoomed" && result.messages.length > 0 ? (
@@ -461,20 +483,23 @@ export function HistoryOverlay({
 									{messageCount}/{result.messageTotal}
 								</span>
 							</div>
-							{result.messages.map((hit, i) => (
-								<MessageRow
-									key={`${hit.sessionId}:${hit.messageIndex}`}
-									hit={hit}
-									query={query}
-									isSelected={result.prompts.length + i === selected}
-									onPick={() => {
-										const target = jumpTarget(hit);
-										if (target) onOpenMessage(target);
-									}}
-									onDeleteChat={onDeleteChat}
-									deleteUnavailableReason={deleteUnavailableReason}
-								/>
-							))}
+							<ul aria-label="Conversation history results" className="flex flex-col gap-0.5">
+								{result.messages.map((hit, i) => (
+									<MessageRow
+										key={`${hit.sessionId}:${hit.messageIndex}`}
+										hit={hit}
+										query={query}
+										isSelected={result.prompts.length + i === selected}
+										optionId={`${resultsId}-option-m:${hit.sessionId}:${hit.messageIndex}`}
+										onPick={() => {
+											const target = jumpTarget(hit);
+											if (target) onOpenMessage(target);
+										}}
+										onDeleteChat={onDeleteChat}
+										deleteUnavailableReason={deleteUnavailableReason}
+									/>
+								))}
+							</ul>
 						</div>
 					) : null}
 				</div>
@@ -492,14 +517,20 @@ export function HistoryOverlay({
 		>
 			<div className="flex items-center gap-sm border-b border-border-default p-sm">
 				<input
+					type="search"
 					ref={inputRef}
 					data-testid="history-query"
+					aria-controls={resultsId}
+					aria-describedby={selectedStatusId}
 					value={query}
 					onChange={(e) => onQueryChange(e.target.value)}
 					onKeyDown={onKeyDown}
 					placeholder="Search prompts and conversations…"
 					className="min-w-0 flex-1 bg-transparent tr-text-ui text-text-default outline-none placeholder:text-text-muted"
 				/>
+				<span id={selectedStatusId} role="status" aria-live="polite" className="sr-only">
+					{selectedAnnouncement}
+				</span>
 				<DropdownMenu open={scopeMenuOpen} onOpenChange={setScopeMenuOpen}>
 					<DropdownMenuTrigger
 						data-testid="history-scope"
@@ -540,6 +571,7 @@ export function HistoryOverlay({
 					<div
 						ref={resultsRef}
 						data-testid="history-results"
+						id={resultsId}
 						className="max-h-[37.5vh] overflow-y-auto md:max-h-[75vh] md:w-[55%]"
 					>
 						{resultsBody}
@@ -555,6 +587,7 @@ export function HistoryOverlay({
 				<div
 					ref={resultsRef}
 					data-testid="history-results"
+					id={resultsId}
 					className="max-h-[40vh] overflow-y-auto"
 				>
 					{resultsBody}

@@ -111,6 +111,8 @@ export function ModelsSettings() {
 	const loadSequence = useRef(0);
 	const forceRefreshSequence = useRef(0);
 	const forceRefreshInFlight = useRef(false);
+	const visibilityMutationInFlight = useRef(false);
+	const visibilityMutationSequence = useRef(0);
 	const mounted = useRef(false);
 
 	useEffect(() => {
@@ -124,6 +126,7 @@ export function ModelsSettings() {
 	const load = useCallback(async (force = false) => {
 		if (!shouldLoadModelCatalog(force, forceRefreshInFlight.current)) return;
 		const sequence = ++loadSequence.current;
+		const visibilitySequence = visibilityMutationSequence.current;
 		if (force) {
 			forceRefreshInFlight.current = true;
 			forceRefreshSequence.current = sequence;
@@ -143,7 +146,12 @@ export function ModelsSettings() {
 						report,
 						complete: true,
 					}));
-			if (!mounted.current || sequence !== loadSequence.current) return;
+			if (
+				!mounted.current ||
+				sequence !== loadSequence.current ||
+				visibilitySequence !== visibilityMutationSequence.current
+			)
+				return;
 			setModels(result.models);
 			setReport(result.report);
 			setMetadataIncomplete(force && !result.complete);
@@ -180,6 +188,9 @@ export function ModelsSettings() {
 	const visibleCount = catalog.filter((model) => !model.hidden).length;
 
 	const setVisibility = useCallback(async (model: WireModel, hidden: boolean) => {
+		if (visibilityMutationInFlight.current) return;
+		visibilityMutationInFlight.current = true;
+		visibilityMutationSequence.current += 1;
 		const key = `${model.provider}\0${model.id}`;
 		setBusyModel(key);
 		try {
@@ -192,11 +203,15 @@ export function ModelsSettings() {
 		} catch (error) {
 			toast.error(errorText(error), hidden ? "Couldn't hide the model" : "Couldn't show the model");
 		} finally {
+			visibilityMutationInFlight.current = false;
 			setBusyModel(null);
 		}
 	}, []);
 
 	const setAllVisibility = useCallback(async (hidden: boolean) => {
+		if (visibilityMutationInFlight.current) return;
+		visibilityMutationInFlight.current = true;
+		visibilityMutationSequence.current += 1;
 		setBulkBusy(true);
 		try {
 			const next = await getTransport().request("model.setAllVisibility", { hidden });
@@ -207,6 +222,7 @@ export function ModelsSettings() {
 				hidden ? "Couldn't hide all models" : "Couldn't show all models",
 			);
 		} finally {
+			visibilityMutationInFlight.current = false;
 			setBulkBusy(false);
 		}
 	}, []);
@@ -229,7 +245,7 @@ export function ModelsSettings() {
 						variant="outline"
 						size="sm"
 						title="Hide every model in Gooseberry, including models from disconnected providers"
-						disabled={bulkBusy || models.length === 0}
+						disabled={bulkBusy || busyModel !== null || models.length === 0}
 						onClick={() => void setAllVisibility(true)}
 					>
 						Hide all
@@ -238,7 +254,7 @@ export function ModelsSettings() {
 						variant="outline"
 						size="sm"
 						title="Show every model in Gooseberry, including models from disconnected providers"
-						disabled={bulkBusy || models.length === 0}
+						disabled={bulkBusy || busyModel !== null || models.length === 0}
 						onClick={() => void setAllVisibility(false)}
 					>
 						Show all
@@ -247,7 +263,7 @@ export function ModelsSettings() {
 						variant="ghost"
 						size="sm"
 						aria-label="Refresh model catalog"
-						disabled={refreshing}
+						disabled={refreshing || bulkBusy || busyModel !== null}
 						onClick={() => void load(true)}
 					>
 						<RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
@@ -282,6 +298,7 @@ export function ModelsSettings() {
 					models={filtered}
 					providers={providers}
 					busyModel={busyModel}
+					visibilityBusy={bulkBusy || busyModel !== null}
 					onSetVisibility={setVisibility}
 				/>
 			)}
@@ -293,11 +310,13 @@ export function ModelCatalogList({
 	models,
 	providers,
 	busyModel,
+	visibilityBusy = false,
 	onSetVisibility,
 }: {
 	models: readonly WireModel[];
 	providers: ReadonlyMap<string, ProviderStatus>;
 	busyModel: string | null;
+	visibilityBusy?: boolean;
 	onSetVisibility: (model: WireModel, hidden: boolean) => void;
 }) {
 	const groups = new Map<string, WireModel[]>();
@@ -324,7 +343,7 @@ export function ModelCatalogList({
 							<ModelRow
 								key={`${model.provider}\0${model.id}`}
 								model={model}
-								busy={busyModel === `${model.provider}\0${model.id}`}
+								busy={visibilityBusy || busyModel === `${model.provider}\0${model.id}`}
 								withBorder={index > 0}
 								onSetVisibility={onSetVisibility}
 							/>

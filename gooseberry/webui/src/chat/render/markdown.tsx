@@ -1,7 +1,6 @@
 import { type ComponentProps, memo, type ReactNode, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { highlightCode } from "@/lib/highlighter";
 
 const CHAT_PROSE =
 	"tr-prose-chat max-w-none break-words [&_a]:text-primary [&_a]:underline [&_li]:my-0.5 [&_ol]:my-sm [&_ol]:list-decimal [&_ol]:pl-lg [&_p]:my-sm [&_table]:border-collapse [&_td]:border [&_td]:border-border-muted [&_td]:px-sm [&_td]:py-xs [&_th]:border [&_th]:border-border-muted [&_th]:px-sm [&_th]:py-xs [&_th]:text-left [&_ul]:my-sm [&_ul]:list-disc [&_ul]:pl-lg";
@@ -77,16 +76,23 @@ function CodeBlock({
 }
 
 function ShikiBlock({ code, lang }: { code: string; lang: string }) {
-	const [html, setHtml] = useState<string | null>(null);
+	const [highlighted, setHighlighted] = useState<{
+		code: string;
+		html: string;
+		lang: string;
+	} | null>(null);
+	const html = highlighted?.code === code && highlighted.lang === lang ? highlighted.html : null;
 
 	useEffect(() => {
 		let cancelled = false;
-		highlightCode(code, lang)
-			.then((h) => {
-				if (!cancelled) setHtml(h);
+		setHighlighted(null);
+		void import("@/lib/highlighter")
+			.then(({ highlightCode }) => highlightCode(code, lang))
+			.then((nextHtml) => {
+				if (!cancelled && nextHtml) setHighlighted({ code, html: nextHtml, lang });
 			})
 			.catch(() => {
-				if (!cancelled) setHtml(null);
+				if (!cancelled) setHighlighted(null);
 			});
 		return () => {
 			cancelled = true;

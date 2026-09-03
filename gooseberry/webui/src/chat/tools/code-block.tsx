@@ -1,18 +1,25 @@
 import { useEffect, useState } from "react";
-import { highlightCode } from "@/lib/highlighter";
 
 export function CodeBlock({ code, lang }: { code: string; lang: string }) {
-	const [html, setHtml] = useState<string | null>(null);
+	const [highlighted, setHighlighted] = useState<{
+		code: string;
+		html: string;
+		lang: string;
+	} | null>(null);
+	const html = highlighted?.code === code && highlighted.lang === lang ? highlighted.html : null;
 
 	useEffect(() => {
+		let cancelled = false;
+		setHighlighted(null);
 		if (!lang) {
-			setHtml(null);
 			return;
 		}
-		let cancelled = false;
-		highlightCode(code, lang)
-			.then((h) => !cancelled && setHtml(h))
-			.catch(() => !cancelled && setHtml(null));
+		void import("@/lib/highlighter")
+			.then(({ highlightCode }) => highlightCode(code, lang))
+			.then((nextHtml) => {
+				if (!cancelled && nextHtml) setHighlighted({ code, html: nextHtml, lang });
+			})
+			.catch(() => !cancelled && setHighlighted(null));
 		return () => {
 			cancelled = true;
 		};
