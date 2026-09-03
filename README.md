@@ -4,12 +4,12 @@ Gooseberry is a self-hosted Web UI for [Goose](https://github.com/aaif-goose/goo
 
 ## Features
 
-- Concurrent persistent chats with streaming, images, steering, queues, search and forks.
+- Concurrent persistent chats with streaming, bounded images and text-file attachments, steering, queues, search and forks.
 - Projects spanning multiple directories and Git repositories.
 - Read-only source and image previews with working-tree, commit and branch-base diffs.
 - Goals, tasks, permission prompts, plans, modes and custom agent mentions.
 - Provider, model, extension, recipe, schedule and tool controls supplied by Goose.
-- Browser automation over MCP and isolated interactive App views.
+- Browser automation over MCP, a bounded interactive browser panel and isolated interactive App views.
 
 Goose runs on the host. Two containers provide the application and the browser service. Project roots are mounted only into the application; the browser has separate state and no project or Goose configuration mounts.
 

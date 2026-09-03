@@ -38,6 +38,7 @@ func newTestRuntime(t *testing.T, authentication bool, configure func(*browser.C
 		t.Fatal(err)
 	}
 	script := fmt.Sprintf(`#!/bin/sh
+agent_session="$4"
 shift 4
 command="$1"
 shift
@@ -49,7 +50,7 @@ case "$command" in
   reload) i=0; while [ "$i" -lt 2048 ]; do printf x; i=$((i + 1)); done > "$HOME/blob" ;;
   press) /bin/sleep 30 & exit 0 ;;
   vitals) /bin/cat %q; /bin/cat %q >&2 ;;
-  get) printf '%%s\n' "$PATH" "$HOME" "$TMPDIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$AGENT_BROWSER_SOCKET_DIR" "$AGENT_BROWSER_CONTENT_BOUNDARIES" "$AGENT_BROWSER_MAX_OUTPUT" "${GOOSEBERRY_PRIVATE_TEST-unset}" ;;
+  get) printf '%%s\n' "$agent_session" "$PATH" "$HOME" "$TMPDIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$AGENT_BROWSER_SOCKET_DIR" "$AGENT_BROWSER_CONTENT_BOUNDARIES" "$AGENT_BROWSER_MAX_OUTPUT" "${GOOSEBERRY_PRIVATE_TEST-unset}" ;;
   screenshot) printf 'fake-image' > "$1" ;;
   snapshot) printf 'stdout'; printf 'stderr' >&2 ;;
   close) exit 0 ;;

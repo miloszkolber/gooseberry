@@ -1,14 +1,15 @@
 package controller
 
 type AgentOperations struct {
-	DeleteSession  bool `json:"deleteSession"`
-	ForkSession    bool `json:"forkSession"`
-	PromptImage    bool `json:"promptImage"`
-	HTTPMCP        bool `json:"httpMcp"`
-	Steer          bool `json:"steer"`
-	RenameSession  bool `json:"renameSession"`
-	ArchiveSession bool `json:"archiveSession"`
-	Administration bool `json:"administration"`
+	DeleteSession         bool `json:"deleteSession"`
+	ForkSession           bool `json:"forkSession"`
+	PromptImage           bool `json:"promptImage"`
+	PromptEmbeddedContext bool `json:"promptEmbeddedContext"`
+	HTTPMCP               bool `json:"httpMcp"`
+	Steer                 bool `json:"steer"`
+	RenameSession         bool `json:"renameSession"`
+	ArchiveSession        bool `json:"archiveSession"`
+	Administration        bool `json:"administration"`
 }
 
 type AgentProfile struct {

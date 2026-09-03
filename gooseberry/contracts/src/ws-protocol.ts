@@ -23,6 +23,9 @@ import type {
 	AgentProfile,
 	AppConfig,
 	AppConfigPatch,
+	BrowserPanel,
+	BrowserPanelAction,
+	BrowserPanelResult,
 	DirectoryListing,
 	FileListing,
 	GitBranchRef,
@@ -52,9 +55,10 @@ import type {
 	RuntimeStatusReport,
 	SessionGoal,
 	SignetStatus,
+	TextResourceAttachment,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 79;
+export const PROTOCOL_VERSION = 80;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -177,6 +181,9 @@ export const WS_METHODS = {
 	gooseScheduleKill: "goose.scheduleKill",
 	gooseStatus: "goose.status",
 	runtimeStatus: "runtime.status",
+	browserPanelOpen: "browser.panelOpen",
+	browserPanelCommand: "browser.panelCommand",
+	browserPanelClose: "browser.panelClose",
 	gooseExtensionList: "goose.extensionList",
 	gooseExtensionAdd: "goose.extensionAdd",
 	gooseExtensionSetEnabled: "goose.extensionSetEnabled",
@@ -294,11 +301,21 @@ export interface WsMethodMap {
 		result: SessionSummary;
 	};
 	"session.prompt": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: {
+			sessionId: string;
+			text: string;
+			images?: ImageContent[];
+			resources?: TextResourceAttachment[];
+		};
 		result: Ack;
 	};
 	"session.steer": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: {
+			sessionId: string;
+			text: string;
+			images?: ImageContent[];
+			resources?: TextResourceAttachment[];
+		};
 		result: Ack;
 	};
 	"session.queueAdd": { params: { sessionId: string; text: string }; result: Ack };
@@ -550,6 +567,12 @@ export interface WsMethodMap {
 		params: Record<string, never>;
 		result: RuntimeStatusReport;
 	};
+	"browser.panelOpen": { params: { projectId: string }; result: BrowserPanel };
+	"browser.panelCommand": {
+		params: { panelId: string; action: BrowserPanelAction };
+		result: BrowserPanelResult;
+	};
+	"browser.panelClose": { params: { panelId: string }; result: Ack };
 	"goose.extensionList": { params: Record<string, never>; result: GooseExtensionCatalog };
 	"goose.extensionAdd": {
 		params: { name: string; enabled: boolean };

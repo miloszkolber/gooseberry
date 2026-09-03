@@ -5,6 +5,7 @@ import {
 	ChevronRight,
 	Clock,
 	FileDiff,
+	FileText,
 	FoldVertical,
 	RotateCw,
 	TriangleAlert,
@@ -40,7 +41,13 @@ export function ChatTurnView({
 }) {
 	switch (row.kind) {
 		case "user":
-			return <UserTurn id={row.id} message={row.message} attachmentNames={row.attachmentNames} />;
+			return (
+				<UserTurn
+					id={row.id}
+					message={row.message}
+					imageAttachmentNames={row.imageAttachmentNames}
+				/>
+			);
 		case "system":
 			return <SystemTurn text={row.text} />;
 		case "error":
@@ -110,20 +117,34 @@ function userAttachments(content: UserMessage["content"], names?: string[]) {
 		});
 }
 
+function userResourceMarkers(content: UserMessage["content"]) {
+	if (typeof content === "string") return [];
+	const seen = new Map<string, number>();
+	return content
+		.filter((block) => block.type === "resource")
+		.map((resource) => {
+			const identity = `${resource.name}\0${resource.mimeType}`;
+			const occurrence = seen.get(identity) ?? 0;
+			seen.set(identity, occurrence + 1);
+			return { key: `${identity}\0${occurrence}`, ...resource };
+		});
+}
+
 const USER_BUBBLE =
 	"max-w-[85%] whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-bubble-user-border bg-clip-padding bg-bubble-user-bg px-md py-sm tr-text-reading text-text-muted";
 
 function UserTurn({
 	id,
 	message,
-	attachmentNames,
+	imageAttachmentNames,
 }: {
 	id: string;
 	message: UserMessage;
-	attachmentNames?: string[] | undefined;
+	imageAttachmentNames?: string[] | undefined;
 }) {
 	const text = userText(message.content);
-	const attachments = userAttachments(message.content, attachmentNames);
+	const attachments = userAttachments(message.content, imageAttachmentNames);
+	const resources = userResourceMarkers(message.content);
 	const skill = parseSkillInvocation(text);
 	if (skill) {
 		return (
@@ -143,6 +164,20 @@ function UserTurn({
 	return (
 		<div data-testid="chat-message" data-role="user" className="flex justify-end">
 			<div className={USER_BUBBLE}>
+				{resources.length > 0 ? (
+					<div className="flex flex-wrap gap-xs pb-xs" data-testid="chat-message-text-attachments">
+						{resources.map((resource) => (
+							<div
+								key={resource.key}
+								title={`${resource.name} · ${resource.mimeType}`}
+								className="flex max-w-full items-center gap-2xs rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-xs py-2xs tr-text-metadata"
+							>
+								<FileText className="size-3 shrink-0" aria-hidden="true" />
+								<span className="truncate">{resource.name}</span>
+							</div>
+						))}
+					</div>
+				) : null}
 				{attachments.length > 0 ? (
 					<div className="flex flex-wrap gap-xs pb-xs" data-testid="chat-message-images">
 						{attachments.map(({ key, label, img }) => (

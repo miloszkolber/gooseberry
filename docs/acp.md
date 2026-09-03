@@ -10,7 +10,7 @@ The application connects to `ws://127.0.0.1:3284/acp` by default. It sends `GOOS
 
 ## Conversations
 
-Standard ACP supplies prompts, streaming updates, cancellation, permissions, commands, usage, plans and modes. Goose-specific methods add steering, rename/archive, search, provider login, model metadata, agents, recipes and schedules. Features are enabled from the capabilities reported by the connected service. The supported Goose release retains fork support despite not advertising it.
+Standard ACP supplies prompts, streaming updates, cancellation, permissions, commands, usage, plans and modes. Browser-selected images require the image prompt capability. Bounded UTF-8 plain-text and code attachments require embedded-context support and are sent as embedded text resources, never written to project or application state. Goose-specific methods add steering, rename/archive, search, provider login, model metadata, agents, recipes and schedules. Features are enabled from the capabilities reported by the connected service. The supported Goose release retains fork support despite not advertising it.
 
 Goose owns each transcript. ACP returns a complete replay, so Gooseberry keeps a bounded projection and serves it newest-first at user-round boundaries. Older-page requests include the projection identity; stale pages are rejected after a reconnect or replacement replay. Connection generations also reject late replies from an earlier connection.
 
@@ -57,7 +57,7 @@ Custom agents, recipes and extension settings are Goose state. Gooseberry projec
 | Application `/mcp/objective` | Session-scoped goals, tasks and questions. |
 | Browser `/mcp` | Authenticated browser automation and guidance for Goose or another trusted service. |
 
-The browser also exposes authenticated HTTP commands and artifacts. Registration is covered in [deployment](deployment.md#browser-mcp).
+The browser also exposes authenticated HTTP commands and artifacts. The Web UI uses controller-owned random browser panels over typed WebSocket methods, so the browser token remains server-side. Panels expose HTTP(S) navigation, viewport, snapshot, screenshot, snapshot-reference click and text fill only. Registration is covered in [deployment](deployment.md#browser-mcp).
 
 Projects, file and Git views, objectives and queues are Gooseberry-owned. Import/export/share and broader source administration remain out of scope until upstream offers stable operations; see the [roadmap](roadmap.md).
 

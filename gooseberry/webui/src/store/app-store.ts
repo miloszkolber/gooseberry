@@ -17,6 +17,8 @@ export {
 	type SessionRuntime,
 } from "../chat/runtime/session-runtime";
 export {
+	type BrowserPanelViewState,
+	type BrowserTab,
 	type ChatLocationRequest,
 	type ChatTab,
 	type ClosedChat,
@@ -25,6 +27,7 @@ export {
 	chatTabId,
 	type DiffTab,
 	type FileTab,
+	newBrowserPanelViewState,
 	type ProjectArea,
 	type ProjectAreaActivity,
 	projectArea,

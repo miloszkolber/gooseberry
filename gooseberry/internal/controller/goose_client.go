@@ -275,14 +275,15 @@ func agentProfile(response acp.InitializeResponse) AgentProfile {
 	_, gooseMetadata := capabilities.Meta["goose"]
 	profile.Goose = response.AgentInfo != nil && response.AgentInfo.Name == "goose" && gooseMetadata && capabilities.Meta["goose"] != nil
 	profile.Operations = AgentOperations{
-		DeleteSession:  capabilities.SessionCapabilities.Delete != nil,
-		ForkSession:    capabilities.SessionCapabilities.Fork != nil || profile.Goose,
-		PromptImage:    capabilities.PromptCapabilities.Image,
-		HTTPMCP:        capabilities.McpCapabilities.Http,
-		Steer:          profile.Goose,
-		RenameSession:  profile.Goose,
-		ArchiveSession: profile.Goose,
-		Administration: profile.Goose,
+		DeleteSession:         capabilities.SessionCapabilities.Delete != nil,
+		ForkSession:           capabilities.SessionCapabilities.Fork != nil || profile.Goose,
+		PromptImage:           capabilities.PromptCapabilities.Image,
+		PromptEmbeddedContext: capabilities.PromptCapabilities.EmbeddedContext,
+		HTTPMCP:               capabilities.McpCapabilities.Http,
+		Steer:                 profile.Goose,
+		RenameSession:         profile.Goose,
+		ArchiveSession:        profile.Goose,
+		Administration:        profile.Goose,
 	}
 	if !profile.Goose && profile.Name != "" {
 		profile.identity = agentProfileIdentityDigest(rawName, rawVersion, profile.Operations)
@@ -445,6 +446,9 @@ func (c *GooseClient) Prompt(ctx context.Context, request acp.PromptRequest) (ac
 	if promptContainsImage(request) && !connection.profile.Operations.PromptImage {
 		return acp.PromptResponse{}, unsupportedAgentCapability("image prompts")
 	}
+	if promptContainsEmbeddedContext(request) && !connection.profile.Operations.PromptEmbeddedContext {
+		return acp.PromptResponse{}, unsupportedAgentCapability("text resource prompts")
+	}
 	return connection.client.Prompt(ctx, request)
 }
 
@@ -460,6 +464,15 @@ func hasAgentCapability(profile AgentProfile, method string) bool {
 func promptContainsImage(request acp.PromptRequest) bool {
 	for _, block := range request.Prompt {
 		if block.Image != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func promptContainsEmbeddedContext(request acp.PromptRequest) bool {
+	for _, block := range request.Prompt {
+		if block.Resource != nil {
 			return true
 		}
 	}

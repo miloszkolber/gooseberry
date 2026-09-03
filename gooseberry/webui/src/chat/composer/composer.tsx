@@ -1,7 +1,10 @@
 import {
 	ACCEPTED_IMAGE_TYPES,
+	ACCEPTED_TEXT_ATTACHMENT_EXTENSIONS,
 	REQUEST_IMAGE_BASE64_BUDGET,
 	type SlashCommandInfo,
+	utf8ByteLength,
+	validateTextResourceAttachments,
 } from "@gooseberry/contracts";
 import {
 	ArrowUp,
@@ -39,6 +42,7 @@ import {
 	selectedSlashCommandValue,
 	useSlashCommandCompletion,
 } from "./slash-command-completion";
+import { fileToTextResource } from "./text-attachment";
 
 export type SubmitBehavior = "send" | "steer" | "queue" | "interrupt";
 
@@ -161,6 +165,12 @@ interface PendingImage extends AttachedImage {
 	name: string;
 }
 
+interface PendingText {
+	id: string;
+	name: string;
+	content: Extract<ChatAttachment, { kind: "text" }>["content"];
+}
+
 interface AttachError {
 	id: string;
 	name: string;
@@ -189,6 +199,7 @@ interface ComposerProps {
 	onAbort: () => void;
 	onHistoryOpen?: () => void;
 	supportsImages?: boolean | null;
+	supportsTextResources?: boolean | null;
 	supportsSteer?: boolean;
 }
 
@@ -212,6 +223,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		onAbort,
 		onHistoryOpen,
 		supportsImages = true,
+		supportsTextResources = true,
 		supportsSteer = true,
 	},
 	handleRef,
@@ -220,15 +232,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [caret, setCaret] = useState(value.length);
 	const [images, setImages] = useState<PendingImage[]>([]);
+	const [texts, setTexts] = useState<PendingText[]>([]);
 	const imagesRef = useRef<PendingImage[]>([]);
 	const supportsImagesRef = useRef(supportsImages);
 	supportsImagesRef.current = supportsImages;
+	const textsRef = useRef<PendingText[]>([]);
+	const supportsTextResourcesRef = useRef(supportsTextResources);
+	supportsTextResourcesRef.current = supportsTextResources;
 	const imagePromptsEnabled = supportsImages !== false;
+	const textResourcesEnabled = supportsTextResources !== false;
+	const attachmentPromptsEnabled = imagePromptsEnabled || textResourcesEnabled;
 	const commitImages = (next: PendingImage[]) => {
 		imagesRef.current = next;
 		setImages(next);
 	};
-	const [pendingImages, setPendingImages] = useState(0);
+	const commitTexts = (next: PendingText[]) => {
+		textsRef.current = next;
+		setTexts(next);
+	};
+	const [pendingAttachments, setPendingAttachments] = useState(0);
 	const [attachErrors, setAttachErrors] = useState<AttachError[]>([]);
 	const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
 	const [mentionDismissed, setMentionDismissed] = useState(false);
@@ -249,7 +271,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	}, [mentionCandidates.length]);
 	useEffect(() => {
 		if (supportsImages !== false) return;
-		const removedImages = imagesRef.current.length > 0 || pendingImages > 0;
+		const removedImages = imagesRef.current.length > 0;
 		imagesRef.current = [];
 		setImages([]);
 		if (removedImages) {
@@ -261,7 +283,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				},
 			]);
 		}
-	}, [supportsImages, pendingImages]);
+	}, [supportsImages]);
+	useEffect(() => {
+		if (supportsTextResources !== false) return;
+		const removedTexts = textsRef.current.length > 0;
+		textsRef.current = [];
+		setTexts([]);
+		if (removedTexts) {
+			setAttachErrors([
+				{
+					id: crypto.randomUUID(),
+					name: "text files",
+					reason: "connected agent does not support text resource prompts",
+				},
+			]);
+		}
+	}, [supportsTextResources]);
 
 	const mentionOpen = !mentionDismissed && mentionQuery !== null && mentionCandidates.length > 0;
 	const visibleMentionActiveIndex = clampedMentionActiveIndex(
@@ -300,19 +337,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	);
 
 	const canSubmit = (raw: string) =>
-		pendingImages === 0 && (!!raw.trim() || (imagePromptsEnabled && images.length > 0));
+		pendingAttachments === 0 &&
+		(!!raw.trim() ||
+			(imagePromptsEnabled && images.length > 0) ||
+			(textResourcesEnabled && texts.length > 0));
 
 	const submitText = (raw: string, behavior: SubmitBehavior) => {
 		if (!canSubmit(raw)) return;
 		const text = raw.trim();
 		const accepted = onSubmit(
 			text,
-			imagePromptsEnabled ? images.map(({ name, content }) => ({ name, content })) : [],
+			[
+				...(imagePromptsEnabled
+					? images.map(({ name, content }) => ({ kind: "image" as const, name, content }))
+					: []),
+				...(textResourcesEnabled
+					? texts.map(({ name, content }) => ({ kind: "text" as const, name, content }))
+					: []),
+			],
 			behavior,
 		);
 		if (accepted === false) return;
 		onChange("");
 		commitImages([]);
+		commitTexts([]);
 		setAttachErrors([]);
 		recallIdxRef.current = null;
 	};
@@ -358,17 +406,34 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	}));
 
 	const addFiles = async (files: File[]) => {
-		if (!imagePromptsEnabled) return;
-		const picked = files.filter((f) => f.type.startsWith("image/"));
-		if (picked.length === 0) return;
-		setPendingImages((n) => n + picked.length);
+		const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+		const textFiles = files.filter(
+			(file) => !file.type.startsWith("image/") && file.name.includes("."),
+		);
+		const unsupported = files.filter(
+			(file) => !imageFiles.includes(file) && !textFiles.includes(file),
+		);
+		if (files.length === 0) return;
+		setPendingAttachments((n) => n + files.length);
 		try {
-			const settled = await Promise.allSettled(picked.map(fileToAttachedImage));
+			const [imageResults, textResults] = await Promise.all([
+				Promise.allSettled(imageFiles.map(fileToAttachedImage)),
+				Promise.allSettled(textFiles.map(fileToTextResource)),
+			]);
 			let used = imagesRef.current.reduce((sum, p) => sum + p.content.data.length, 0);
 			const additions: PendingImage[] = [];
+			const textAdditions: PendingText[] = [];
 			const errors: AttachError[] = [];
-			settled.forEach((result, i) => {
-				const name = picked[i]?.name || "image";
+			imageResults.forEach((result, i) => {
+				const name = imageFiles[i]?.name || "image";
+				if (supportsImagesRef.current === false) {
+					errors.push({
+						id: crypto.randomUUID(),
+						name,
+						reason: "connected agent does not support image prompts",
+					});
+					return;
+				}
 				if (result.status !== "fulfilled" || result.value === null) {
 					errors.push({ id: crypto.randomUUID(), name, reason: "unsupported image format" });
 					return;
@@ -385,14 +450,60 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					...result.value,
 				});
 			});
+			textResults.forEach((result, i) => {
+				const name = textFiles[i]?.name || "file";
+				if (supportsTextResourcesRef.current === false) {
+					errors.push({
+						id: crypto.randomUUID(),
+						name,
+						reason: "connected agent does not support text resource prompts",
+					});
+					return;
+				}
+				if (result.status !== "fulfilled") {
+					errors.push({
+						id: crypto.randomUUID(),
+						name,
+						reason:
+							result.reason instanceof Error ? result.reason.message : "unsupported text file",
+					});
+					return;
+				}
+				try {
+					validateTextResourceAttachments([
+						...textsRef.current.map((attachment) => attachment.content),
+						...textAdditions.map((attachment) => attachment.content),
+						result.value,
+					]);
+				} catch (error) {
+					errors.push({
+						id: crypto.randomUUID(),
+						name,
+						reason:
+							error instanceof Error ? error.message : "message text attachment limit reached",
+					});
+					return;
+				}
+				textAdditions.push({ id: crypto.randomUUID(), name, content: result.value });
+			});
+			unsupported.forEach((file) => {
+				errors.push({
+					id: crypto.randomUUID(),
+					name: file.name || "file",
+					reason: "supported image or text file required",
+				});
+			});
 			if (supportsImagesRef.current !== false && additions.length > 0) {
 				commitImages([...imagesRef.current, ...additions]);
 			}
-			if (supportsImagesRef.current !== false && errors.length > 0) {
+			if (supportsTextResourcesRef.current !== false && textAdditions.length > 0) {
+				commitTexts([...textsRef.current, ...textAdditions]);
+			}
+			if (errors.length > 0) {
 				setAttachErrors((prev) => [...prev, ...errors]);
 			}
 		} finally {
-			setPendingImages((n) => n - picked.length);
+			setPendingAttachments((n) => n - files.length);
 		}
 	};
 
@@ -466,7 +577,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
 	const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
 		const files = [...e.clipboardData.files];
-		if (files.length > 0 && imagePromptsEnabled) {
+		if (files.length > 0 && attachmentPromptsEnabled) {
 			e.preventDefault();
 			void addFiles(files);
 		} else if (files.length > 0) {
@@ -474,7 +585,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				{
 					id: crypto.randomUUID(),
 					name: "clipboard image",
-					reason: "connected agent does not support image prompts",
+					reason: "connected agent does not support file attachments",
 				},
 			]);
 		}
@@ -483,14 +594,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
 		if (e.dataTransfer.files.length > 0) {
 			e.preventDefault();
-			if (imagePromptsEnabled) {
+			if (attachmentPromptsEnabled) {
 				void addFiles([...e.dataTransfer.files]);
 			} else {
 				setAttachErrors([
 					{
 						id: crypto.randomUUID(),
 						name: "dropped image",
-						reason: "connected agent does not support image prompts",
+						reason: "connected agent does not support file attachments",
 					},
 				]);
 			}
@@ -501,6 +612,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		<div
 			className="relative flex shrink-0 flex-col border-border-muted border-t bg-container-project-bg"
 			data-image-prompts={supportsImages === null ? "unknown" : supportsImages}
+			data-text-resource-prompts={
+				supportsTextResources === null ? "unknown" : supportsTextResources
+			}
 		>
 			{mentionOpen ? (
 				<div
@@ -551,9 +665,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				/>
 			) : null}
 
-			{(imagePromptsEnabled && (images.length > 0 || pendingImages > 0)) ||
+			{(imagePromptsEnabled && images.length > 0) ||
+			(textResourcesEnabled && texts.length > 0) ||
+			pendingAttachments > 0 ||
 			attachErrors.length > 0 ? (
-				<div className="flex flex-wrap gap-xs px-sm pt-sm" data-testid="composer-images">
+				<div className="flex flex-wrap gap-xs px-sm pt-sm" data-testid="composer-attachments">
 					{attachErrors.map((err) => (
 						<FileChip
 							key={err.id}
@@ -597,12 +713,33 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							}
 						/>
 					))}
-					{pendingImages > 0 ? (
+					{texts.map((attachment) => (
 						<FileChip
-							data-testid="composer-image-pending"
+							key={attachment.id}
+							data-testid="composer-text-attachment"
+							title={attachment.name}
+							label={attachment.name}
+							meta={` · ${utf8ByteLength(attachment.content.text).toLocaleString()} bytes`}
+							trailing={
+								<button
+									type="button"
+									aria-label="Remove file"
+									onClick={() =>
+										commitTexts(textsRef.current.filter((p) => p.id !== attachment.id))
+									}
+									className="text-text-muted hover:text-text-default"
+								>
+									<X className="size-3" />
+								</button>
+							}
+						/>
+					))}
+					{pendingAttachments > 0 ? (
+						<FileChip
+							data-testid="composer-attachment-pending"
 							label={
 								<span className="text-text-muted">
-									{pendingImages === 1 ? "Attaching…" : `Attaching ${pendingImages}…`}
+									{pendingAttachments === 1 ? "Attaching…" : `Attaching ${pendingAttachments}…`}
 								</span>
 							}
 						/>
@@ -653,7 +790,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 						<input
 							ref={fileInputRef}
 							type="file"
-							accept={ACCEPTED_IMAGE_TYPES.join(",")}
+							accept={[
+								...ACCEPTED_IMAGE_TYPES,
+								...ACCEPTED_TEXT_ATTACHMENT_EXTENSIONS.map((extension) => `.${extension}`),
+							].join(",")}
 							multiple
 							tabIndex={-1}
 							aria-hidden="true"
@@ -666,10 +806,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 						/>
 						<button
 							type="button"
-							data-testid="image-attach"
-							aria-label="Attach images"
-							title="Attach supported images"
-							disabled={!imagePromptsEnabled}
+							data-testid="file-attach"
+							aria-label="Attach files or images"
+							title="Attach files or images"
+							disabled={!attachmentPromptsEnabled}
 							onClick={() => fileInputRef.current?.click()}
 							className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg text-text-default hover:bg-control-bg-hovered disabled:pointer-events-none disabled:text-text-muted"
 						>

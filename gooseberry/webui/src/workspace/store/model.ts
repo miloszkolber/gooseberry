@@ -52,7 +52,40 @@ export interface DiffTab extends GitDiffFile {
 	ignoreWhitespace?: boolean;
 	loadedTick?: number;
 }
-export type ContentTab = FileTab | ChatTab | DiffTab;
+export interface BrowserTab {
+	kind: "browser";
+	id: string;
+	projectAreaId: string;
+	name: string;
+	panelId: string;
+}
+
+export interface BrowserPanelViewState {
+	address: string;
+	snapshot: string;
+	screenshot: string | null;
+	reference: string;
+	fillText: string;
+	viewport: { width: number; height: number };
+	error: string | null;
+	loading: boolean;
+	requestGeneration: number;
+}
+
+export function newBrowserPanelViewState(): BrowserPanelViewState {
+	return {
+		address: "",
+		snapshot: "",
+		screenshot: null,
+		reference: "",
+		fillText: "",
+		viewport: { width: 1280, height: 800 },
+		error: null,
+		loading: false,
+		requestGeneration: 0,
+	};
+}
+export type ContentTab = FileTab | ChatTab | DiffTab | BrowserTab;
 export type ProjectAreaActivity = "files" | "changes";
 
 export function chatTabId(projectAreaId: string, sessionId: string): string {
@@ -79,7 +112,9 @@ function contentResourceIdentity(tab: ContentTab): string {
 			reference,
 		);
 	}
-	return tupleKey("content-resource", tab.projectAreaId, "chat", tab.sessionId);
+	return tab.kind === "chat"
+		? tupleKey("content-resource", tab.projectAreaId, "chat", tab.sessionId)
+		: tupleKey("content-resource", tab.projectAreaId, "browser", tab.panelId);
 }
 
 export function contentSessionId(tab: ContentTab): string | null {

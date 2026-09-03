@@ -4,13 +4,13 @@ import type {
 	ImageContent,
 	McpAppAttachment,
 	SubagentActivity,
+	TextResourceAttachment,
 	UserMessage,
 } from "@gooseberry/contracts";
 
-export interface ChatAttachment {
-	name: string;
-	content: ImageContent;
-}
+export type ChatAttachment =
+	| { kind: "image"; name: string; content: ImageContent }
+	| { kind: "text"; name: string; content: TextResourceAttachment };
 
 export type ExtUiDialogRequest = Extract<
 	ExtUiRequest,
@@ -22,7 +22,7 @@ export type ChatTurn =
 			kind: "user";
 			id: string;
 			message: UserMessage;
-			attachmentNames?: string[];
+			imageAttachmentNames?: string[];
 			optimistic?: { transcriptTotal: number | null };
 	  }
 	| {

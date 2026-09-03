@@ -95,6 +95,7 @@ func TestHTTPBoundaryAppliesAuthorizationPolicyAndOutputBounds(t *testing.T) {
 		t.Fatalf("environment command = %d %#v, %v", environment.Code, result, err)
 	}
 	expectedEnvironment := strings.Join([]string{
+		"browser",
 		filepath.Dir(runtime.config.AgentBrowser),
 		filepath.Join(runtime.config.StateRoot, "environment", "home"),
 		filepath.Join(runtime.config.StateRoot, "environment", "tmp"),

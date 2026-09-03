@@ -21,6 +21,7 @@ const genericProfile: AgentProfile = {
 		deleteSession: false,
 		forkSession: false,
 		promptImage: false,
+		promptEmbeddedContext: false,
 		httpMcp: false,
 		steer: false,
 		renameSession: false,
@@ -114,6 +115,58 @@ test("content identity keeps same-path files and diffs isolated by their owning 
 	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(6);
 });
 
+test("browser panel tabs retain distinct random panel lifecycles", () => {
+	const state = useAppStore.getState();
+	state.setBrowserPanelState("b-one", { address: "https://one.example" });
+	state.setBrowserPanelState("b-two", { address: "https://two.example" });
+	state.openTab(
+		{ kind: "browser", id: "browser-one", projectAreaId: "p1", name: "Browser", panelId: "b-one" },
+		"keep",
+	);
+	state.openTab(
+		{ kind: "browser", id: "browser-two", projectAreaId: "p1", name: "Browser", panelId: "b-two" },
+		"keep",
+	);
+	expect(
+		useAppStore.getState().tabsByProjectArea.p1?.filter((tab) => tab.kind === "browser"),
+	).toHaveLength(2);
+	state.closeTab("browser-one", false, "p1");
+	expect(useAppStore.getState().tabsByProjectArea.p1?.map((tab) => tab.id)).toEqual([
+		"browser-two",
+	]);
+	expect(useAppStore.getState().browserPanelStateById).toEqual({
+		"b-two": expect.objectContaining({ address: "https://two.example" }),
+	});
+});
+
+test("browser panel state is partitioned by panel and ignores delayed completions", () => {
+	const state = useAppStore.getState();
+	state.setBrowserPanelState("b-one", { address: "https://one.example" });
+	state.setBrowserPanelState("b-two", { address: "https://two.example" });
+	const first = state.beginBrowserPanelRequest("b-one");
+	const latest = state.beginBrowserPanelRequest("b-one");
+	const second = state.beginBrowserPanelRequest("b-two");
+	expect(
+		state.completeBrowserPanelRequest("b-one", first, { screenshot: "/stale.png" }),
+	).toBeFalse();
+	expect(state.completeBrowserPanelRequest("b-two", second, { snapshot: "two" })).toBeTrue();
+	expect(state.completeBrowserPanelRequest("b-one", latest, { snapshot: "one" })).toBeTrue();
+	expect(useAppStore.getState().browserPanelStateById).toMatchObject({
+		"b-one": { address: "https://one.example", snapshot: "one" },
+		"b-two": { address: "https://two.example", snapshot: "two" },
+	});
+	state.openTab(
+		{ kind: "browser", id: "browser-one", projectAreaId: "p1", name: "Browser", panelId: "b-one" },
+		"keep",
+	);
+	state.openTab(
+		{ kind: "browser", id: "browser-two", projectAreaId: "p1", name: "Browser", panelId: "b-two" },
+		"keep",
+	);
+	state.clearProjectAreaTabs("p1");
+	expect(useAppStore.getState().browserPanelStateById).toEqual({});
+});
+
 test("branch diff content follows the resolved comparison instead of the branch label", () => {
 	const state = useAppStore.getState();
 	const scope = { kind: "branch", baseRef: "refs/heads/main" } as const;
@@ -182,6 +235,7 @@ beforeEach(() => {
 		skillsSyncedTickBySession: {},
 		commandCatalogGeneration: 0,
 		changesRequest: null,
+		browserPanelStateById: {},
 		chatLocationRequest: null,
 		routeChatTarget: null,
 		historyOpenRequest: null,
@@ -264,6 +318,23 @@ test("a costless ACP context update is retained before session stats load", () =
 		cost: 0,
 		contextUsage,
 	});
+});
+
+test("authoritative config events reconcile the visible session model", () => {
+	const model = {
+		id: "reconciled-model",
+		name: "Reconciled model",
+		provider: "reconciled-provider",
+		available: true,
+		hidden: false,
+	};
+	const runtime = reduceSessionEvent(EMPTY_RUNTIME, {
+		type: "config",
+		model,
+		configOptions: [{ id: "thinking_effort", currentValue: "high" }],
+	});
+	expect(runtime.model).toEqual(model);
+	expect(runtime.thinkingLevel).toBe("high");
 });
 
 test("a newer ACP command snapshot replaces the catalog and rejects a delayed refresh", () => {

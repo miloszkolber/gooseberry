@@ -2,6 +2,7 @@ import type {
 	AgentEvent,
 	AskUserQuestionResult,
 	ExtUiRequest,
+	ImageContent,
 	PermissionRequest,
 	SessionGoal,
 	SessionModeState,
@@ -9,6 +10,7 @@ import type {
 	SessionStats,
 	SessionSummary,
 	SlashCommandInfo,
+	TextResourceAttachmentMarker,
 	ThinkingLevel,
 	WireModel,
 } from "@gooseberry/contracts";
@@ -84,9 +86,26 @@ function sameUserContent(a: ChatTurn, b: ChatTurn): boolean {
 			if (!other || block.type !== other.type) return false;
 			return block.type === "text"
 				? block.text === (other.type === "text" ? other.text : undefined)
-				: block.data === (other.type === "image" ? other.data : undefined) &&
-						block.mimeType === (other.type === "image" ? other.mimeType : undefined);
+				: block.type === "image"
+					? block.data === (other.type === "image" ? other.data : undefined) &&
+						block.mimeType === (other.type === "image" ? other.mimeType : undefined)
+					: block.name === (other.type === "resource" ? other.name : undefined) &&
+						block.mimeType === (other.type === "resource" ? other.mimeType : undefined);
 		})
+	);
+}
+
+function optimisticAttachmentBlocks(
+	attachments: ChatAttachment[],
+): (ImageContent | TextResourceAttachmentMarker)[] {
+	return attachments.map((attachment) =>
+		attachment.kind === "image"
+			? attachment.content
+			: {
+					type: "resource" as const,
+					name: attachment.content.name,
+					mimeType: attachment.content.mimeType,
+				},
 	);
 }
 
@@ -163,14 +182,18 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 								attachments && attachments.length > 0
 									? [
 											...(text ? [{ type: "text" as const, text }] : []),
-											...attachments.map((a) => a.content),
+											...optimisticAttachmentBlocks(attachments),
 										]
 									: text,
 							timestamp: Date.now(),
 						},
 						optimistic: { transcriptTotal: rt.transcript?.total ?? null },
 						...(attachments && attachments.length > 0
-							? { attachmentNames: attachments.map((a) => a.name) }
+							? {
+									imageAttachmentNames: attachments
+										.filter((attachment) => attachment.kind === "image")
+										.map((attachment) => attachment.name),
+								}
 							: {}),
 					},
 				],

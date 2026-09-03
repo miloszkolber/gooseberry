@@ -6,9 +6,7 @@ Current behavior is documented in the [README](../README.md), [architecture](arc
 
 - Connect extension-dialog replies only when upstream exposes a stable response operation.
 - Add export, share, import or broader source management only when upstream exposes stable browser-safe operations.
-- Add local non-image file attachments when ACP exposes a stable resource-content prompt operation. Project files remain available through `@path` references.
 - Project more Goose settings only when Goose exposes stable, typed administration methods that do not reveal credentials or raw configuration.
-- Add an interactive browser panel when the browser service has a bounded session, tab, viewport and navigation protocol. Browser tool results and interactive Apps remain integrated in chat.
 - Expose production generic ACP selection only after persisted sessions and controller-owned queues can be bound to an operator-stable agent identity.
 - Revisit the 512-entry handled-receipt cap only if observed recovery state approaches it and a safe longer-lived retention rule is defined.
 - Add browser egress controls, built-in TLS or mTLS, or service identity only for a defined deployment threat model.
@@ -17,4 +15,5 @@ Current behavior is documented in the [README](../README.md), [architecture](arc
 
 - Nested-agent durability, approvals and cancellation await reliable Goose methods or replayable events.
 - Named ACP plan updates and removal await a stable capability.
+- Reclaim controller-owned browser panel state after an ungraceful controller exit with a browser-service lease or bounded cleanup operation.
 - Deployment-host p95 enforcement, long-history acceptance and native x86-64 browser checks remain postponed.

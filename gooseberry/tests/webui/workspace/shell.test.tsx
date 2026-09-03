@@ -35,6 +35,7 @@ const genericProfile: AgentProfile = {
 		deleteSession: false,
 		forkSession: false,
 		promptImage: false,
+		promptEmbeddedContext: false,
 		httpMcp: false,
 		steer: false,
 		renameSession: false,

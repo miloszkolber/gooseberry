@@ -87,10 +87,10 @@ test("completion menus expose a coherent combobox and listbox contract", () => {
 	expect(markup).toContain('role="option"');
 	expect(markup).toContain('aria-selected="true"');
 	expect(markup).toContain("aria-activedescendant=");
-	expect(markup).toContain('data-testid="image-attach"');
-	expect(markup).toContain('aria-label="Attach images"');
+	expect(markup).toContain('data-testid="file-attach"');
+	expect(markup).toContain('aria-label="Attach files or images"');
 	expect(markup).toContain('type="file"');
-	expect(markup).toContain('accept="image/png,image/jpeg,image/gif,image/webp"');
+	expect(markup).toContain('accept="image/png,image/jpeg,image/gif,image/webp,.c');
 });
 
 test("a streaming agent without steer queues text and exposes no image or steer affordance", () => {
@@ -109,10 +109,12 @@ test("a streaming agent without steer queues text and exposes no image or steer 
 			onSubmit={() => true}
 			onAbort={() => {}}
 			supportsImages={false}
+			supportsTextResources={false}
 			supportsSteer={false}
 		/>,
 	);
 	expect(markup).toContain('data-image-prompts="false"');
+	expect(markup).toContain('data-text-resource-prompts="false"');
 	expect(markup).toContain('aria-label="Queue follow-up"');
 	expect(markup).not.toContain('data-testid="send-mode-steer"');
 	expect(markup).not.toContain("Enter steers");

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,7 +20,22 @@ type ImageContent struct {
 	MimeType string `json:"mimeType"`
 }
 
-func (m *SessionManager) Prompt(ctx context.Context, sessionID, text string, images []ImageContent) error {
+const (
+	maxTextAttachmentBytes      = 1024 * 1024
+	maxTextAttachmentTotalBytes = 2 * 1024 * 1024
+	maxTextAttachmentCount      = 4
+	maxTextAttachmentNameBytes  = 255
+	maxTextAttachmentNameRunes  = 128
+)
+
+type TextResourceAttachment struct {
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Text     string `json:"text"`
+}
+
+func (m *SessionManager) Prompt(ctx context.Context, sessionID, text string, images []ImageContent, resources []TextResourceAttachment) error {
 	entry, err := m.queueEntry(sessionID)
 	if err != nil {
 		return err
@@ -32,13 +48,16 @@ func (m *SessionManager) Prompt(ctx context.Context, sessionID, text string, ima
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
 		return err
 	}
-	if len(images) > 0 {
+	if len(images) > 0 || len(resources) > 0 {
 		_, profile, err := m.client.Profile(entry.context(ctx))
 		if err != nil {
 			return err
 		}
-		if !profile.Operations.PromptImage {
+		if len(images) > 0 && !profile.Operations.PromptImage {
 			return unsupportedAgentCapability("image prompts")
+		}
+		if len(resources) > 0 && !profile.Operations.PromptEmbeddedContext {
+			return unsupportedAgentCapability("text resource prompts")
 		}
 	}
 	entry.state.Lock()
@@ -47,7 +66,7 @@ func (m *SessionManager) Prompt(ctx context.Context, sessionID, text string, ima
 	if busy {
 		return fmt.Errorf("wait for the running chat or resolve its queued follow-ups")
 	}
-	return m.startPromptLocked(sessionID, entry, text, images, "")
+	return m.startPromptLocked(sessionID, entry, text, images, resources, "")
 }
 
 func (m *SessionManager) Queue(ctx context.Context, sessionID, text string) error {
@@ -350,7 +369,7 @@ func requireQueueReplayLocked(entry *sessionEntry) {
 	entry.attached = 0
 }
 
-func (m *SessionManager) Steer(ctx context.Context, sessionID, text string, images []ImageContent) error {
+func (m *SessionManager) Steer(ctx context.Context, sessionID, text string, images []ImageContent, resources []TextResourceAttachment) error {
 	entry, err := m.entry(sessionID)
 	if err != nil {
 		return err
@@ -374,13 +393,16 @@ func (m *SessionManager) Steer(ctx context.Context, sessionID, text string, imag
 	if len(images) > 0 && !profile.Operations.PromptImage {
 		return unsupportedAgentCapability("image prompts")
 	}
+	if len(resources) > 0 && !profile.Operations.PromptEmbeddedContext {
+		return unsupportedAgentCapability("text resource prompts")
+	}
 	entry.state.Lock()
 	runID := entry.runID
 	entry.state.Unlock()
 	if runID == "" {
 		return fmt.Errorf("Goose has not supplied a steerable run id")
 	}
-	prompt, err := promptBlocks(text, images)
+	prompt, err := promptBlocks(text, images, resources)
 	if err != nil {
 		return err
 	}
@@ -415,8 +437,8 @@ func (m *SessionManager) Abort(ctx context.Context, sessionID string) error {
 	return m.client.Cancel(entry.context(ctx), sessionID)
 }
 
-func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry, text string, images []ImageContent, queueID string) error {
-	prompt, err := promptBlocks(text, images)
+func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry, text string, images []ImageContent, resources []TextResourceAttachment, queueID string) error {
+	prompt, err := promptBlocks(text, images, resources)
 	if err != nil {
 		return err
 	}
@@ -431,12 +453,20 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 	}()
 	content := any(text)
 	echoImages := make([]map[string]any, 0, len(images))
-	if len(images) > 0 {
+	echoResources := make([]map[string]any, 0, len(resources))
+	resourceBytes := 0
+	if len(images) > 0 || len(resources) > 0 {
 		blocks := []any{map[string]any{"type": "text", "text": text}}
 		for _, image := range images {
 			block := map[string]any{"type": "image", "data": image.Data, "mimeType": image.MimeType}
 			blocks = append(blocks, block)
 			echoImages = append(echoImages, block)
+		}
+		for _, resource := range resources {
+			marker := map[string]any{"type": "resource", "name": resource.Name, "mimeType": resource.MimeType}
+			blocks = append(blocks, marker)
+			echoResources = append(echoResources, marker)
+			resourceBytes += len(resource.Text)
 		}
 		content = blocks
 	}
@@ -459,7 +489,14 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 		entry.pendingToolOutputs = nil
 	}
 	entry.messages = append(entry.messages, map[string]any{"role": "user", "content": content})
-	entry.pendingEcho = &userEcho{text: text, images: echoImages, matched: make([]bool, len(echoImages))}
+	entry.userResourceBytes = resourceBytes
+	entry.pendingEcho = &userEcho{
+		text:            text,
+		images:          echoImages,
+		resources:       echoResources,
+		matched:         make([]bool, len(echoImages)),
+		resourceMatched: make([]bool, len(echoResources)),
+	}
 	entry.promptAcknowledged = false
 	entry.stats.TotalMessages = len(entry.messages)
 	entry.streaming = true
@@ -657,7 +694,7 @@ func (m *SessionManager) drainFollowUp(sessionID string, entry *sessionEntry) er
 	}
 	m.emitQueue(sessionID, entry)
 	entry.state.Unlock()
-	if err := m.startPromptLocked(sessionID, entry, item.Text, nil, item.ID); err != nil {
+	if err := m.startPromptLocked(sessionID, entry, item.Text, nil, nil, item.ID); err != nil {
 		if restoreErr := m.restoreQueuedDispatch(sessionID, entry, item.ID); restoreErr != nil {
 			return fmt.Errorf("prepare queued follow-up: %v; restore queue: %w", err, restoreErr)
 		}
@@ -826,7 +863,7 @@ func (m *SessionManager) cancelPermissions(sessionID string) {
 	}
 }
 
-func promptBlocks(text string, images []ImageContent) ([]acp.ContentBlock, error) {
+func promptBlocks(text string, images []ImageContent, resources []TextResourceAttachment) ([]acp.ContentBlock, error) {
 	blocks := []acp.ContentBlock{acp.TextBlock(text)}
 	total := 0
 	for _, image := range images {
@@ -842,7 +879,86 @@ func promptBlocks(text string, images []ImageContent) ([]acp.ContentBlock, error
 		}
 		blocks = append(blocks, acp.ImageBlock(image.Data, image.MimeType))
 	}
+	if len(resources) > maxTextAttachmentCount {
+		return nil, fmt.Errorf("session text attachments are limited to %d files", maxTextAttachmentCount)
+	}
+	resourceBytes := 0
+	for _, resource := range resources {
+		if !validTextResourceAttachment(resource) {
+			return nil, fmt.Errorf("malformed session text attachment")
+		}
+		if len(resource.Text) > maxTextAttachmentBytes {
+			return nil, fmt.Errorf("session text attachment exceeds the 1 MiB size limit")
+		}
+		resourceBytes += len(resource.Text)
+		if resourceBytes > maxTextAttachmentTotalBytes {
+			return nil, fmt.Errorf("session text attachments exceed the 2 MiB aggregate size limit")
+		}
+		mimeType := resource.MimeType
+		blocks = append(blocks, acp.ResourceBlock(acp.EmbeddedResourceResource{
+			TextResourceContents: &acp.TextResourceContents{
+				Uri:      "gooseberry://attachment/" + url.PathEscape(resource.Name),
+				MimeType: &mimeType,
+				Text:     resource.Text,
+			},
+		}))
+	}
 	return blocks, nil
+}
+
+func validTextResourceAttachment(resource TextResourceAttachment) bool {
+	if resource.Type != "text" || !validTextAttachmentName(resource.Name) || !validTextAttachmentMimeType(resource.MimeType) || !utf8.ValidString(resource.Text) || containsNUL(resource.Text) {
+		return false
+	}
+	for _, character := range resource.Text {
+		if character < 0x20 && character != '\t' && character != '\n' && character != '\r' {
+			return false
+		}
+	}
+	return true
+}
+
+func validTextAttachmentName(name string) bool {
+	if name == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, "/\\") || containsNUL(name) || !utf8.ValidString(name) || len(name) > maxTextAttachmentNameBytes || utf8.RuneCountInString(name) > maxTextAttachmentNameRunes {
+		return false
+	}
+	for _, character := range name {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validTextAttachmentMimeType(mimeType string) bool {
+	switch mimeType {
+	case "text/plain", "text/markdown", "text/css", "text/html", "text/javascript", "text/x-c", "text/x-c++src", "text/x-csharp", "text/x-go", "text/x-java-source", "text/x-python", "text/x-rust", "text/x-shellscript", "text/x-typescript", "text/x-yaml", "application/json", "application/toml", "application/xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func replayTextResourceMarker(content map[string]any) (map[string]any, int, bool) {
+	resource := mapValue(content["resource"])
+	uri, mimeType := textValue(resource["uri"]), textValue(resource["mimeType"])
+	text, textOK := resource["text"].(string)
+	if uri == "" || !textOK {
+		return nil, 0, false
+	}
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme != "gooseberry" || parsed.Host != "attachment" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil || parsed.Opaque != "" {
+		return nil, 0, false
+	}
+	escapedName, found := strings.CutPrefix(parsed.EscapedPath(), "/")
+	if !found || strings.Contains(escapedName, "/") {
+		return nil, 0, false
+	}
+	name, err := url.PathUnescape(escapedName)
+	if err != nil || name == "" || !validTextResourceAttachment(TextResourceAttachment{Type: "text", Name: name, MimeType: mimeType, Text: text}) || len(text) > maxTextAttachmentBytes || uri != "gooseberry://attachment/"+url.PathEscape(name) {
+		return nil, 0, false
+	}
+	return map[string]any{"type": "resource", "name": name, "mimeType": mimeType}, len(text), true
 }
 
 func canonicalBase64(value string) bool {

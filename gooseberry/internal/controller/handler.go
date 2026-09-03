@@ -26,6 +26,7 @@ type CoreHandler struct {
 	Watches       *workspace.ProjectWatches
 	Requests      *diagnostics.RequestCounter
 	RuntimeStatus func(context.Context) runtimeStatusReport
+	BrowserPanels *BrowserPanels
 }
 
 func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMessage, clientKey string) (result any, err error) {
@@ -34,6 +35,34 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		defer func() { h.Requests.End(started, err != nil) }()
 	}
 	switch method {
+	case "browser.panelOpen":
+		projectID, valid := decodeBrowserPanelOpen(raw)
+		if h.BrowserPanels == nil || !valid {
+			return nil, fmt.Errorf("malformed browser panel request")
+		}
+		if h.Projects != nil {
+			project, projectErr := h.Projects.Get(projectID)
+			if projectErr != nil || project.Closed {
+				return nil, fmt.Errorf("browser panel project is unavailable")
+			}
+		}
+		panelID, err := h.BrowserPanels.Open(clientKey, projectID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"id": panelID}, nil
+	case "browser.panelCommand":
+		panelID, action, valid := decodeBrowserPanelCommand(raw)
+		if h.BrowserPanels == nil || !valid {
+			return nil, fmt.Errorf("malformed browser panel request")
+		}
+		return h.BrowserPanels.command(ctx, clientKey, panelID, action)
+	case "browser.panelClose":
+		panelID, valid := decodeBrowserPanelClose(raw)
+		if h.BrowserPanels == nil || !valid {
+			return nil, fmt.Errorf("malformed browser panel request")
+		}
+		return ack(h.BrowserPanels.Close(ctx, clientKey, panelID))
 	case "runtime.status":
 		if h.RuntimeStatus == nil {
 			return nil, fmt.Errorf("runtime status is not configured")
@@ -127,6 +156,9 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		}
 		if h.Sessions != nil {
 			h.Sessions.ReleaseProject(request.ID)
+		}
+		if h.BrowserPanels != nil {
+			h.BrowserPanels.ReleaseProject(ctx, request.ID)
 		}
 		return map[string]bool{"ok": true}, nil
 	case "project.watchReady":
@@ -257,9 +289,10 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		return h.Sessions.Fork(ctx, request.ProjectID, request.SessionID, cwd)
 	case "session.prompt", "session.steer", "session.queueAdd":
 		var request struct {
-			SessionID string         `json:"sessionId"`
-			Text      *string        `json:"text"`
-			Images    []ImageContent `json:"images"`
+			SessionID string                   `json:"sessionId"`
+			Text      *string                  `json:"text"`
+			Images    []ImageContent           `json:"images"`
+			Resources []TextResourceAttachment `json:"resources"`
 		}
 		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.SessionID == "" || request.Text == nil {
 			return nil, fmt.Errorf("malformed session request")
@@ -267,12 +300,12 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 		var err error
 		switch method {
 		case "session.prompt":
-			err = h.Sessions.Prompt(ctx, request.SessionID, *request.Text, request.Images)
+			err = h.Sessions.Prompt(ctx, request.SessionID, *request.Text, request.Images, request.Resources)
 		case "session.steer":
-			err = h.Sessions.Steer(ctx, request.SessionID, *request.Text, request.Images)
+			err = h.Sessions.Steer(ctx, request.SessionID, *request.Text, request.Images, request.Resources)
 		case "session.queueAdd":
-			if len(request.Images) > 0 {
-				return nil, fmt.Errorf("queued messages do not support images")
+			if len(request.Images) > 0 || len(request.Resources) > 0 {
+				return nil, fmt.Errorf("queued messages do not support attachments")
 			}
 			err = h.Sessions.Queue(ctx, request.SessionID, *request.Text)
 		}

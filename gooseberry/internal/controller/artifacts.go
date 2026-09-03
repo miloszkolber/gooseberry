@@ -69,6 +69,7 @@ func (h *HTTPHandler) serveBrowserArtifact(response http.ResponseWriter, request
 	response.Header().Set("Content-Type", contentType)
 	response.Header().Set("Content-Length", strconv.FormatInt(result.ContentLength, 10))
 	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.CopyN(response, result.Body, result.ContentLength)
 }

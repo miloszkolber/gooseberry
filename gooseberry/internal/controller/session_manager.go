@@ -59,6 +59,7 @@ type sessionEntry struct {
 	inactiveAt         time.Time
 	inactiveBytes      int // Encoded size under state; zero means a mutation needs recounting.
 	pendingEcho        *userEcho
+	userResourceBytes  int
 	promptAcknowledged bool
 	pendingToolOutputs map[string]toolOutput
 	appAttachments     map[string]appAttachmentState
@@ -73,10 +74,12 @@ type sessionEntry struct {
 }
 
 type userEcho struct {
-	text    string
-	offset  int
-	images  []map[string]any
-	matched []bool
+	text            string
+	offset          int
+	images          []map[string]any
+	resources       []map[string]any
+	matched         []bool
+	resourceMatched []bool
 }
 
 type pendingPermission struct {
@@ -430,6 +433,7 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.queue = replay.queue
 	entry.runID = replay.runID
 	entry.pendingEcho = replay.pendingEcho
+	entry.userResourceBytes = replay.userResourceBytes
 	entry.pendingToolOutputs = replay.pendingToolOutputs
 	entry.appAttachments = replay.appAttachments
 	entry.commands = replay.commands
@@ -566,7 +570,11 @@ func (m *SessionManager) SetModel(ctx context.Context, sessionID string, model W
 	}
 	ctx = entry.context(ctx)
 	entry.state.Lock()
-	current := entry.model
+	var current *WireModel
+	if entry.model != nil {
+		copied := *entry.model
+		current = &copied
+	}
 	running := entry.streaming || entry.promptActive || entry.runID != ""
 	entry.state.Unlock()
 	if running {
@@ -575,24 +583,111 @@ func (m *SessionManager) SetModel(ctx context.Context, sessionID string, model W
 	if current != nil && current.Provider == model.Provider && current.ID == model.ID {
 		return nil
 	}
-	if current == nil || current.Provider != model.Provider {
-		options, err := m.setConfig(ctx, sessionID, "provider", model.Provider)
+	providerChanged := current == nil || current.Provider != model.Provider
+	if providerChanged {
+		_, err := m.setConfig(ctx, sessionID, "provider", model.Provider)
 		if err != nil {
-			return err
+			failure := fmt.Errorf("set provider %q while changing session model: %w", model.Provider, err)
+			return m.reconcileModelSwitchFailure(ctx, sessionID, entry, current, true, failure)
 		}
-		entry.state.Lock()
-		entry.configOptions = options
-		entry.state.Unlock()
 	}
 	options, err := m.setConfig(ctx, sessionID, "model", model.ID)
 	if err != nil {
-		return err
+		failure := fmt.Errorf("set model %q for provider %q: %w", model.ID, model.Provider, err)
+		return m.reconcileModelSwitchFailure(ctx, sessionID, entry, current, providerChanged, failure)
+	}
+	configured := modelFromSetup(options, nil)
+	if configured == nil || configured.Provider != model.Provider || configured.ID != model.ID {
+		failure := fmt.Errorf("set model returned %q/%q, want %q/%q", restoredProvider(configured), restoredID(configured), model.Provider, model.ID)
+		return m.reconcileModelSwitchFailure(ctx, sessionID, entry, current, providerChanged, failure)
 	}
 	entry.state.Lock()
 	entry.configOptions = options
-	entry.model = &model
+	entry.model = configured
 	entry.state.Unlock()
+	m.emitSessionConfig(sessionID, configured, options)
 	return nil
+}
+
+// reconcileModelSwitchFailure keeps the local projection aligned with Goose
+// after a model change did not complete. ACP has no transaction for these
+// updates, so restore the previous model and provider when it changed. A
+// failed restore invalidates the projection and reloads it instead of
+// retaining an old model beside options from the new provider.
+func (m *SessionManager) reconcileModelSwitchFailure(ctx context.Context, sessionID string, entry *sessionEntry, previous *WireModel, providerChanged bool, failure error) error {
+	var options []any
+	var rollbackErr error
+	if previous != nil {
+		options, rollbackErr = m.restoreModelConfig(ctx, sessionID, previous, providerChanged)
+	}
+	if rollbackErr == nil {
+		if previous != nil {
+			entry.state.Lock()
+			entry.configOptions = options
+			entry.model = previous
+			entry.state.Unlock()
+			m.emitSessionConfig(sessionID, previous, options)
+			return failure
+		}
+		// No complete prior pair is available to restore. Reload rather than
+		// assuming a failed request left Goose unchanged.
+	}
+
+	refreshCtx := context.WithoutCancel(ctx)
+	if err := m.reloadSessionConfig(refreshCtx, sessionID, entry); err != nil {
+		return errors.Join(failure, rollbackErr, fmt.Errorf("reload session configuration after failed model switch: %w", err))
+	}
+	entry.state.Lock()
+	model, options := entry.model, entry.configOptions
+	entry.state.Unlock()
+	m.emitSessionConfig(sessionID, model, options)
+	return errors.Join(failure, rollbackErr)
+}
+
+func (m *SessionManager) emitSessionConfig(sessionID string, model *WireModel, options []any) {
+	m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "config", "configOptions": options, "model": model}})
+}
+
+func (m *SessionManager) restoreModelConfig(ctx context.Context, sessionID string, previous *WireModel, providerChanged bool) ([]any, error) {
+	if providerChanged {
+		if _, err := m.setConfig(ctx, sessionID, "provider", previous.Provider); err != nil {
+			return nil, fmt.Errorf("restore previous provider %q: %w", previous.Provider, err)
+		}
+	}
+	options, err := m.setConfig(ctx, sessionID, "model", previous.ID)
+	if err != nil {
+		return nil, fmt.Errorf("restore previous model %q for provider %q: %w", previous.ID, previous.Provider, err)
+	}
+	restored := modelFromSetup(options, nil)
+	if restored == nil || restored.Provider != previous.Provider || restored.ID != previous.ID {
+		return nil, fmt.Errorf("restore previous provider/model returned %q/%q, want %q/%q", restoredProvider(restored), restoredID(restored), previous.Provider, previous.ID)
+	}
+	return options, nil
+}
+
+func (m *SessionManager) reloadSessionConfig(ctx context.Context, sessionID string, entry *sessionEntry) error {
+	// Do not expose the pre-switch model if loading the authoritative state also
+	// fails. A later operation retries attachment from Goose.
+	entry.state.Lock()
+	entry.attached = 0
+	entry.configOptions = nil
+	entry.model = nil
+	entry.state.Unlock()
+	return m.attachLocked(ctx, sessionID, entry)
+}
+
+func restoredProvider(model *WireModel) string {
+	if model == nil {
+		return ""
+	}
+	return model.Provider
+}
+
+func restoredID(model *WireModel) string {
+	if model == nil {
+		return ""
+	}
+	return model.ID
 }
 
 func (m *SessionManager) SetThinking(ctx context.Context, sessionID, level string) error {

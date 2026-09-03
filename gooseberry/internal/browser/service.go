@@ -45,6 +45,7 @@ const (
 	defaultStateLimit     = 256 * 1024 * 1024
 	defaultStateEntries   = 20_000
 	defaultSessionLimit   = 16
+	agentBrowserSession   = "browser"
 	closeCommandTimeout   = 10 * time.Second
 	terminateGrace        = 2 * time.Second
 	treeReadBatch         = 128
@@ -605,7 +606,7 @@ func (r *runningCommand) terminate() {
 }
 
 func (a *app) closeSession(session, stateDir, artifactDir string) bool {
-	command := exec.Command(a.config.AgentBrowser, "--config", a.config.BrowserConfig, "--session", session, "close")
+	command := exec.Command(a.config.AgentBrowser, "--config", a.config.BrowserConfig, "--session", agentBrowserSession, "close")
 	command.Env = runtimeEnvironment(stateDir, a.config.AgentBrowser)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
@@ -788,7 +789,10 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (result ma
 		args[request.Positionals[0].index] = temporaryPath
 	}
 
-	command = exec.Command(a.config.AgentBrowser, append([]string{"--config", a.config.BrowserConfig, "--session", request.Session, request.Command}, args...)...)
+	// Each API session has its own socket directory, so the subprocess session
+	// name need not repeat the public identifier. Keeping it short prevents the
+	// Unix socket path from exceeding Chromium's platform limit.
+	command = exec.Command(a.config.AgentBrowser, append([]string{"--config", a.config.BrowserConfig, "--session", agentBrowserSession, request.Command}, args...)...)
 	command.Dir, command.Env = artifactDir, runtimeEnvironment(stateDir, a.config.AgentBrowser)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	collector := captureCommandOutput(command)

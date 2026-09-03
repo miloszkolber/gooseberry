@@ -3,6 +3,7 @@ export interface AgentOperations {
 	deleteSession: boolean;
 	forkSession: boolean;
 	promptImage: boolean;
+	promptEmbeddedContext: boolean;
 	httpMcp: boolean;
 	steer: boolean;
 	renameSession: boolean;
@@ -63,6 +64,57 @@ export interface RuntimeStatusReport {
 	application: RuntimeServiceStatus;
 	agent: RuntimeAgentStatus;
 	browser: RuntimeServiceStatus;
+}
+
+/** A controller-owned, bounded browser panel. The browser service token is never exposed here. */
+export interface BrowserPanel {
+	id: string;
+}
+
+export type BrowserPanelAction =
+	| { type: "open"; url: string }
+	| { type: "back" | "forward" | "reload" | "snapshot" | "screenshot" }
+	| { type: "click"; ref: string }
+	| { type: "fill"; ref: string; text: string }
+	| { type: "viewport"; width: number; height: number };
+
+export interface BrowserPanelResult {
+	output: string;
+	screenshotUrl?: string;
+}
+
+/** Accepts only navigable http(s) URLs without embedded credentials. */
+export function safeBrowserURL(value: string): string | null {
+	if (
+		typeof value !== "string" ||
+		value.length === 0 ||
+		value.length > 2048 ||
+		hasUnsafeBrowserURLCharacter(value)
+	) {
+		return null;
+	}
+	try {
+		const parsed = new URL(value);
+		if (
+			(parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+			!parsed.hostname ||
+			parsed.username ||
+			parsed.password
+		) {
+			return null;
+		}
+		return parsed.href;
+	} catch {
+		return null;
+	}
+}
+
+function hasUnsafeBrowserURLCharacter(value: string): boolean {
+	for (const character of value) {
+		const code = character.codePointAt(0) ?? 0;
+		if (code <= 0x20 || code === 0x7f) return true;
+	}
+	return false;
 }
 
 /** Browser-safe projection of Goose's globally persisted tool permission. */
@@ -465,6 +517,155 @@ export const ACCEPTED_IMAGE_TYPES: readonly string[] = [
 ];
 
 export const REQUEST_IMAGE_BASE64_BUDGET = 24 * 1024 * 1024;
+
+/** Browser-selected text attachments are embedded ACP resources, never files on disk. */
+export const TEXT_ATTACHMENT_MAX_BYTES = 1024 * 1024;
+export const REQUEST_TEXT_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024;
+export const REQUEST_TEXT_ATTACHMENT_MAX_COUNT = 4;
+export const TEXT_ATTACHMENT_FILENAME_MAX_BYTES = 255;
+export const TEXT_ATTACHMENT_FILENAME_MAX_RUNES = 128;
+
+export const TEXT_ATTACHMENT_MEDIA_TYPES = [
+	"text/plain",
+	"text/markdown",
+	"text/css",
+	"text/html",
+	"text/javascript",
+	"text/x-c",
+	"text/x-c++src",
+	"text/x-csharp",
+	"text/x-go",
+	"text/x-java-source",
+	"text/x-python",
+	"text/x-rust",
+	"text/x-shellscript",
+	"text/x-typescript",
+	"text/x-yaml",
+	"application/json",
+	"application/toml",
+	"application/xml",
+] as const;
+
+const TEXT_ATTACHMENT_MEDIA_TYPE_BY_EXTENSION: Readonly<
+	Record<string, (typeof TEXT_ATTACHMENT_MEDIA_TYPES)[number]>
+> = {
+	c: "text/x-c",
+	cc: "text/x-c++src",
+	cpp: "text/x-c++src",
+	cs: "text/x-csharp",
+	css: "text/css",
+	csv: "text/plain",
+	go: "text/x-go",
+	h: "text/x-c",
+	hpp: "text/x-c++src",
+	html: "text/html",
+	java: "text/x-java-source",
+	js: "text/javascript",
+	json: "application/json",
+	jsx: "text/javascript",
+	md: "text/markdown",
+	mdx: "text/markdown",
+	mjs: "text/javascript",
+	py: "text/x-python",
+	rb: "text/plain",
+	rs: "text/x-rust",
+	sh: "text/x-shellscript",
+	sql: "text/plain",
+	toml: "application/toml",
+	ts: "text/x-typescript",
+	tsx: "text/x-typescript",
+	txt: "text/plain",
+	xml: "application/xml",
+	yaml: "text/x-yaml",
+	yml: "text/x-yaml",
+};
+
+export const ACCEPTED_TEXT_ATTACHMENT_EXTENSIONS = Object.keys(
+	TEXT_ATTACHMENT_MEDIA_TYPE_BY_EXTENSION,
+);
+
+export interface TextResourceAttachment {
+	type: "text";
+	name: string;
+	mimeType: (typeof TEXT_ATTACHMENT_MEDIA_TYPES)[number];
+	text: string;
+}
+
+export function textAttachmentMediaType(name: string): TextResourceAttachment["mimeType"] | null {
+	const extension = name.trim().toLowerCase().split(".").at(-1);
+	return extension && extension !== name.toLowerCase()
+		? (TEXT_ATTACHMENT_MEDIA_TYPE_BY_EXTENSION[extension] ?? null)
+		: null;
+}
+
+export function utf8ByteLength(value: string): number {
+	return new TextEncoder().encode(value).byteLength;
+}
+
+export function validateTextResourceAttachments(
+	value: unknown,
+): asserts value is TextResourceAttachment[] {
+	if (!Array.isArray(value)) throw new Error("Session text attachments must be an array");
+	if (value.length > REQUEST_TEXT_ATTACHMENT_MAX_COUNT) {
+		throw new Error(
+			`Session text attachments are limited to ${REQUEST_TEXT_ATTACHMENT_MAX_COUNT} files`,
+		);
+	}
+	let totalBytes = 0;
+	for (const attachment of value) {
+		if (
+			typeof attachment !== "object" ||
+			attachment === null ||
+			Array.isArray(attachment) ||
+			Reflect.get(attachment, "type") !== "text" ||
+			typeof Reflect.get(attachment, "name") !== "string" ||
+			typeof Reflect.get(attachment, "mimeType") !== "string" ||
+			typeof Reflect.get(attachment, "text") !== "string"
+		) {
+			throw new Error("Malformed session text attachment");
+		}
+		const name = Reflect.get(attachment, "name") as string;
+		const mimeType = Reflect.get(attachment, "mimeType") as string;
+		const text = Reflect.get(attachment, "text") as string;
+		if (
+			!name ||
+			name !== name.trim() ||
+			name.includes("/") ||
+			name.includes("\\") ||
+			name.includes("\0") ||
+			name.length > TEXT_ATTACHMENT_FILENAME_MAX_RUNES ||
+			utf8ByteLength(name) > TEXT_ATTACHMENT_FILENAME_MAX_BYTES
+		) {
+			throw new Error("Session text attachment filename is invalid");
+		}
+		if (!(TEXT_ATTACHMENT_MEDIA_TYPES as readonly string[]).includes(mimeType)) {
+			throw new Error(`Unsupported text attachment media type: ${mimeType}`);
+		}
+		if (!isSafeTextAttachmentText(text))
+			throw new Error("Session text attachment is not valid text");
+		const byteLength = utf8ByteLength(text);
+		if (byteLength > TEXT_ATTACHMENT_MAX_BYTES) {
+			throw new Error("Session text attachment exceeds the 1 MiB size limit");
+		}
+		totalBytes += byteLength;
+		if (totalBytes > REQUEST_TEXT_ATTACHMENT_MAX_BYTES) {
+			throw new Error("Session text attachments exceed the 2 MiB aggregate size limit");
+		}
+	}
+}
+
+function isSafeTextAttachmentText(value: string): boolean {
+	for (const character of value) {
+		const code = character.codePointAt(0) ?? 0;
+		if (
+			code === 0 ||
+			(code < 0x20 && character !== "\t" && character !== "\n" && character !== "\r")
+		) {
+			return false;
+		}
+	}
+	return true;
+}
 
 /**
  * Validate image blocks accepted by the browser session prompt and steer

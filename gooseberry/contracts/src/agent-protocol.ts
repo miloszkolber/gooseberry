@@ -11,6 +11,12 @@ export interface TextContent {
 	type: "text";
 	text: string;
 }
+/** Metadata-only projection of a browser text attachment. Resource text never reaches the Web UI. */
+export interface TextResourceAttachmentMarker {
+	type: "resource";
+	name: string;
+	mimeType: string;
+}
 export interface ThinkingContent {
 	type: "thinking";
 	thinking: string;
@@ -96,7 +102,7 @@ export type StopReason = string;
 
 export interface UserMessage {
 	role: "user";
-	content: string | (TextContent | ImageContent)[];
+	content: string | (TextContent | ImageContent | TextResourceAttachmentMarker)[];
 	timestamp?: number;
 }
 
@@ -267,6 +273,7 @@ export type AgentEvent =
 			costCurrency?: string;
 			contextUsage?: ContextUsage;
 			configOptions?: readonly { id: string; currentValue?: string | boolean }[];
+			model?: WireModel;
 			title?: string;
 			error?: string;
 			tool?: unknown;

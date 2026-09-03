@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -65,19 +66,27 @@ func run() error {
 		return err
 	}
 	agent := &fixtureAgent{release: make(chan struct{}), mode: "ask"}
-	agentServer, err := agent.start()
+	agentServer, agentURL, err := agent.start()
 	if err != nil {
 		return err
 	}
+	port := 7312
+	if configured := os.Getenv("GOOSEBERRY_UI_FIXTURE_PORT"); configured != "" {
+		parsed, parseErr := strconv.Atoi(configured)
+		if parseErr != nil || parsed < 1024 || parsed > 65535 {
+			return fmt.Errorf("invalid GOOSEBERRY_UI_FIXTURE_PORT")
+		}
+		port = parsed
+	}
 	runtime, err := controller.NewRuntime(controller.RuntimeConfig{
 		Host:       "127.0.0.1",
-		Port:       7312,
+		Port:       port,
 		DataDir:    data,
 		StaticDir:  "/app/web",
 		AppVersion: "ui-acceptance",
-		GooseURL:   "ws://127.0.0.1:3284/acp",
+		GooseURL:   agentURL,
 		Policy:     policy,
-		Getenv:     func(string) string { return "" },
+		Getenv:     os.Getenv,
 	})
 	if err != nil {
 		_ = agentServer.Close()
@@ -219,14 +228,14 @@ func fixturePNG() []byte {
 	return encoded.Bytes()
 }
 
-func (a *fixtureAgent) start() (*http.Server, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:3284")
+func (a *fixtureAgent) start() (*http.Server, string, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	server := &http.Server{Handler: http.HandlerFunc(a.serveHTTP), ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = server.Serve(listener) }()
-	return server, nil
+	return server, "ws://" + listener.Addr().String() + "/acp", nil
 }
 
 func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Request) {

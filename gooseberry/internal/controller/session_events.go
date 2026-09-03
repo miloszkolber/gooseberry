@@ -242,6 +242,20 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			role = "user"
 		}
 		content := mapValue(update["content"])
+		if textValue(content["type"]) == "resource" {
+			marker, byteLength, valid := replayTextResourceMarker(content)
+			if !valid {
+				return nil
+			}
+			if role == "user" && consumeEchoResource(entry, marker) {
+				return nil
+			}
+			if role != "user" || !appendUserResourceMarker(entry, marker, byteLength) {
+				return nil
+			}
+			entry.stats.TotalMessages = len(entry.messages)
+			return []map[string]any{{"type": "message_start", "message": entry.messages[len(entry.messages)-1]}}
+		}
 		if textValue(content["type"]) == "image" {
 			image := map[string]any{"type": "image", "data": textValue(content["data"]), "mimeType": textValue(content["mimeType"])}
 			if role == "user" && consumeEchoImage(entry, image) {
@@ -699,6 +713,9 @@ func terminalStatusKind(kind string) bool {
 
 func appendMessageBlock(entry *sessionEntry, role string, block map[string]any) {
 	if len(entry.messages) == 0 || textValue(mapValue(entry.messages[len(entry.messages)-1])["role"]) != role {
+		if role == "user" {
+			entry.userResourceBytes = 0
+		}
 		entry.messages = append(entry.messages, map[string]any{"role": role, "content": []any{block}})
 		return
 	}
@@ -725,6 +742,37 @@ func appendMessageBlock(entry *sessionEntry, role string, block map[string]any) 
 	}
 	message["content"] = append(content, block)
 	entry.messages[len(entry.messages)-1] = message
+}
+
+func appendUserResourceMarker(entry *sessionEntry, marker map[string]any, byteLength int) bool {
+	if len(entry.messages) == 0 || textValue(mapValue(entry.messages[len(entry.messages)-1])["role"]) != "user" {
+		entry.userResourceBytes = 0
+	}
+	if entry.userResourceBytes+byteLength > maxTextAttachmentTotalBytes {
+		return false
+	}
+	if len(entry.messages) > 0 {
+		last := mapValue(entry.messages[len(entry.messages)-1])
+		if textValue(last["role"]) == "user" {
+			count := 0
+			for _, block := range contentBlocks(last["content"]) {
+				if textValue(mapValue(block)["type"]) == "resource" {
+					count++
+				}
+			}
+			if count >= maxTextAttachmentCount {
+				return false
+			}
+		}
+	}
+	appendMessageBlock(entry, "user", marker)
+	entry.userResourceBytes += byteLength
+	return true
+}
+
+func contentBlocks(content any) []any {
+	blocks, _ := content.([]any)
+	return blocks
 }
 
 // Detach mutable transcript objects before publishing them outside the state lock.
@@ -787,11 +835,35 @@ func consumeEchoImage(entry *sessionEntry, image map[string]any) bool {
 	return false
 }
 
+func consumeEchoResource(entry *sessionEntry, marker map[string]any) bool {
+	echo := entry.pendingEcho
+	if echo == nil {
+		return false
+	}
+	for index, expected := range echo.resources {
+		if !echo.resourceMatched[index] && expected["name"] == marker["name"] && expected["mimeType"] == marker["mimeType"] {
+			echo.resourceMatched[index] = true
+			if echoComplete(echo) {
+				entry.promptAcknowledged = true
+				entry.pendingEcho = nil
+			}
+			return true
+		}
+	}
+	entry.pendingEcho = nil
+	return false
+}
+
 func echoComplete(echo *userEcho) bool {
 	if echo.offset < len(echo.text) {
 		return false
 	}
 	for _, matched := range echo.matched {
+		if !matched {
+			return false
+		}
+	}
+	for _, matched := range echo.resourceMatched {
 		if !matched {
 			return false
 		}

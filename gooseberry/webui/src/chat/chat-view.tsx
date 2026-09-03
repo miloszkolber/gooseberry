@@ -135,6 +135,9 @@ export default function ChatView({
 	const agentProfile = useAppStore((s) => s.agentProfile);
 	const gooseAgent = agentProfile?.goose === true;
 	const canPromptImage = agentProfile ? agentProfile.operations.promptImage : null;
+	const canPromptEmbeddedContext = agentProfile
+		? agentProfile.operations.promptEmbeddedContext
+		: null;
 	const canSteer = agentProfile?.operations.steer === true;
 	const canDelete = agentProfile?.operations.deleteSession === true;
 	const canUseHttpMcp = agentProfile?.operations.httpMcp === true;
@@ -596,8 +599,20 @@ export default function ChatView({
 		const capabilityBehavior = behavior === "steer" && !canSteer ? "queue" : behavior;
 		const heldByQueue = capabilityBehavior === "send" && runtime.queue.followUp.length > 0;
 		const effectiveBehavior = heldByQueue ? "queue" : capabilityBehavior;
-		if (canPromptImage === false && attachments.length > 0) {
+		const images = attachments.flatMap((attachment) =>
+			attachment.kind === "image" ? [attachment.content] : [],
+		);
+		const resources = attachments.flatMap((attachment) =>
+			attachment.kind === "text" ? [attachment.content] : [],
+		);
+		if (canPromptImage === false && images.length > 0) {
 			toast.error(`${agentProfile?.name || "The connected agent"} does not support image prompts.`);
+			return false;
+		}
+		if (canPromptEmbeddedContext === false && resources.length > 0) {
+			toast.error(
+				`${agentProfile?.name || "The connected agent"} does not support text resource prompts.`,
+			);
 			return false;
 		}
 		if (effectiveBehavior === "queue" && attachments.length > 0) {
@@ -614,8 +629,12 @@ export default function ChatView({
 		if (heldByQueue) toast.info("Queued behind the existing follow-ups.", "Message queued");
 		if (effectiveBehavior === "send" && (text || attachments.length > 0))
 			useAppStore.getState().appendUserMessage(sessionId, text, attachments);
-		const images = attachments.map((a) => a.content);
-		const params = { sessionId, text, ...(images.length > 0 ? { images } : {}) };
+		const params = {
+			sessionId,
+			text,
+			...(images.length > 0 ? { images } : {}),
+			...(resources.length > 0 ? { resources } : {}),
+		};
 		const method =
 			effectiveBehavior === "steer"
 				? "session.steer"
@@ -1029,6 +1048,7 @@ export default function ChatView({
 							onAbort={onAbort}
 							onHistoryOpen={onHistoryOpen}
 							supportsImages={canPromptImage}
+							supportsTextResources={canPromptEmbeddedContext}
 							supportsSteer={canSteer}
 						/>
 						<ChatHeader

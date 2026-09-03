@@ -6,7 +6,7 @@
 | Application, `:7312` | `gooseberry` container | Web UI, projects, files, Git and objective/question MCP. |
 | Browser, `:8787` | `gooseberry-browser` container | Browser MCP/HTTP, Chromium, artifacts and the App sandbox origin. |
 
-The application connects to Goose over ACP and proxies authenticated browser artifacts. Goose calls the application and browser MCP endpoints. Interactive Apps render on the browser's separate origin while the application authorizes their access to Goose.
+The application connects to Goose over ACP and proxies authenticated browser artifacts and bounded browser-panel commands. Goose calls the application and browser MCP endpoints. Interactive Apps render on the browser's separate origin while the application authorizes their access to Goose.
 
 Both containers use host networking so they can reach host Goose over loopback. They have independent state, health checks and shutdown paths.
 

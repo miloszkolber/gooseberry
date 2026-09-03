@@ -4,6 +4,7 @@ const OPERATION_LABELS: Record<keyof AgentProfile["operations"], string> = {
 	deleteSession: "Delete chats",
 	forkSession: "Fork chats",
 	promptImage: "Image prompts",
+	promptEmbeddedContext: "Text resource prompts",
 	httpMcp: "HTTP MCP servers",
 	steer: "Steer a running chat",
 	renameSession: "Rename chats",

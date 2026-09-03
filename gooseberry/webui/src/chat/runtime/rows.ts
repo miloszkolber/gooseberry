@@ -17,7 +17,7 @@ export type ActivityStep =
 	| { kind: "thinking"; id: string; text: string; streaming: boolean };
 
 export type ChatRow =
-	| { kind: "user"; id: string; message: UserMessage; attachmentNames?: string[] }
+	| { kind: "user"; id: string; message: UserMessage; imageAttachmentNames?: string[] }
 	| { kind: "system"; id: string; text: string }
 	| { kind: "error"; id: string; text: string }
 	| ({ kind: "compaction"; id: string } & CompactionState)
@@ -111,7 +111,9 @@ export function deriveRows(
 						kind: "user",
 						id: turn.id,
 						message: turn.message,
-						...(turn.attachmentNames ? { attachmentNames: turn.attachmentNames } : {}),
+						...(turn.imageAttachmentNames
+							? { imageAttachmentNames: turn.imageAttachmentNames }
+							: {}),
 					});
 					break;
 				case "system":

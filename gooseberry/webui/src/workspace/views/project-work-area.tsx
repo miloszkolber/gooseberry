@@ -1,5 +1,6 @@
-import { MessageSquarePlus, X } from "lucide-react";
-import { lazy, Suspense, useCallback, useState } from "react";
+import type { RuntimeStatusReport } from "@gooseberry/contracts";
+import { Globe, MessageSquarePlus, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { SessionLifecycleMenu } from "../../chat/session/session-lifecycle-controls";
 import { ErrorBoundary } from "../../components/error-boundary";
@@ -25,8 +26,10 @@ import { ProjectTree } from "../projects/project-tree";
 const ChatView = lazy(() => import("../../chat/chat-view"));
 const loadDiffPane = () => import("../../files/changes/diff-pane");
 const loadFilePane = () => import("../../files/tabs/file-pane");
+const loadBrowserPanel = () => import("../browser/browser-panel");
 const DiffPane = lazy(async () => ({ default: (await loadDiffPane()).DiffPane }));
 const FilePane = lazy(async () => ({ default: (await loadFilePane()).FilePane }));
+const BrowserPanel = lazy(async () => ({ default: (await loadBrowserPanel()).BrowserPanel }));
 const EMPTY_TABS: ContentTab[] = [];
 type Activity = "files" | "changes";
 
@@ -40,6 +43,10 @@ function MissingResource({ label }: { label: string }) {
 
 function activityLabel(activity: Activity): string {
 	return activity.slice(0, 1).toUpperCase() + activity.slice(1);
+}
+
+export function browserPanelAvailable(report: RuntimeStatusReport | null): boolean {
+	return report?.browser.state === "ready";
 }
 
 export function selectTabSessionStreaming(
@@ -68,6 +75,11 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 		(state) => state.activeActivityByProjectArea[projectAreaId] ?? "files",
 	);
 	const [mobilePane, setMobilePane] = useState<"projects" | "content" | "activity">("content");
+	const [browserStatus, setBrowserStatus] = useState<RuntimeStatusReport | null>(null);
+	const connected = useAppStore((state) => state.status === "connected");
+	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
+	const removed = useAppStore((state) => state.removedProjectAreaIds[projectAreaId] === true);
+	const previousTabs = useRef<ContentTab[]>(contentTabs);
 	const showContent = useCallback(
 		() => setMobilePane((pane) => (pane === "activity" ? "content" : pane)),
 		[],
@@ -75,6 +87,44 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 
 	useProjectAreaChatCatalogReconciliation(projectAreaId);
 	useChatLocationReconciliation(projectAreaId);
+	useEffect(() => {
+		if (!connected) {
+			setBrowserStatus(null);
+			return;
+		}
+		let current = true;
+		let next: ReturnType<typeof setTimeout> | undefined;
+		const poll = async () => {
+			try {
+				const report = await getTransport().request("runtime.status", {}, { timeoutMs: 5_000 });
+				if (current && useAppStore.getState().connectionGeneration === connectionGeneration) {
+					setBrowserStatus(report);
+				}
+			} catch {
+				if (current && useAppStore.getState().connectionGeneration === connectionGeneration) {
+					setBrowserStatus(null);
+				}
+			} finally {
+				if (current) next = setTimeout(() => void poll(), 5_000);
+			}
+		};
+		void poll();
+		return () => {
+			current = false;
+			if (next) clearTimeout(next);
+		};
+	}, [connected, connectionGeneration]);
+	useEffect(() => {
+		if (removed) {
+			for (const tab of previousTabs.current) {
+				if (tab.kind !== "browser") continue;
+				void getTransport()
+					.request("browser.panelClose", { panelId: tab.panelId }, { timeoutMs: 10_000 })
+					.catch(() => undefined);
+			}
+		}
+		previousTabs.current = contentTabs;
+	}, [contentTabs, removed]);
 
 	const startChat = useCallback(() => {
 		void getTransport()
@@ -93,6 +143,31 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 					toast.error(errorText(error), "Couldn't start the chat");
 				}
 			});
+	}, [projectArea, projectAreaId]);
+
+	const startBrowser = useCallback(() => {
+		void getTransport()
+			.request("browser.panelOpen", { projectId: projectArea?.projectId ?? projectAreaId })
+			.then((panel) => {
+				if (useAppStore.getState().removedProjectAreaIds[projectAreaId]) {
+					void getTransport()
+						.request("browser.panelClose", { panelId: panel.id }, { timeoutMs: 10_000 })
+						.catch(() => undefined);
+					return;
+				}
+				useAppStore.getState().setBrowserPanelState(panel.id, {});
+				useAppStore.getState().openTab(
+					{
+						kind: "browser",
+						id: `browser-${panel.id}`,
+						projectAreaId,
+						name: "Browser",
+						panelId: panel.id,
+					},
+					"keep",
+				);
+			})
+			.catch((error) => toast.error(errorText(error), "Couldn't open the browser"));
 	}, [projectArea, projectAreaId]);
 
 	const renderContent = useCallback(
@@ -155,6 +230,15 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 					</ErrorBoundary>
 				);
 			}
+			if (tab.kind === "browser") {
+				return (
+					<ErrorBoundary label="browser" resetKeys={[projectAreaId, tab.id]}>
+						<Suspense fallback={<MissingResource label="browser" />}>
+							<BrowserPanel panelId={tab.panelId} />
+						</Suspense>
+					</ErrorBoundary>
+				);
+			}
 			return (
 				<ErrorBoundary label="preview" resetKeys={[projectAreaId, tab.id]}>
 					<Suspense fallback={<MissingResource label="preview" />}>
@@ -169,6 +253,7 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 	const prefetchTab = (tab: ContentTab) => {
 		if (tab.kind === "file") void loadFilePane();
 		else if (tab.kind === "diff") void loadDiffPane();
+		else if (tab.kind === "browser") void loadBrowserPanel();
 	};
 
 	const renderActivity = () =>
@@ -256,6 +341,20 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 											useAppStore
 												.getState()
 												.closeChatToHistory(tab.sessionId, projectAreaId, false);
+										} else if (tab.kind === "browser") {
+											void getTransport()
+												.request(
+													"browser.panelClose",
+													{ panelId: tab.panelId },
+													{ timeoutMs: 10_000 },
+												)
+												.then(() => {
+													useAppStore.getState().removeBrowserPanelState(tab.panelId);
+													useAppStore.getState().closeTab(tab.id, false, projectAreaId);
+												})
+												.catch((error) =>
+													toast.error(errorText(error), "Couldn't close the browser"),
+												);
 										} else useAppStore.getState().closeTab(tab.id, false, projectAreaId);
 									}}
 								>
@@ -265,6 +364,18 @@ export function ProjectWorkArea({ projectAreaId }: { projectAreaId: string }) {
 						))}
 					</div>
 					<ProjectChatHistory projectAreaId={projectAreaId} />
+					{browserPanelAvailable(browserStatus) ? (
+						<button
+							type="button"
+							data-testid="open-browser"
+							aria-label="Open browser"
+							title="Open browser"
+							className="flex shrink-0 items-center gap-xs rounded-[var(--radius-sm)] px-sm py-xs text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
+							onClick={startBrowser}
+						>
+							<Globe className="size-4" />
+						</button>
+					) : null}
 					<button
 						type="button"
 						data-testid="new-chat"

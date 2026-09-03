@@ -360,8 +360,12 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			const value = event.configOptions?.find(
 				(option) => option.id === "thinking_effort",
 			)?.currentValue;
-			return event.configOptions
-				? { ...rt, thinkingLevel: typeof value === "string" ? value : rt.thinkingLevel }
+			return event.configOptions || event.model
+				? {
+						...rt,
+						model: event.model ?? rt.model,
+						thinkingLevel: typeof value === "string" ? value : rt.thinkingLevel,
+					}
 				: rt;
 		}
 		case "complete":
@@ -418,8 +422,11 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				const last = rt.turns[rt.turns.length - 1];
 				if (last?.kind === "user") {
 					const optimisticText = userText(last.message.content);
-					if (optimisticText === text) {
-						return last.optimistic
+					if (
+						optimisticText === text ||
+						(optimisticText === "" && text !== "" && userResourceMarkerCount(last.message) > 0)
+					) {
+						return last.optimistic || !sameUserResourceMarkers(last.message, message)
 							? {
 									...rt,
 									turns: [...rt.turns.slice(0, -1), { kind: "user", id: last.id, message }],
@@ -587,6 +594,27 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 		default:
 			return rt;
 	}
+}
+
+function userResourceMarkerCount(message: UserMessage): number {
+	return typeof message.content === "string"
+		? 0
+		: message.content.filter((block) => block.type === "resource").length;
+}
+
+function sameUserResourceMarkers(left: UserMessage, right: UserMessage): boolean {
+	const markers = (message: UserMessage) =>
+		typeof message.content === "string"
+			? []
+			: message.content
+					.filter((block) => block.type === "resource")
+					.map((block) => `${block.name}\0${block.mimeType}`);
+	const leftMarkers = markers(left);
+	const rightMarkers = markers(right);
+	return (
+		leftMarkers.length === rightMarkers.length &&
+		leftMarkers.every((marker, index) => marker === rightMarkers[index])
+	);
 }
 
 export function reduceSessionExtUi(

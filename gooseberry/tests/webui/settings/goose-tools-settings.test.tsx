@@ -71,6 +71,7 @@ test("generic agent settings expose agent identity, Signet and System", () => {
 			deleteSession: false,
 			forkSession: true,
 			promptImage: false,
+			promptEmbeddedContext: false,
 			httpMcp: false,
 			steer: false,
 			renameSession: false,
