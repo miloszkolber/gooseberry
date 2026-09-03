@@ -19,3 +19,7 @@ GOOSEBERRY_AUTH_ENABLED=false
 # GOOSEBERRY_BROWSER_PORT=8787
 # GOOSEBERRY_BROWSER_URL=http://127.0.0.1:8787
 # GOOSEBERRY_BROWSER_PUBLIC_ORIGIN=https://browser.example.com
+
+# Pin these to a release or sha-<revision> tag when using published images.
+# GOOSEBERRY_IMAGE=ghcr.io/miloszkolber/gooseberry:sha-revision
+# GOOSEBERRY_BROWSER_IMAGE=ghcr.io/miloszkolber/gooseberry-browser:sha-revision

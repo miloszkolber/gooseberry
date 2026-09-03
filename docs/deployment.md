@@ -50,6 +50,7 @@ Set these values:
 | `GOOSEBERRY_BROWSER_TOKEN` | The browser token from Goose's private environment. |
 | `GOOSEBERRY_AUTH_ENABLED`, `GOOSEBERRY_TOKEN` | Optional Web UI login. Authentication is required for remote binding. |
 | `GOOSEBERRY_BROWSER_PUBLIC_ORIGIN` | Exact external browser origin when proxied; it must differ from the application origin. |
+| `GOOSEBERRY_IMAGE`, `GOOSEBERRY_BROWSER_IMAGE` | Optional immutable release or `sha-<revision>` image references for published deployments. |
 
 Compose runs both containers as `1000:1000`. If the state owner uses another UID/GID, change `user` and the matching tmpfs ownership in both services.
 
@@ -76,7 +77,7 @@ The browser receives only its own state mount. Start both services:
 docker compose --env-file .gooseberry up -d --build
 ```
 
-To use published images instead, run `docker compose --env-file .gooseberry pull`, then start with `--no-build`.
+To use published images instead, set both image variables to a release or `sha-<revision>` tag, run `docker compose --env-file .gooseberry pull`, then start with `--no-build`. The default `latest` tags are a convenience, not an immutable deployment reference.
 
 ## Browser MCP
 

@@ -78,11 +78,15 @@ func run() error {
 		}
 		port = parsed
 	}
+	staticDir := os.Getenv("GOOSEBERRY_UI_STATIC_DIR")
+	if staticDir == "" {
+		staticDir = "/app/web"
+	}
 	runtime, err := controller.NewRuntime(controller.RuntimeConfig{
 		Host:       "127.0.0.1",
 		Port:       port,
 		DataDir:    data,
-		StaticDir:  "/app/web",
+		StaticDir:  staticDir,
 		AppVersion: "ui-acceptance",
 		GooseURL:   agentURL,
 		Policy:     policy,

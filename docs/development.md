@@ -39,7 +39,7 @@ Run the probe against isolated Goose state, never live user state:
 go run ./tests/goose -url ws://127.0.0.1:3284/acp
 ```
 
-Set `GOOSE_SERVER__SECRET_KEY` in the probe's private environment. The optional `-source /path/to/upstream` mode checks method registration. Runtime probes cover selected authentication, session, provider, setting and reconnect paths; they do not prove every provider or extension.
+Set `GOOSE_SERVER__SECRET_KEY` in the probe's private environment. The optional `-source /path/to/upstream` mode checks method registration and the session-extension identity shapes Gooseberry depends on. Runtime probes cover selected authentication, session, provider, setting and reconnect paths; they do not prove every provider or extension.
 
 ## Images
 
@@ -55,7 +55,7 @@ Check both architectures after packaging changes. Exercise state and environment
 
 ## Performance
 
-The initial JavaScript budget is **500,000 raw bytes**, including eager imports. The current production build is **435,841 raw bytes**. Keep large views and grammars lazy and transcript lists virtualized.
+The initial JavaScript budget is **500,000 raw bytes**, including eager imports. The current production build is **439,030 raw bytes**. Keep large views and grammars lazy and transcript lists virtualized.
 
 The controller target is a median round-p95 no more than **5% above the reference workload**. Prepare a fixture once, mount it read-only into two isolated applications and compare exact builds:
 

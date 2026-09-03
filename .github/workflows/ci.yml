@@ -48,18 +48,18 @@ jobs:
     name: Source validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.revision || github.sha }}
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: gooseberry/package.json
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: gooseberry/go.mod
           cache-dependency-path: gooseberry/go.sum
       - name: Cache bun install
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('gooseberry/bun.lock') }}
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.revision || github.sha }}
       - name: Build browser acceptance image
@@ -126,7 +126,7 @@ jobs:
           exit "$status"
       - name: Keep browser evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ui-acceptance
           path: artifacts/ui
@@ -145,13 +145,16 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.revision || github.sha }}
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: gooseberry/go.mod
           cache-dependency-path: gooseberry/go.sum
+      - name: Verify native workspace filesystem behavior
+        run: CGO_ENABLED=0 go test -count=1 ./tests/go/workspace
+        working-directory: gooseberry
       - name: Verify the pinned official GNU Linux executable
         env:
           ARCH: ${{ matrix.arch }}
@@ -178,6 +181,13 @@ jobs:
           actual=$(printf '%s' "$actual" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
           [[ "$actual" = "${version#v}" || "$actual" = "goose ${version#v}" ]]
           go build -trimpath -o "$smoke/acp-smoke" ./tests/goose
+          source="$smoke/source"
+          mkdir -p "$source/crates/goose/src/acp/server" "$source/ui/desktop/src/components/settings/extensions"
+          for path in crates/goose/acp-meta.json crates/goose/acp-schema.json crates/goose/src/acp/server/custom_dispatch.rs ui/desktop/src/components/settings/extensions/bundled-extensions.json; do
+            curl --fail --location --retry 3 --retry-all-errors --retry-max-time 120 \
+              --connect-timeout 20 --max-time 60 --create-dirs --output "$source/$path" \
+              "https://raw.githubusercontent.com/$repository/$version/$path"
+          done
           mkdir "$smoke/home"
           env -u LANGFUSE_PUBLIC_KEY -u LANGFUSE_SECRET_KEY \
             HOME="$smoke/home" GOOSE_PATH_ROOT="$smoke/home" XDG_CONFIG_HOME="$smoke/home/.config" XDG_DATA_HOME="$smoke/home/.local/share" \
@@ -190,4 +200,4 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:3284/health >/dev/null
-          "$smoke/acp-smoke" -url ws://127.0.0.1:3284/acp
+          "$smoke/acp-smoke" -source "$source" -url ws://127.0.0.1:3284/acp

@@ -4,7 +4,7 @@ services:
             context: .
             dockerfile: gooseberry/Dockerfile
             target: gooseberry
-        image: ghcr.io/miloszkolber/gooseberry:latest
+        image: "${GOOSEBERRY_IMAGE:-ghcr.io/miloszkolber/gooseberry:latest}"
         container_name: gooseberry
         restart: unless-stopped
         network_mode: host
@@ -47,7 +47,7 @@ services:
             context: .
             dockerfile: gooseberry/Dockerfile
             target: browser
-        image: ghcr.io/miloszkolber/gooseberry-browser:latest
+        image: "${GOOSEBERRY_BROWSER_IMAGE:-ghcr.io/miloszkolber/gooseberry-browser:latest}"
         container_name: gooseberry-browser
         restart: unless-stopped
         network_mode: host
