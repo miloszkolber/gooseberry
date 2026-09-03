@@ -111,6 +111,19 @@ test("System remains reachable while agent capabilities are unavailable", () => 
 	expect(markup).not.toContain(">Tools<");
 });
 
+test("settings tabs wrap without a native horizontal scroll container", () => {
+	const markup = renderToStaticMarkup(
+		<SettingsNavigation
+			section={SettingsSection.Models}
+			genericAgent={false}
+			profilePending={false}
+		/>,
+	);
+	expect(markup).toContain('role="tablist"');
+	expect(markup).toContain("flex-wrap");
+	expect(markup).not.toContain("overflow-x-auto");
+});
+
 test("session controls are current only after the active target finishes loading", () => {
 	expect(isSessionInventoryCurrent("project-a\0chat-a", "project-a\0chat-a", false)).toBe(true);
 	expect(isSessionInventoryCurrent("project-a\0chat-a", "project-a\0chat-b", false)).toBe(false);

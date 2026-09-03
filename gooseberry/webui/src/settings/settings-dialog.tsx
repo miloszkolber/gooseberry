@@ -91,7 +91,7 @@ export function SettingsNavigation({
 	return (
 		<div
 			role="tablist"
-			className="flex gap-xs overflow-x-auto whitespace-nowrap border-border-default border-b px-md py-sm sm:px-lg"
+			className="flex flex-wrap gap-xs border-border-default border-b px-md py-sm sm:px-lg"
 			aria-label="Settings"
 		>
 			{profilePending ? null : genericAgent ? (

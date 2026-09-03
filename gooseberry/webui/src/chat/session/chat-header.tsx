@@ -14,12 +14,16 @@ export function ChatHeader({
 	return (
 		<div
 			data-testid="chat-toolbar"
-			className="flex h-panel-header-row shrink-0 items-center gap-md overflow-clip border-border-muted border-b bg-container-project-bg px-sm"
+			className="flex min-h-panel-header-row shrink-0 flex-wrap items-center gap-xs border-border-muted border-b bg-container-project-bg px-sm py-xs"
 		>
-			<div className="flex min-w-0 flex-1 items-center overflow-clip">{left}</div>
-			<div className="flex min-w-0 items-center justify-end gap-md overflow-clip">
+			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-xs">{left}</div>
+			<div className="flex min-w-0 flex-wrap items-center justify-end gap-md">
 				{statusEntries.map(([key, text]) => (
-					<span key={key} className="shrink-0 whitespace-nowrap text-text-muted tr-text-metadata">
+					<span
+						key={key}
+						title={text}
+						className="max-w-40 truncate text-text-muted tr-text-metadata sm:max-w-64"
+					>
 						{text}
 					</span>
 				))}

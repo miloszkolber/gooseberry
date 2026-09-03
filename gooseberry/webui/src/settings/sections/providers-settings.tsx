@@ -190,7 +190,7 @@ export function ProvidersSettings() {
 			) : (
 				<>
 					{configured.length > 0 ? (
-						<Group title={`Connected (${configured.length})`}>
+						<Group title={`Configured in Goose (${configured.length})`}>
 							{configured.map((provider) => (
 								<ProviderCard
 									key={provider.id}
@@ -345,7 +345,7 @@ export function ProviderCard({
 				</span>
 				{provider.configured ? (
 					<span className="truncate text-text-muted tr-text-metadata">
-						{configuredLabel}
+						Goose reports {configuredLabel}
 						{provider.detail ? ` · ${provider.detail}` : ""}
 					</span>
 				) : null}

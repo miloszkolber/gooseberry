@@ -1,4 +1,8 @@
-import { REQUEST_IMAGE_BASE64_BUDGET, type SlashCommandInfo } from "@gooseberry/contracts";
+import {
+	ACCEPTED_IMAGE_TYPES,
+	REQUEST_IMAGE_BASE64_BUDGET,
+	type SlashCommandInfo,
+} from "@gooseberry/contracts";
 import {
 	ArrowUp,
 	BookOpen,
@@ -7,6 +11,7 @@ import {
 	FileIcon,
 	FolderIcon,
 	History,
+	Paperclip,
 	Puzzle,
 	Square,
 	Wrench,
@@ -212,6 +217,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	handleRef,
 ) {
 	const ref = useRef<HTMLTextAreaElement>(null);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [caret, setCaret] = useState(value.length);
 	const [images, setImages] = useState<PendingImage[]>([]);
 	const imagesRef = useRef<PendingImage[]>([]);
@@ -644,6 +650,31 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				<div className="flex flex-wrap items-center gap-sm">
 					<div className="min-w-0 flex-1" />
 					<div className="flex shrink-0 items-center gap-sm">
+						<input
+							ref={fileInputRef}
+							type="file"
+							accept={ACCEPTED_IMAGE_TYPES.join(",")}
+							multiple
+							tabIndex={-1}
+							aria-hidden="true"
+							className="sr-only"
+							onChange={(event) => {
+								const files = [...(event.currentTarget.files ?? [])];
+								event.currentTarget.value = "";
+								void addFiles(files);
+							}}
+						/>
+						<button
+							type="button"
+							data-testid="image-attach"
+							aria-label="Attach images"
+							title="Attach supported images"
+							disabled={!imagePromptsEnabled}
+							onClick={() => fileInputRef.current?.click()}
+							className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg text-text-default hover:bg-control-bg-hovered disabled:pointer-events-none disabled:text-text-muted"
+						>
+							<Paperclip className="size-3.5" />
+						</button>
 						<button
 							type="button"
 							data-testid="history-open"

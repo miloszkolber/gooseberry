@@ -525,6 +525,18 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 			return nil, err
 		}
 		return map[string]string{"level": level}, nil
+	case "model.thinkingLevels":
+		var request struct {
+			SessionID string `json:"sessionId"`
+		}
+		if h.Sessions == nil || decodeParams(raw, &request) != nil {
+			return nil, fmt.Errorf("malformed session request")
+		}
+		levels, err := h.Sessions.ThinkingLevels(request.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"levels": levels}, nil
 	case "session.questionReply":
 		var request struct {
 			SessionID  string         `json:"sessionId"`

@@ -87,6 +87,10 @@ test("completion menus expose a coherent combobox and listbox contract", () => {
 	expect(markup).toContain('role="option"');
 	expect(markup).toContain('aria-selected="true"');
 	expect(markup).toContain("aria-activedescendant=");
+	expect(markup).toContain('data-testid="image-attach"');
+	expect(markup).toContain('aria-label="Attach images"');
+	expect(markup).toContain('type="file"');
+	expect(markup).toContain('accept="image/png,image/jpeg,image/gif,image/webp"');
 });
 
 test("a streaming agent without steer queues text and exposes no image or steer affordance", () => {

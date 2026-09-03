@@ -394,7 +394,7 @@ func (m *SessionManager) ClampThinking(sessionID, requested string) (string, err
 	defer m.releaseEntry(entry)
 	entry.state.Lock()
 	defer entry.state.Unlock()
-	var values []string
+	values := thinkingLevels(entry.configOptions)
 	current := "off"
 	for _, candidate := range entry.configOptions {
 		option := mapValue(candidate)
@@ -403,16 +403,6 @@ func (m *SessionManager) ClampThinking(sessionID, requested string) (string, err
 		}
 		if value := textValue(option["currentValue"]); value != "" {
 			current = value
-		}
-		for _, raw := range arrayValue(option["options"]) {
-			item := mapValue(raw)
-			if nested := arrayValue(item["options"]); len(nested) > 0 {
-				for _, child := range nested {
-					values = append(values, textValue(mapValue(child)["value"]))
-				}
-			} else {
-				values = append(values, textValue(item["value"]))
-			}
 		}
 	}
 	if len(values) == 0 {
@@ -435,6 +425,43 @@ func (m *SessionManager) ClampThinking(sessionID, requested string) (string, err
 		}
 	}
 	return closest, nil
+}
+
+func (m *SessionManager) ThinkingLevels(sessionID string) ([]string, error) {
+	entry, err := m.entry(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer m.releaseEntry(entry)
+	entry.state.Lock()
+	defer entry.state.Unlock()
+	return thinkingLevels(entry.configOptions), nil
+}
+
+func thinkingLevels(options []any) []string {
+	values := []string{}
+	seen := make(map[string]bool)
+	for _, candidate := range options {
+		option := mapValue(candidate)
+		if option["id"] != "thinking_effort" {
+			continue
+		}
+		for _, raw := range arrayValue(option["options"]) {
+			item := mapValue(raw)
+			items := []any{item}
+			if nested := arrayValue(item["options"]); len(nested) > 0 {
+				items = nested
+			}
+			for _, rawItem := range items {
+				value := textValue(mapValue(rawItem)["value"])
+				if value != "" && !seen[value] {
+					seen[value] = true
+					values = append(values, value)
+				}
+			}
+		}
+	}
+	return values
 }
 
 func (m *SessionManager) ListWithFallback(ctx context.Context, projectID string, archived any) ([]SessionSummary, error) {

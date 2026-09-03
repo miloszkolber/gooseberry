@@ -49,6 +49,16 @@ function providerName(provider: string, providers: ReadonlyMap<string, ProviderS
 	return providers.get(provider)?.name ?? provider;
 }
 
+export function configuredAvailableModels(
+	models: readonly WireModel[],
+	providers: ReadonlyMap<string, ProviderStatus>,
+): WireModel[] {
+	return models.filter((model) => {
+		const provider = providers.get(model.provider);
+		return provider?.configured === true && provider.available !== false && model.available;
+	});
+}
+
 export function filterModels(
 	models: readonly WireModel[],
 	providers: ReadonlyMap<string, ProviderStatus>,
@@ -111,12 +121,12 @@ export function ModelsSettings() {
 		() => new Map(report.providers.map((provider) => [provider.id, provider])),
 		[report.providers],
 	);
+	const catalog = useMemo(() => configuredAvailableModels(models, providers), [models, providers]);
 	const filtered = useMemo(
-		() => filterModels(models, providers, query),
-		[models, providers, query],
+		() => filterModels(catalog, providers, query),
+		[catalog, providers, query],
 	);
-	const availableCount = models.filter((model) => model.available).length;
-	const visibleCount = models.filter((model) => !model.hidden).length;
+	const visibleCount = catalog.filter((model) => !model.hidden).length;
 
 	const setVisibility = useCallback(async (model: WireModel, hidden: boolean) => {
 		const key = `${model.provider}\0${model.id}`;
@@ -155,10 +165,10 @@ export function ModelsSettings() {
 			<div className="flex items-start justify-between gap-sm">
 				<div className="flex flex-col gap-xs">
 					<h3 className="tr-title-section text-text-default">
-						Models <span className="font-normal text-text-muted">({models.length})</span>
+						Models <span className="font-normal text-text-muted">({catalog.length})</span>
 					</h3>
 					<p className="text-text-muted tr-text-metadata">
-						{availableCount} available · {visibleCount} shown. Visibility is a Gooseberry
+						{catalog.length} available · {visibleCount} shown. Visibility is a Gooseberry
 						preference. Goose keeps the canonical catalog.
 					</p>
 				</div>
@@ -166,6 +176,7 @@ export function ModelsSettings() {
 					<Button
 						variant="outline"
 						size="sm"
+						title="Hide every model in Gooseberry, including models from disconnected providers"
 						disabled={bulkBusy || models.length === 0}
 						onClick={() => void setAllVisibility(true)}
 					>
@@ -174,6 +185,7 @@ export function ModelsSettings() {
 					<Button
 						variant="outline"
 						size="sm"
+						title="Show every model in Gooseberry, including models from disconnected providers"
 						disabled={bulkBusy || models.length === 0}
 						onClick={() => void setAllVisibility(false)}
 					>
@@ -208,7 +220,11 @@ export function ModelsSettings() {
 			) : failed ? (
 				<p className="text-text-muted tr-text-ui">Couldn't read the model catalog.</p>
 			) : filtered.length === 0 ? (
-				<p className="text-text-muted tr-text-ui">No models match this filter.</p>
+				<p className="text-text-muted tr-text-ui">
+					{catalog.length === 0
+						? "No available models for configured providers. Connect a provider, then refresh the catalog."
+						: "No models match this filter."}
+				</p>
 			) : (
 				<ModelCatalogList
 					models={filtered}

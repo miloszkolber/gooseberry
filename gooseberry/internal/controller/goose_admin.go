@@ -94,7 +94,7 @@ func (a *GooseAdmin) Models(ctx context.Context) ([]WireModel, error) {
 	}
 	result := make([]WireModel, 0)
 	for _, provider := range providers {
-		available := boolDefault(provider.Available, true) && boolDefault(provider.Configured, true)
+		available := provider.Configured != nil && *provider.Configured && boolDefault(provider.Available, true)
 		for _, model := range provider.Models {
 			if model.ID == "" {
 				continue

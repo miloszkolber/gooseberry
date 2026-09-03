@@ -41,6 +41,7 @@ import { QueueStrip } from "./session/queue-strip";
 import { SessionGoalControl } from "./session/session-goal-control";
 import { SessionLineageControl } from "./session/session-lineage-control";
 import { SessionModeControl } from "./session/session-mode-control";
+import { SessionModelControls } from "./session/session-model-controls";
 import { SessionPlanControl } from "./session/session-plan-control";
 import { StreamIndicator, type StreamStatus, streamStatus } from "./session/stream-indicator";
 import "./tools/register";
@@ -178,11 +179,8 @@ export default function ChatView({
 	} = runtime;
 
 	const headerStatusEntries = useMemo<[string, string][]>(() => {
-		const entries = Object.entries(extUiStatus);
-		if (sessionModel) entries.push(["gooseberry-model", sessionModel.name || sessionModel.id]);
-		entries.push(["gooseberry-reasoning", thinkingLevel]);
-		return entries;
-	}, [extUiStatus, sessionModel, thinkingLevel]);
+		return Object.entries(extUiStatus);
+	}, [extUiStatus]);
 
 	const rows = useMemo(
 		() => deriveRows(turns, toolResults, isStreaming),
@@ -864,29 +862,6 @@ export default function ChatView({
 		<ChatActionsContext.Provider value={chatActions}>
 			<AskStatesContext.Provider value={askContext}>
 				<div className="flex h-full min-h-0 flex-col bg-container-project-bg">
-					<div className="shrink-0">
-						<ChatHeader
-							stats={stats}
-							statusEntries={headerStatusEntries}
-							left={
-								<div className="flex min-w-0 items-center gap-xs">
-									<SessionLineageControl
-										projectAreaId={projectAreaId}
-										parentSessionId={runtime.parentSessionId}
-										parentDeleted={parentDeleted}
-									/>
-									<SessionGoalControl
-										projectAreaId={projectAreaId}
-										sessionId={sessionId}
-										agentCanAccessGoal={canUseHttpMcp}
-										agentName={agentProfile?.name}
-									/>
-									<SessionPlanControl planState={planState} />
-									<SessionModeControl sessionId={sessionId} modes={modes} />
-								</div>
-							}
-						/>
-					</div>
 					<Dialog
 						open={permission !== null}
 						onOpenChange={(open) => !open && respondToPermission()}
@@ -1055,6 +1030,35 @@ export default function ChatView({
 							onHistoryOpen={onHistoryOpen}
 							supportsImages={canPromptImage}
 							supportsSteer={canSteer}
+						/>
+						<ChatHeader
+							stats={stats}
+							statusEntries={headerStatusEntries}
+							left={
+								<div className="flex min-w-0 flex-wrap items-center gap-xs">
+									{gooseAgent ? (
+										<SessionModelControls
+											sessionId={sessionId}
+											model={sessionModel}
+											thinkingLevel={thinkingLevel}
+											isStreaming={isStreaming}
+										/>
+									) : null}
+									<SessionLineageControl
+										projectAreaId={projectAreaId}
+										parentSessionId={runtime.parentSessionId}
+										parentDeleted={parentDeleted}
+									/>
+									<SessionGoalControl
+										projectAreaId={projectAreaId}
+										sessionId={sessionId}
+										agentCanAccessGoal={canUseHttpMcp}
+										agentName={agentProfile?.name}
+									/>
+									<SessionPlanControl planState={planState} />
+									<SessionModeControl sessionId={sessionId} modes={modes} />
+								</div>
+							}
 						/>
 					</div>
 				</div>

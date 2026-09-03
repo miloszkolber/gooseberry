@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import type { ProviderStatus, WireModel } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { filterModels, ModelCatalogList } from "@/settings/sections/models-settings";
+import {
+	configuredAvailableModels,
+	filterModels,
+	ModelCatalogList,
+	ModelsSettings,
+} from "@/settings/sections/models-settings";
 
 const model: WireModel = {
 	provider: "provider-a",
@@ -28,6 +33,7 @@ const provider: ProviderStatus = {
 	id: "provider-a",
 	name: "Provider A",
 	configured: true,
+	available: true,
 	modelCount: 1,
 	availableModelCount: 1,
 	acp: false,
@@ -53,4 +59,42 @@ test("filters by provider and renders context, modality, cost, and visibility", 
 	expect(markup).toContain("Hidden");
 	expect(markup).toContain("Unavailable");
 	expect(markup).not.toContain("Routing");
+});
+
+test("shows only models that Goose reports for configured available providers", () => {
+	const providerWithOmittedAvailability: ProviderStatus = {
+		id: "omitted",
+		name: "Omitted availability",
+		configured: true,
+		modelCount: 1,
+		availableModelCount: 1,
+		acp: false,
+	};
+	const providers = new Map([
+		[provider.id, provider],
+		["unavailable", { ...provider, id: "unavailable", available: false }],
+		["unconfigured", { ...provider, id: "unconfigured", configured: false }],
+		[providerWithOmittedAvailability.id, providerWithOmittedAvailability],
+	]);
+	const catalog = configuredAvailableModels(
+		[
+			model,
+			{ ...model, id: "model-unavailable", available: false },
+			{ ...model, provider: "unavailable", id: "model-provider-unavailable" },
+			{ ...model, provider: "unconfigured", id: "model-provider-unconfigured" },
+			{ ...model, provider: "omitted", id: "model-provider-omitted-availability" },
+		],
+		providers,
+	);
+	expect(catalog).toEqual([
+		model,
+		{ ...model, provider: "omitted", id: "model-provider-omitted-availability" },
+	]);
+});
+
+test("labels bulk visibility controls as applying beyond the filtered catalog", () => {
+	const markup = renderToStaticMarkup(<ModelsSettings />);
+	expect(markup).toContain("Hide all");
+	expect(markup).toContain("Show all");
+	expect(markup).toContain("including models from disconnected providers");
 });

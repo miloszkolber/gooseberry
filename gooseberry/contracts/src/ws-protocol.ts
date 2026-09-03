@@ -422,6 +422,10 @@ export interface WsMethodMap {
 		params: { sessionId: string; level: ThinkingLevel };
 		result: { level: ThinkingLevel };
 	};
+	"model.thinkingLevels": {
+		params: { sessionId: string };
+		result: { levels: ThinkingLevel[] };
+	};
 	"model.refresh": { params: { force?: boolean }; result: RefreshedModels };
 	"model.default": {
 		params: Record<string, never>;
