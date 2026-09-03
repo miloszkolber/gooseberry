@@ -43,9 +43,57 @@ func TestProjectsAndFilesPreserveAuthorityAcrossRestart(t *testing.T) {
 	if err != nil || len(listing.Nodes) != 1 || listing.Nodes[0].Name != "visible.txt" {
 		t.Fatalf("unsafe directory listing: %#v, %v", listing, err)
 	}
+	if err := os.Symlink(filepath.Join(root, "visible.txt"), filepath.Join(root, "inside")); err != nil {
+		t.Fatal(err)
+	}
 	content, err := files.ReadFile(project.ID, "visible.txt")
 	if err != nil || content != "hello" {
 		t.Fatalf("read file: %q, %v", content, err)
+	}
+	content, err = files.ReadFile(project.ID, "inside")
+	if err != nil || content != "hello" {
+		t.Fatalf("read internal symlink: %q, %v", content, err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("visible.txt", filepath.Join(root, "swapped")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "swapped")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "swapped")); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := files.ReadFile(project.ID, "swapped"); err == nil || content == "secret" {
+		t.Fatalf("path swap exposed an external file: %q, %v", content, err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "internal-directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal-directory", "child.txt"), []byte("child"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "internal-directory"), filepath.Join(root, "directory-link")); err != nil {
+		t.Fatal(err)
+	}
+	listing, err = files.ReadDir(project.ID, ".")
+	if err != nil || len(listing.Nodes) != 4 || listing.Nodes[0].Name != "directory-link" || listing.Nodes[0].Kind != "dir" {
+		t.Fatalf("parent listing did not classify internal directory symlink: %#v, %v", listing, err)
+	}
+	listing, err = files.ReadDir(project.ID, "directory-link")
+	if err != nil || len(listing.Nodes) != 1 || listing.Nodes[0].Name != "child.txt" {
+		t.Fatalf("internal directory symlink: %#v, %v", listing, err)
+	}
+	if err := os.Remove(filepath.Join(root, "directory-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "directory-link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := files.ReadDir(project.ID, "directory-link"); err == nil {
+		t.Fatal("path-swapped directory symlink escaped the project root")
 	}
 	for _, path := range []string{"../elsewhere.txt", "escape/secret.txt", "."} {
 		if _, err := files.ReadFile(project.ID, path); err == nil {
@@ -244,6 +292,26 @@ func TestDirectoryBrowserPaginatesAndFiltersUnsafeEntries(t *testing.T) {
 	}
 	if _, err := files.ListDirectories(workspace.DirectoryRequest{Path: &path, Page: 100}); err == nil {
 		t.Fatal("accepted an unbounded page")
+	}
+	if err := os.Mkdir(filepath.Join(root, "alpha", "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "alpha"), filepath.Join(root, "safe-link")); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, "safe-link")
+	listing, err := files.ListDirectories(workspace.DirectoryRequest{Path: &linked, PageSize: 10})
+	if err != nil || len(listing.Directories) != 1 || listing.Directories[0].Name != "child" {
+		t.Fatalf("internal directory browser symlink: %#v, %v", listing, err)
+	}
+	if err := os.Remove(linked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := files.ListDirectories(workspace.DirectoryRequest{Path: &linked, PageSize: 10}); err == nil {
+		t.Fatal("path-swapped directory browser symlink escaped its mount")
 	}
 }
 

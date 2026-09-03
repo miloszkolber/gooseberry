@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -201,16 +202,32 @@ func (p *ProviderLogins) authenticate(login *providerLogin) {
 
 func (p *ProviderLogins) DeviceCode(value map[string]any) {
 	providerID := textValue(value["providerId"])
+	verificationURI := textValue(value["verificationUri"])
 	p.mu.Lock()
 	for _, login := range p.pending {
 		if login.providerID == providerID && login.kind == "oauth" && !login.cancelled {
-			push := p.cacheLocked(login, map[string]any{"kind": "deviceCode", "userCode": textValue(value["userCode"]), "verificationUri": textValue(value["verificationUri"]), "expiresInSeconds": integerValue(value["expiresIn"])})
+			if !safeProviderLoginURL(verificationURI) {
+				push := p.cacheLocked(login, map[string]any{"kind": "error", "message": "Goose returned an invalid provider sign-in URL."})
+				p.removeLocked(login)
+				p.mu.Unlock()
+				p.send(login.clientKey, push)
+				return
+			}
+			push := p.cacheLocked(login, map[string]any{"kind": "deviceCode", "userCode": textValue(value["userCode"]), "verificationUri": verificationURI, "expiresInSeconds": integerValue(value["expiresIn"])})
 			p.mu.Unlock()
 			p.send(login.clientKey, push)
 			return
 		}
 	}
 	p.mu.Unlock()
+}
+
+func safeProviderLoginURL(value string) bool {
+	if value == "" || len(value) > 2_048 || strings.IndexFunc(value, func(character rune) bool { return character <= 0x20 || character == 0x7f }) >= 0 {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != "" && parsed.User == nil
 }
 
 func (p *ProviderLogins) Cancel(clientKey, loginID string) error {

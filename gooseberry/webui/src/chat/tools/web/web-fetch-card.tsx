@@ -1,3 +1,4 @@
+import { safeBrowserURL } from "@gooseberry/contracts";
 import { Link as LinkIcon } from "lucide-react";
 import type { ToolRenderProps } from "../../render/tool-registry";
 import { CodeBlock } from "../code-block";
@@ -21,25 +22,28 @@ function firstUrl(args: Record<string, unknown>): string {
 
 export function WebFetchCard({ args, result, status }: ToolRenderProps) {
 	const url = firstUrl(args);
-	const label = url ? hostOf(url) : "fetch";
+	const safeURL = safeBrowserURL(url);
+	const label = safeURL ? hostOf(safeURL) : url || "fetch";
 	const output = resultText(result, status === "error");
 
 	return (
 		<div data-testid="tool-fetch_content" className="flex flex-col gap-xs">
 			<div className="flex items-center gap-xs tr-text-metadata">
 				<LinkIcon className="size-3.5 shrink-0 text-text-muted" />
-				{url ? (
+				{safeURL ? (
 					<a
-						href={url}
+						href={safeURL}
 						target="_blank"
 						rel="noreferrer"
 						className="truncate text-primary hover:underline"
-						title={url}
+						title={safeURL}
 					>
 						{label}
 					</a>
 				) : (
-					<span className="text-primary">{label}</span>
+					<span className="truncate text-primary" title={url || undefined}>
+						{label}
+					</span>
 				)}
 			</div>
 			{status === "running" ? (

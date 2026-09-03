@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/miloszkolber/gooseberry/internal/persist"
 )
 
 const (
@@ -256,17 +255,10 @@ func (g *Git) changes(ctx context.Context, repository string, scope GitDiffScope
 				continue
 			}
 			change := GitFileChange{Path: name, Status: "untracked"}
-			absolute := filepath.Join(repository, filepath.FromSlash(name))
 			if counted < 64 {
-				if canonical, err := g.policy.Resolve(absolute, false, true, "Git status path"); err == nil && Within(repository, canonical) {
-					previewPath := canonical
-					if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
-						previewPath = absolute // Read the link text, never its target contents.
-					}
-					if preview := readWorktreePreview(previewPath); preview.issue == "" {
-						added, removed := lineCount(preview.content), 0
-						change.Added, change.Removed = &added, &removed
-					}
+				if preview, err := readWorktreePreview(repository, filepath.FromSlash(name)); err == nil && preview.issue == "" {
+					added, removed := lineCount(preview.content), 0
+					change.Added, change.Removed = &added, &removed
 				}
 			}
 			counted++
@@ -355,21 +347,7 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 	if err != nil {
 		return GitDiffFile{}, err
 	}
-	absolute := name
-	if !filepath.IsAbs(absolute) {
-		absolute = filepath.Join(admitted, filepath.FromSlash(name))
-	}
-	if !Within(admitted, absolute) {
-		return GitDiffFile{}, fmt.Errorf("path escapes the repository")
-	}
-	resolvedPath, err := g.policy.Resolve(absolute, false, true, "Git diff path")
-	if err != nil {
-		return GitDiffFile{}, err
-	}
-	if !Within(admitted, resolvedPath) {
-		return GitDiffFile{}, fmt.Errorf("path escapes the repository")
-	}
-	name, err = filepath.Rel(admitted, absolute)
+	name, _, err = relativePathInRoot(admitted, filepath.FromSlash(name))
 	if err != nil {
 		return GitDiffFile{}, err
 	}
@@ -390,12 +368,8 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 				break
 			}
 		}
-		resolvedOriginal, err := g.policy.Resolve(filepath.Join(admitted, filepath.FromSlash(originalName)), false, true, "Git original path")
-		if err != nil {
+		if _, _, err := relativePathInRoot(admitted, filepath.FromSlash(originalName)); err != nil {
 			return GitDiffFile{}, err
-		}
-		if !Within(admitted, resolvedOriginal) {
-			return GitDiffFile{}, fmt.Errorf("original path escapes the repository")
 		}
 		original = readBlobPreview(ctx, admitted, rangeValue.originalRef, originalName)
 	}
@@ -406,7 +380,10 @@ func (g *Git) DiffFile(ctx context.Context, projectID, repository, name string, 
 	if rangeValue.modifiedRef != "" {
 		modified = readBlobPreview(ctx, admitted, rangeValue.modifiedRef, name)
 	} else {
-		modified = readWorktreePreview(absolute)
+		modified, err = readWorktreePreview(admitted, filepath.FromSlash(name))
+		if err != nil && errors.Is(err, errPathEscapesProjectRoot) {
+			return GitDiffFile{}, err
+		}
 	}
 	if modified.issue == "missing" {
 		if original.issue == "missing" {
@@ -490,43 +467,43 @@ type filePreview struct {
 	issue   string
 }
 
-func readWorktreePreview(name string) filePreview {
-	info, err := os.Lstat(name)
-	if os.IsNotExist(err) {
-		return filePreview{issue: "missing"}
-	}
+func readWorktreePreview(root, name string) (filePreview, error) {
+	// A requested symlink previews its bounded link text, not target contents.
+	// Direct files are still opened and checked through the same descriptor walk.
+	file, info, linkText, err := openProjectLinkPreview(root, name)
 	if err != nil {
-		return filePreview{issue: "unavailable"}
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(name)
-		if err != nil {
-			return filePreview{issue: "unavailable"}
+		if errors.Is(err, errPathEscapesProjectRoot) {
+			return filePreview{}, err
 		}
-		return filePreview{content: target}
+		if errors.Is(err, errProjectFileTooLarge) {
+			return filePreview{issue: "tooLarge"}, nil
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return filePreview{issue: "missing"}, nil
+		}
+		return filePreview{issue: "unavailable"}, nil
 	}
-	if info.Size() > gitPreviewMaxBytes {
-		return filePreview{issue: "tooLarge"}
-	}
-	file, info, err := persist.OpenRegularFile(name, 1<<63-1)
-	if err != nil {
-		return filePreview{issue: "unavailable"}
+	if file == nil {
+		return filePreview{content: linkText}, nil
 	}
 	defer file.Close()
+	if linkText != "" {
+		return filePreview{content: linkText}, nil
+	}
 	if info.Size() > gitPreviewMaxBytes {
-		return filePreview{issue: "tooLarge"}
+		return filePreview{issue: "tooLarge"}, nil
 	}
 	content, err := io.ReadAll(io.LimitReader(file, gitPreviewMaxBytes+1))
 	if err != nil {
-		return filePreview{issue: "unavailable"}
+		return filePreview{issue: "unavailable"}, nil
 	}
 	if len(content) > gitPreviewMaxBytes {
-		return filePreview{issue: "tooLarge"}
+		return filePreview{issue: "tooLarge"}, nil
 	}
 	if bytes.IndexByte(content, 0) >= 0 {
-		return filePreview{issue: "binary"}
+		return filePreview{issue: "binary"}, nil
 	}
-	return filePreview{content: string(content)}
+	return filePreview{content: string(content)}, nil
 }
 
 func readBlobPreview(ctx context.Context, repository, ref, name string) filePreview {

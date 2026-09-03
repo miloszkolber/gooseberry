@@ -1,4 +1,4 @@
-import type { LoginFrame } from "@gooseberry/contracts";
+import { type LoginFrame, safeBrowserURL } from "@gooseberry/contracts";
 
 export interface LoginInputSelect {
 	kind: "select";
@@ -32,21 +32,29 @@ export function newLoginState(loginId: string, providerId: string): LoginState {
 
 export function foldLoginFrame(state: LoginState, frame: LoginFrame): LoginState {
 	switch (frame.kind) {
-		case "authUrl":
+		case "authUrl": {
+			const url = safeBrowserURL(frame.url);
+			if (!url)
+				return { ...state, status: "error", error: "Goose returned an invalid sign-in URL." };
 			return {
 				...state,
-				url: frame.url,
+				url,
 				...(frame.instructions ? { instructions: frame.instructions } : {}),
 			};
-		case "deviceCode":
+		}
+		case "deviceCode": {
+			const verificationUri = safeBrowserURL(frame.verificationUri);
+			if (!verificationUri)
+				return { ...state, status: "error", error: "Goose returned an invalid sign-in URL." };
 			return {
 				...state,
 				deviceCode: {
 					userCode: frame.userCode,
-					verificationUri: frame.verificationUri,
+					verificationUri,
 					...(frame.expiresInSeconds ? { expiresInSeconds: frame.expiresInSeconds } : {}),
 				},
 			};
+		}
 		case "select": {
 			const { progress: _p, ...rest } = state;
 			return { ...rest, input: { kind: "select", message: frame.message, options: frame.options } };

@@ -177,6 +177,30 @@ func TestGitPreservesOddPathsAndRejectsUnsafeOrUnreadablePreviews(t *testing.T) 
 	}
 	runGit(t, repository, "add", "--", name)
 	runGit(t, repository, "commit", "-m", "rename")
+	if err := os.Symlink(name, filepath.Join(repository, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	preview, err = service.DiffFile(ctx, project.ID, repository, "inside", workspace.GitDiffScope{})
+	if err != nil || preview.Unavailable || preview.Modified != name {
+		t.Fatalf("internal symlink preview: %#v, %v", preview, err)
+	}
+	if err := os.Mkdir(filepath.Join(repository, "linked-dir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("linked-dir", filepath.Join(repository, "dir-link")); err != nil {
+		t.Fatal(err)
+	}
+	preview, err = service.DiffFile(ctx, project.ID, repository, "dir-link", workspace.GitDiffScope{})
+	if err != nil || preview.Unavailable || preview.Modified != "linked-dir" {
+		t.Fatalf("internal directory symlink preview: %#v, %v", preview, err)
+	}
+	if err := os.Symlink("missing-target", filepath.Join(repository, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	preview, err = service.DiffFile(ctx, project.ID, repository, "dangling", workspace.GitDiffScope{})
+	if err != nil || preview.Unavailable || preview.Modified != "missing-target" {
+		t.Fatalf("dangling symlink preview: %#v, %v", preview, err)
+	}
 	history, err := service.ListCommits(ctx, project.ID, repository)
 	commits, ok := history["commits"].([]workspace.GitCommit)
 	if err != nil || !ok || len(commits) != 2 {
@@ -206,8 +230,38 @@ func TestGitPreservesOddPathsAndRejectsUnsafeOrUnreadablePreviews(t *testing.T) 
 	if err := os.Symlink(filepath.Join(outside, "private"), filepath.Join(repository, "outside")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Remove(filepath.Join(repository, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "private"), filepath.Join(repository, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.DiffFile(ctx, project.ID, repository, "inside", workspace.GitDiffScope{}); err == nil {
+		t.Fatal("path-swapped Git symlink exposed an external preview")
+	}
 	if _, err := service.DiffFile(ctx, project.ID, repository, "outside", workspace.GitDiffScope{}); err == nil {
 		t.Fatal("accepted a preview symlink escaping the repository")
+	}
+	if err := os.Mkdir(filepath.Join(repository, "actual"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".", filepath.Join(repository, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../private", filepath.Join(repository, "actual", "nested-outside")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.DiffFile(ctx, project.ID, repository, "alias/actual/nested-outside", workspace.GitDiffScope{}); err == nil {
+		t.Fatal("accepted an escaping preview symlink through a shallower resolved parent")
+	}
+	if err := os.Symlink(outside, filepath.Join(repository, "escape-dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("escape-dir/private", filepath.Join(repository, "chained-outside")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.DiffFile(ctx, project.ID, repository, "chained-outside", workspace.GitDiffScope{}); err == nil {
+		t.Fatal("accepted a preview symlink whose target chain escapes the repository")
 	}
 	if _, err := service.DiffFile(ctx, project.ID, repository, "../escape", workspace.GitDiffScope{}); err == nil {
 		t.Fatal("accepted a lexical repository escape")

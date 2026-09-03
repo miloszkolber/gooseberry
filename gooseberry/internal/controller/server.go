@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miloszkolber/gooseberry/internal/persist"
 	"github.com/miloszkolber/gooseberry/internal/workspace"
 )
 
@@ -207,12 +206,7 @@ func (h *HTTPHandler) serveProjectImage(response http.ResponseWriter, request *h
 		http.NotFound(response, request)
 		return
 	}
-	_, file, err := h.Files.ResolveInRoot(root, relative)
-	if err != nil {
-		http.NotFound(response, request)
-		return
-	}
-	opened, info, err := persist.OpenRegularFile(file, projectImageMaxBytes)
+	opened, info, file, err := h.Files.OpenRegularFileInRoot(root, relative, projectImageMaxBytes)
 	if err != nil {
 		http.NotFound(response, request)
 		return
