@@ -204,7 +204,7 @@ export function ProvidersSettings() {
 						</Group>
 					) : null}
 					{unconfigured.length > 0 ? (
-						<Group title={`Available (${unconfigured.length})`}>
+						<Group title={`Not configured (${unconfigured.length})`}>
 							{unconfigured.map((provider) => (
 								<ProviderCard
 									key={provider.id}
@@ -322,6 +322,18 @@ export function ProviderCard({
 	}, [provider.id, readinessRevision]);
 	const visibleReadiness = readiness.revision === readinessRevision ? readiness.status : null;
 	const readinessText = readinessStatusText(visibleReadiness);
+	const readinessConfirmed = visibleReadiness === "ready" || visibleReadiness === "issue";
+	const usable =
+		provider.configured && provider.available !== false && (!provider.acp || readinessConfirmed);
+	const acpReadinessQualifier = readinessConfirmed
+		? "readiness confirmed"
+		: visibleReadiness === "not-ready"
+			? "not ready"
+			: visibleReadiness === "failed"
+				? "readiness check failed"
+				: visibleReadiness === "checking"
+					? "checking readiness"
+					: "readiness not checked";
 	return (
 		<div
 			data-testid="provider-row"
@@ -331,12 +343,12 @@ export function ProviderCard({
 		>
 			<span
 				className={`flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] ${
-					provider.configured
+					usable
 						? "bg-feedback-success-subtle text-feedback-success"
 						: "bg-control-bg-selected text-text-muted"
 				}`}
 			>
-				{provider.configured ? <Check className="size-4" /> : <Boxes className="size-4" />}
+				{usable ? <Check className="size-4" /> : <Boxes className="size-4" />}
 			</span>
 			<div className="flex min-w-0 flex-1 flex-col">
 				<span className="truncate tr-text-ui text-text-default">{provider.name}</span>
@@ -346,6 +358,11 @@ export function ProviderCard({
 				{provider.configured ? (
 					<span className="truncate text-text-muted tr-text-metadata">
 						Goose reports {configuredLabel}
+						{provider.available === false
+							? " · runtime unavailable"
+							: provider.acp
+								? ` · ${acpReadinessQualifier}`
+								: " · runtime available"}
 						{provider.detail ? ` · ${provider.detail}` : ""}
 					</span>
 				) : null}

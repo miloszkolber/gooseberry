@@ -3,6 +3,7 @@ import type { ProviderStatus, WireModel } from "@gooseberry/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
 	firstModelForProvider,
+	modelsForSelectedProvider,
 	SessionModelControls,
 	sessionSelectableModels,
 	thinkingLevelsForCurrent,
@@ -57,6 +58,15 @@ test("session model controls admit only configured, available provider models", 
 	]);
 	expect(firstModelForProvider(available, "provider-a")).toEqual(model);
 	expect(firstModelForProvider(available, "provider-b")).toBeNull();
+	expect(modelsForSelectedProvider(available, "provider-c")).toEqual([
+		{ ...model, provider: "provider-c", id: "omitted-provider-availability" },
+	]);
+});
+
+test("the model select keeps only the selected provider's available choices", () => {
+	const otherModel = { ...model, provider: "provider-b", id: "model-b", name: "Model B" };
+	expect(modelsForSelectedProvider([model, otherModel], "provider-a")).toEqual([model]);
+	expect(firstModelForProvider([model, otherModel], "provider-b")).toEqual(otherModel);
 });
 
 test("thinking options preserve Goose's reported order and the current level", () => {

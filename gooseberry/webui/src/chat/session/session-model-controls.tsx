@@ -35,6 +35,13 @@ export function firstModelForProvider(
 	return models.find((model) => model.provider === providerId) ?? null;
 }
 
+export function modelsForSelectedProvider(
+	models: readonly WireModel[],
+	providerId: string,
+): WireModel[] {
+	return models.filter((model) => model.provider === providerId);
+}
+
 export function SessionModelControls({
 	sessionId,
 	model,
@@ -101,6 +108,10 @@ export function SessionModelControls({
 		? providerIds.includes(selectedModel.provider)
 		: false;
 	const selectedProvider = selectedModel?.provider ?? "";
+	const providerModels = useMemo(
+		() => modelsForSelectedProvider(models, selectedProvider),
+		[models, selectedProvider],
+	);
 	const thinkingLevels = thinkingLevelsForCurrent(thinkingLevel, reportedThinkingLevels);
 	const modelControlsDisabled = loading || isStreaming || busy !== null || models.length === 0;
 	const thinkingDisabled = isStreaming || busy !== null;
@@ -217,7 +228,7 @@ export function SessionModelControls({
 					<option value="" disabled>
 						{loading ? "Loading models…" : "No available models"}
 					</option>
-					{models.map((candidate) => (
+					{providerModels.map((candidate) => (
 						<option key={modelKey(candidate)} value={modelKey(candidate)}>
 							{candidate.name || candidate.id}
 						</option>

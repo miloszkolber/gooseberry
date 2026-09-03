@@ -7,9 +7,14 @@ import {
 	agentMentionTypeLabel,
 	Composer,
 	clampedMentionActiveIndex,
+	clipboardImageName,
 	insertedMention,
+	insertImageTags,
 	type MentionCandidate,
 	mentionCompletionKeyAction,
+	removeImageTag,
+	removeImageTags,
+	reserveClipboardImageNames,
 	streamingSendModes,
 	streamingSubmitBehavior,
 } from "@/chat/composer/composer";
@@ -135,5 +140,71 @@ test("slash completion options retain listbox selection semantics", () => {
 	expect(markup).toContain('id="slash-option-0"');
 	expect(markup).toContain('role="option"');
 	expect(markup).toContain('aria-selected="true"');
-	expect(markup).toContain("/review optional focus");
+	expect(markup).toContain("/review");
+	expect(markup).toContain("optional focus");
+});
+
+test("clipboard image tags use safe unique names and remove only their matching tag", () => {
+	expect(clipboardImageName("", "image/png", ["image-1.png"], "[image-2.png]")).toBe("image-3.png");
+	expect(clipboardImageName("image.jpeg", "image/jpeg", [], "")).toBe("image-1.jpg");
+	expect(clipboardImageName("", "image/jpeg", ["image-1.png"], "")).toBe("image-2.jpg");
+	expect(clipboardImageName("photo.png", "image/png", ["photo.png"], "")).toBe("photo-2.png");
+	const inserted = insertImageTags("Inspect this", 7, 12, ["image-1.png", "image-2.jpg"]);
+	expect(inserted).toEqual({
+		value: "Inspect [image-1.png] [image-2.jpg]",
+		caret: 35,
+	});
+	expect(removeImageTag(inserted.value, "image-1.png")).toBe("Inspect  [image-2.jpg]");
+});
+
+test("concurrent clipboard reservations keep paste order when image conversions settle in reverse", async () => {
+	const first = reserveClipboardImageNames([{ name: "", type: "image/png" }], [], "");
+	const firstDraft = insertImageTags("", 0, 0, first);
+	const second = reserveClipboardImageNames(
+		[{ name: "", type: "image/jpeg" }],
+		first,
+		firstDraft.value,
+	);
+	const secondDraft = insertImageTags(firstDraft.value, firstDraft.caret, firstDraft.caret, second);
+	expect(first).toEqual(["image-1.png"]);
+	expect(second).toEqual(["image-2.jpg"]);
+
+	let finishFirst: (() => void) | undefined;
+	let finishSecond: (() => void) | undefined;
+	const firstConversion = new Promise<void>((resolve) => (finishFirst = resolve));
+	const secondConversion = new Promise<void>((resolve) => (finishSecond = resolve));
+	const settled: string[] = [];
+	void firstConversion.then(() => settled.push(first[0] ?? ""));
+	void secondConversion.then(() => settled.push(second[0] ?? ""));
+	finishSecond?.();
+	await Promise.resolve();
+	expect(settled).toEqual(["image-2.jpg"]);
+	expect(secondDraft.value).toBe("[image-1.png] [image-2.jpg]");
+	finishFirst?.();
+	await Promise.resolve();
+	expect(settled).toEqual(["image-2.jpg", "image-1.png"]);
+});
+
+test("failed clipboard conversions remove their tag from the latest intervening draft", () => {
+	const tagged = insertImageTags("Review", 6, 6, ["image-1.png", "image-2.jpg"]);
+	const edited = `${tagged.value} after typing`;
+	const removal = removeImageTags(edited, edited.length, ["image-1.png"]);
+	expect(removal.value).toBe("Review  [image-2.jpg] after typing");
+	expect(removal.caret).toBe(edited.length - "[image-1.png]".length);
+});
+
+test("slash command names remain separate from truncatable hints and descriptions", () => {
+	const command: SlashCommandInfo = {
+		name: "a-command-name-that-must-remain-fully-readable",
+		description: "A description that may truncate independently",
+		inputHint: "an input hint that may truncate independently",
+		source: "goose",
+		sourceInfo: { path: "builtin", source: "goose", scope: "user", origin: "top-level" },
+	};
+	const markup = renderToStaticMarkup(
+		<SlashCommandMenu commands={[command]} activeIndex={0} onSelect={() => {}} />,
+	);
+	expect(markup).toContain('data-testid="slash-command-name"');
+	expect(markup).toContain(`/${command.name}`);
+	expect(markup).toContain('class="block break-all tr-code-text text-text-default"');
 });

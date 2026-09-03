@@ -39,6 +39,7 @@ type gooseProvider struct {
 	VisibleInSetup   *bool                    `json:"visibleInSetup"`
 	ACP              bool                     `json:"acp"`
 	LastRefreshError string                   `json:"lastRefreshError"`
+	Refreshing       bool                     `json:"refreshing"`
 	ConfigKeys       []gooseProviderConfigKey `json:"configKeys"`
 	Models           []gooseModel             `json:"models"`
 }
@@ -80,13 +81,18 @@ func (a *GooseAdmin) providers(ctx context.Context, ids []string) ([]gooseProvid
 }
 
 func (a *GooseAdmin) Models(ctx context.Context) ([]WireModel, error) {
+	models, _, err := a.models(ctx)
+	return models, err
+}
+
+func (a *GooseAdmin) models(ctx context.Context) ([]WireModel, bool, error) {
 	providers, err := a.providers(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	config, err := a.settings.Get()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	hidden := make(map[string]bool, len(config.HiddenModels))
 	for _, model := range config.HiddenModels {
@@ -113,28 +119,35 @@ func (a *GooseAdmin) Models(ctx context.Context) ([]WireModel, error) {
 			result = append(result, WireModel{ID: model.ID, Name: name, Provider: provider.ProviderID, ContextWindow: model.ContextLimit, MaxTokens: model.MaxOutputTokens, Reasoning: model.Reasoning, Input: input, Available: available, Hidden: hidden[provider.ProviderID+"\x00"+model.ID]})
 		}
 	}
-	a.enrichModels(ctx, result)
+	metadataComplete := a.enrichModels(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Provider != result[j].Provider {
 			return result[i].Provider < result[j].Provider
 		}
 		return result[i].Name < result[j].Name
 	})
-	return result, nil
+	return result, metadataComplete, nil
 }
 
-func (a *GooseAdmin) enrichModels(parent context.Context, models []WireModel) {
-	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+func (a *GooseAdmin) enrichModels(parent context.Context, models []WireModel) bool {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	jobs := make(chan int)
 	var workers sync.WaitGroup
+	complete := true
+	var completeMu sync.Mutex
 	for worker := 0; worker < min(4, len(models)); worker++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
 				model := &models[index]
-				canonical := a.canonicalModel(ctx, model.Provider, model.ID)
+				canonical, completed := a.canonicalModel(ctx, model.Provider, model.ID)
+				if !completed {
+					completeMu.Lock()
+					complete = false
+					completeMu.Unlock()
+				}
 				if canonical == nil || canonical.Provider != model.Provider || canonical.Model != model.ID || canonical.ContextLimit == nil || *canonical.ContextLimit < 0 || canonical.Reasoning == nil || canonical.Currency == "" {
 					continue
 				}
@@ -148,37 +161,88 @@ func (a *GooseAdmin) enrichModels(parent context.Context, models []WireModel) {
 					model.Reasoning = canonical.Reasoning
 				}
 				if canonical.InputTokenCost != nil && *canonical.InputTokenCost >= 0 && canonical.OutputTokenCost != nil && *canonical.OutputTokenCost >= 0 {
-					read, write := 0.0, 0.0
+					cost := map[string]any{"input": *canonical.InputTokenCost, "output": *canonical.OutputTokenCost, "currency": canonical.Currency}
 					if canonical.CacheReadTokenCost != nil && *canonical.CacheReadTokenCost >= 0 {
-						read = *canonical.CacheReadTokenCost
+						cost["cacheRead"] = *canonical.CacheReadTokenCost
 					}
 					if canonical.CacheWriteTokenCost != nil && *canonical.CacheWriteTokenCost >= 0 {
-						write = *canonical.CacheWriteTokenCost
+						cost["cacheWrite"] = *canonical.CacheWriteTokenCost
 					}
-					model.Cost = map[string]any{"input": *canonical.InputTokenCost, "output": *canonical.OutputTokenCost, "cacheRead": read, "cacheWrite": write, "currency": canonical.Currency}
+					model.Cost = cost
 				}
 			}
 		}()
 	}
 send:
 	for index := range models {
+		if !models[index].Available {
+			continue
+		}
 		select {
 		case jobs <- index:
 		case <-ctx.Done():
+			completeMu.Lock()
+			complete = false
+			completeMu.Unlock()
 			break send
 		}
 	}
 	close(jobs)
 	workers.Wait()
+	return complete
 }
 
 func (a *GooseAdmin) RefreshModels(ctx context.Context) (map[string]any, error) {
-	var ignored any
-	if err := a.call(ctx, "_goose/unstable/providers/inventory/refresh", map[string]any{"providerIds": []string{}}, &ignored); err != nil {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var refresh struct {
+		Started []string `json:"started"`
+		Skipped []struct {
+			ProviderID string `json:"providerId"`
+			Reason     string `json:"reason"`
+		} `json:"skipped"`
+	}
+	if err := a.call(ctx, "_goose/unstable/providers/inventory/refresh", map[string]any{"providerIds": []string{}}, &refresh); err != nil {
 		return nil, err
 	}
-	models, err := a.Models(ctx)
-	return map[string]any{"models": models, "complete": true}, err
+	started := make(map[string]bool, len(refresh.Started))
+	for _, providerID := range refresh.Started {
+		started[providerID] = true
+	}
+	for _, skipped := range refresh.Skipped {
+		if skipped.Reason == "already_refreshing" || skipped.Reason == "alreadyRefreshing" {
+			started[skipped.ProviderID] = true
+			refresh.Started = append(refresh.Started, skipped.ProviderID)
+		}
+	}
+	for len(started) > 0 {
+		providers, err := a.providers(ctx, refresh.Started)
+		if err != nil {
+			return nil, err
+		}
+		seen := make(map[string]bool, len(providers))
+		for _, provider := range providers {
+			seen[provider.ProviderID] = true
+			if started[provider.ProviderID] && !provider.Refreshing {
+				delete(started, provider.ProviderID)
+			}
+		}
+		for providerID := range started {
+			if !seen[providerID] {
+				return nil, fmt.Errorf("Goose model refresh lost provider %s", providerID)
+			}
+		}
+		if len(started) == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for Goose model refresh: %w", ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	models, metadataComplete, err := a.models(ctx)
+	return map[string]any{"models": models, "complete": metadataComplete}, err
 }
 
 func (a *GooseAdmin) DefaultModel(ctx context.Context) (map[string]any, error) {

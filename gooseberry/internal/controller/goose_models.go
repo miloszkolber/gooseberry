@@ -29,15 +29,16 @@ type canonicalFlight struct {
 	consumers int
 	started   bool
 	result    *canonicalModelInfo
+	complete  bool
 }
 
 // A projection can stop waiting without releasing an upstream concurrency slot.
 // Only queued work with no remaining consumers is cancelled; completed metadata
 // is never cached, so a later inventory request queries Goose again.
-func (a *GooseAdmin) canonicalModel(ctx context.Context, provider, model string) *canonicalModelInfo {
+func (a *GooseAdmin) canonicalModel(ctx context.Context, provider, model string) (*canonicalModelInfo, bool) {
 	generation, err := a.client.Ready(ctx)
 	if err != nil || ctx.Err() != nil {
-		return nil
+		return nil, false
 	}
 	key := canonicalKey{generation: generation, provider: provider, model: model}
 	a.canonicalMu.Lock()
@@ -63,9 +64,9 @@ func (a *GooseAdmin) canonicalModel(ctx context.Context, provider, model string)
 	}()
 	select {
 	case <-flight.done:
-		return flight.result
+		return flight.result, flight.complete
 	case <-ctx.Done():
-		return nil
+		return nil, false
 	}
 }
 
@@ -104,5 +105,6 @@ func (a *GooseAdmin) lookupCanonical(ctx context.Context, key canonicalKey, flig
 	}
 	if json.Unmarshal(raw, &response) == nil {
 		flight.result = response.ModelInfo
+		flight.complete = true
 	}
 }

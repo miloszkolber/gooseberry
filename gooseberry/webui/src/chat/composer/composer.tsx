@@ -163,6 +163,7 @@ export function mentionCompletionKeyAction(
 interface PendingImage extends AttachedImage {
 	id: string;
 	name: string;
+	tag?: string;
 }
 
 interface PendingText {
@@ -175,6 +176,114 @@ interface AttachError {
 	id: string;
 	name: string;
 	reason: string;
+}
+
+const IMAGE_EXTENSION_BY_MIME: Record<string, string> = {
+	"image/png": "png",
+	"image/jpeg": "jpg",
+	"image/gif": "gif",
+	"image/webp": "webp",
+};
+
+const GENERIC_CLIPBOARD_IMAGE_NAMES = new Set([
+	"",
+	"clipboard",
+	"clipboard image",
+	"image",
+	"image.png",
+	"image.jpg",
+	"image.jpeg",
+	"image.gif",
+	"image.webp",
+]);
+
+export function imageAttachmentTag(name: string): string {
+	return `[${name}]`;
+}
+
+export function clipboardImageName(
+	name: string,
+	mimeType: string,
+	existingNames: readonly string[],
+	draft: string,
+): string {
+	const sourceName = name.trim();
+	const taken = (candidate: string) =>
+		existingNames.includes(candidate) || draft.includes(imageAttachmentTag(candidate));
+	if (GENERIC_CLIPBOARD_IMAGE_NAMES.has(sourceName.toLowerCase())) {
+		const extension = IMAGE_EXTENSION_BY_MIME[mimeType] ?? "png";
+		for (let index = 1; ; index += 1) {
+			const candidate = `image-${index}.${extension}`;
+			const sequence = `image-${index}.`;
+			const sequenceTaken =
+				existingNames.some((existingName) => existingName.startsWith(sequence)) ||
+				draft.includes(`[${sequence}`);
+			if (!taken(candidate) && !sequenceTaken) return candidate;
+		}
+	}
+	if (!taken(sourceName)) return sourceName;
+	const dot = sourceName.lastIndexOf(".");
+	const stem = dot > 0 ? sourceName.slice(0, dot) : sourceName;
+	const extension = dot > 0 ? sourceName.slice(dot) : "";
+	for (let index = 2; ; index += 1) {
+		const candidate = `${stem}-${index}${extension}`;
+		if (!taken(candidate)) return candidate;
+	}
+}
+
+export function insertImageTags(
+	value: string,
+	selectionStart: number,
+	selectionEnd: number,
+	names: readonly string[],
+): { value: string; caret: number } {
+	if (names.length === 0) return { value, caret: selectionStart };
+	const before = value.slice(0, selectionStart);
+	const after = value.slice(selectionEnd);
+	const tags = names.map(imageAttachmentTag).join(" ");
+	const beforeSpace = before.length > 0 && !/\s$/.test(before) ? " " : "";
+	const afterSpace = after.length > 0 && !/^\s/.test(after) ? " " : "";
+	const inserted = `${beforeSpace}${tags}${afterSpace}`;
+	return {
+		value: `${before}${inserted}${after}`,
+		caret: before.length + inserted.length,
+	};
+}
+
+export function removeImageTag(value: string, name: string): string {
+	const tag = imageAttachmentTag(name);
+	const index = value.indexOf(tag);
+	return index < 0 ? value : `${value.slice(0, index)}${value.slice(index + tag.length)}`;
+}
+
+export function removeImageTags(
+	value: string,
+	caret: number,
+	names: readonly string[],
+): { value: string; caret: number } {
+	let nextValue = value;
+	let nextCaret = caret;
+	for (const name of names) {
+		const tag = imageAttachmentTag(name);
+		const index = nextValue.indexOf(tag);
+		if (index < 0) continue;
+		nextValue = `${nextValue.slice(0, index)}${nextValue.slice(index + tag.length)}`;
+		if (nextCaret > index) nextCaret = Math.max(index, nextCaret - tag.length);
+	}
+	return { value: nextValue, caret: nextCaret };
+}
+
+export function reserveClipboardImageNames(
+	files: readonly Pick<File, "name" | "type">[],
+	existingNames: readonly string[],
+	draft: string,
+): string[] {
+	const occupiedNames = [...existingNames];
+	return files.map((file) => {
+		const name = clipboardImageName(file.name, file.type, occupiedNames, draft);
+		occupiedNames.push(name);
+		return name;
+	});
 }
 
 function activeToken(value: string, caret: number): { token: string; start: number } {
@@ -230,10 +339,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 ) {
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const draftRef = useRef(value);
+	draftRef.current = value;
 	const [caret, setCaret] = useState(value.length);
+	const caretRef = useRef(value.length);
 	const [images, setImages] = useState<PendingImage[]>([]);
 	const [texts, setTexts] = useState<PendingText[]>([]);
 	const imagesRef = useRef<PendingImage[]>([]);
+	const reservedImageNamesRef = useRef<string[]>([]);
 	const supportsImagesRef = useRef(supportsImages);
 	supportsImagesRef.current = supportsImages;
 	const textsRef = useRef<PendingText[]>([]);
@@ -319,6 +432,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			el.focus();
 			el.setSelectionRange(pendingSelection.start, pendingSelection.end);
 		}
+		caretRef.current = pendingSelection.start;
 		setCaret(pendingSelection.start);
 		setPendingSelection(null);
 	}, [pendingSelection]);
@@ -330,7 +444,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const replaceDraft = useCallback(
 		(text: string, caret: number = text.length) => {
 			recallIdxRef.current = null;
+			draftRef.current = text;
 			onChange(text);
+			caretRef.current = caret;
 			focusSelection(caret);
 		},
 		[onChange, focusSelection],
@@ -358,6 +474,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			behavior,
 		);
 		if (accepted === false) return;
+		draftRef.current = "";
+		caretRef.current = 0;
 		onChange("");
 		commitImages([]);
 		commitTexts([]);
@@ -405,7 +523,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		},
 	}));
 
-	const addFiles = async (files: File[]) => {
+	const addFiles = async (files: File[], reservedImageNames?: readonly string[]) => {
 		const imageFiles = files.filter((file) => file.type.startsWith("image/"));
 		const textFiles = files.filter(
 			(file) => !file.type.startsWith("image/") && file.name.includes("."),
@@ -422,31 +540,42 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			]);
 			let used = imagesRef.current.reduce((sum, p) => sum + p.content.data.length, 0);
 			const additions: PendingImage[] = [];
+			const imageNames = [
+				...imagesRef.current.map((image) => image.name),
+				...textsRef.current.map((attachment) => attachment.name),
+			];
 			const textAdditions: PendingText[] = [];
 			const errors: AttachError[] = [];
+			const failedImageNames: string[] = [];
 			imageResults.forEach((result, i) => {
-				const name = imageFiles[i]?.name || "image";
+				const file = imageFiles[i];
+				const name = reservedImageNames?.[i] ?? (file?.name || "image");
 				if (supportsImagesRef.current === false) {
 					errors.push({
 						id: crypto.randomUUID(),
 						name,
 						reason: "connected agent does not support image prompts",
 					});
+					if (reservedImageNames) failedImageNames.push(name);
 					return;
 				}
 				if (result.status !== "fulfilled" || result.value === null) {
 					errors.push({ id: crypto.randomUUID(), name, reason: "unsupported image format" });
+					if (reservedImageNames) failedImageNames.push(name);
 					return;
 				}
 				const size = result.value.content.data.length;
 				if (used + size > REQUEST_IMAGE_BASE64_BUDGET) {
 					errors.push({ id: crypto.randomUUID(), name, reason: "message image limit reached" });
+					if (reservedImageNames) failedImageNames.push(name);
 					return;
 				}
 				used += size;
+				imageNames.push(name);
 				additions.push({
 					id: crypto.randomUUID(),
 					name,
+					...(reservedImageNames ? { tag: imageAttachmentTag(name) } : {}),
 					...result.value,
 				});
 			});
@@ -496,6 +625,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			if (supportsImagesRef.current !== false && additions.length > 0) {
 				commitImages([...imagesRef.current, ...additions]);
 			}
+			if (failedImageNames.length > 0) {
+				const removal = removeImageTags(draftRef.current, caretRef.current, failedImageNames);
+				replaceDraft(removal.value, removal.caret);
+			}
 			if (supportsTextResourcesRef.current !== false && textAdditions.length > 0) {
 				commitTexts([...textsRef.current, ...textAdditions]);
 			}
@@ -503,8 +636,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				setAttachErrors((prev) => [...prev, ...errors]);
 			}
 		} finally {
+			if (reservedImageNames) {
+				reservedImageNamesRef.current = reservedImageNamesRef.current.filter(
+					(name) => !reservedImageNames.includes(name),
+				);
+			}
 			setPendingAttachments((n) => n - files.length);
 		}
+	};
+
+	const removeImage = (image: PendingImage) => {
+		commitImages(imagesRef.current.filter((current) => current.id !== image.id));
+		if (!image.tag) return;
+		const removal = removeImageTags(draftRef.current, caretRef.current, [image.name]);
+		if (removal.value !== draftRef.current) replaceDraft(removal.value, removal.caret);
 	};
 
 	const submit = (behavior: SubmitBehavior) => {
@@ -537,6 +682,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			const next = recallAt === null ? 0 : Math.min(recallAt + 1, recentPrompts.length - 1);
 			const text = recentPrompts[next] ?? "";
 			recallIdxRef.current = next;
+			draftRef.current = text;
+			caretRef.current = text.length;
 			onChange(text);
 			focusSelection(text.length);
 			return;
@@ -545,12 +692,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			e.preventDefault();
 			if (recallAt === 0) {
 				recallIdxRef.current = null;
+				draftRef.current = "";
+				caretRef.current = 0;
 				onChange("");
 				focusSelection(0);
 			} else {
 				const next = recallAt - 1;
 				const text = recentPrompts[next] ?? "";
 				recallIdxRef.current = next;
+				draftRef.current = text;
+				caretRef.current = text.length;
 				onChange(text);
 				focusSelection(text.length);
 			}
@@ -577,10 +728,35 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
 	const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
 		const files = [...e.clipboardData.files];
-		if (files.length > 0 && attachmentPromptsEnabled) {
+		const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+		if (imageFiles.length === 0) return;
+		if (attachmentPromptsEnabled) {
 			e.preventDefault();
-			void addFiles(files);
-		} else if (files.length > 0) {
+			const eventValue = e.currentTarget.value;
+			const selectionStart =
+				eventValue === draftRef.current ? e.currentTarget.selectionStart : caretRef.current;
+			const selectionEnd =
+				eventValue === draftRef.current ? e.currentTarget.selectionEnd : caretRef.current;
+			const reservedNames = reserveClipboardImageNames(
+				imageFiles,
+				[
+					...imagesRef.current.map((image) => image.name),
+					...textsRef.current.map((attachment) => attachment.name),
+					...reservedImageNamesRef.current,
+				],
+				draftRef.current,
+			);
+			reservedImageNamesRef.current.push(...reservedNames);
+			const insertion = insertImageTags(
+				draftRef.current,
+				selectionStart,
+				selectionEnd,
+				reservedNames,
+			);
+			replaceDraft(insertion.value, insertion.caret);
+			void addFiles(files, reservedNames);
+		} else {
+			e.preventDefault();
 			setAttachErrors([
 				{
 					id: crypto.randomUUID(),
@@ -705,7 +881,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 								<button
 									type="button"
 									aria-label="Remove image"
-									onClick={() => commitImages(imagesRef.current.filter((p) => p.id !== img.id))}
+									onClick={() => removeImage(img)}
 									className="text-text-muted hover:text-text-default"
 								>
 									<X className="size-3" />
@@ -765,11 +941,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							if (recalled !== null && next !== recentPrompts[recalled]) {
 								recallIdxRef.current = null;
 							}
+							draftRef.current = next;
 							onChange(next);
+							caretRef.current = nextCaret;
 							setCaret(nextCaret);
 						}}
-						onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
-						onClick={(e) => setCaret(e.currentTarget.selectionStart)}
+						onKeyUp={(e) => {
+							caretRef.current = e.currentTarget.selectionStart;
+							setCaret(e.currentTarget.selectionStart);
+						}}
+						onClick={(e) => {
+							caretRef.current = e.currentTarget.selectionStart;
+							setCaret(e.currentTarget.selectionStart);
+						}}
 						onKeyDown={onKeyDown}
 						onPaste={onPaste}
 						onDrop={onDrop}

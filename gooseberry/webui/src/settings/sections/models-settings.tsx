@@ -37,8 +37,12 @@ function rateText(rates: WireModelCost): string {
 }
 
 function cacheText(rates: WireModelCost): string | null {
-	if (rates.cacheRead === 0 && rates.cacheWrite === 0) return null;
-	return `Cache read ${formatModelPrice(rates.cacheRead, rates.currency)} · write ${formatModelPrice(rates.cacheWrite, rates.currency)}`;
+	const parts: string[] = [];
+	if (rates.cacheRead !== undefined)
+		parts.push(`Cache read ${formatModelPrice(rates.cacheRead, rates.currency)}`);
+	if (rates.cacheWrite !== undefined)
+		parts.push(`write ${formatModelPrice(rates.cacheWrite, rates.currency)}`);
+	return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 function tierText(tier: WireModelCostTier, currency: string): string {
@@ -74,6 +78,25 @@ export function filterModels(
 	);
 }
 
+type ModelCatalogResponse = WireModel[] | { models: WireModel[]; complete?: boolean };
+
+export async function refreshModelCatalog(
+	loadCatalog: () => Promise<ModelCatalogResponse>,
+	loadProviders: () => Promise<ProviderStatusReport>,
+): Promise<{ models: WireModel[]; report: ProviderStatusReport; complete: boolean }> {
+	const catalog = await loadCatalog();
+	const report = await loadProviders();
+	return {
+		models: Array.isArray(catalog) ? catalog : catalog.models,
+		report,
+		complete: Array.isArray(catalog) || catalog.complete !== false,
+	};
+}
+
+export function shouldLoadModelCatalog(force: boolean, forceRefreshInFlight: boolean): boolean {
+	return force || !forceRefreshInFlight;
+}
+
 export function ModelsSettings() {
 	const [models, setModels] = useState<WireModel[]>([]);
 	const [report, setReport] = useState<ProviderStatusReport>({ providers: [] });
@@ -81,31 +104,59 @@ export function ModelsSettings() {
 	const [loading, setLoading] = useState(true);
 	const [refreshing, setRefreshing] = useState(false);
 	const [failed, setFailed] = useState(false);
+	const [metadataIncomplete, setMetadataIncomplete] = useState(false);
 	const [busyModel, setBusyModel] = useState<string | null>(null);
 	const [bulkBusy, setBulkBusy] = useState(false);
 	const providerVersion = useAppStore((state) => state.providerVersion);
 	const loadSequence = useRef(0);
+	const forceRefreshSequence = useRef(0);
+	const forceRefreshInFlight = useRef(false);
+	const mounted = useRef(false);
+
+	useEffect(() => {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
+			loadSequence.current += 1;
+		};
+	}, []);
 
 	const load = useCallback(async (force = false) => {
+		if (!shouldLoadModelCatalog(force, forceRefreshInFlight.current)) return;
 		const sequence = ++loadSequence.current;
+		if (force) {
+			forceRefreshInFlight.current = true;
+			forceRefreshSequence.current = sequence;
+		}
 		setRefreshing(true);
 		try {
-			const [catalog, providers] = await Promise.all([
-				force
-					? getTransport().request("model.refresh", { force: true })
-					: getTransport().request("model.list", {}),
-				getTransport().request("provider.status", {}),
-			]);
-			if (sequence !== loadSequence.current) return;
-			setModels(Array.isArray(catalog) ? catalog : catalog.models);
-			setReport(providers);
+			const result = force
+				? await refreshModelCatalog(
+						() => getTransport().request("model.refresh", { force: true }),
+						() => getTransport().request("provider.status", {}),
+					)
+				: await Promise.all([
+						getTransport().request("model.list", {}),
+						getTransport().request("provider.status", {}),
+					]).then(([catalog, report]) => ({
+						models: catalog,
+						report,
+						complete: true,
+					}));
+			if (!mounted.current || sequence !== loadSequence.current) return;
+			setModels(result.models);
+			setReport(result.report);
+			setMetadataIncomplete(force && !result.complete);
 			setFailed(false);
 		} catch (error) {
-			if (sequence !== loadSequence.current) return;
+			if (!mounted.current || sequence !== loadSequence.current) return;
 			setFailed(true);
 			if (force) toast.error(errorText(error), "Couldn't refresh models");
 		} finally {
-			if (sequence === loadSequence.current) {
+			if (force && forceRefreshSequence.current === sequence) {
+				forceRefreshInFlight.current = false;
+			}
+			if (mounted.current && sequence === loadSequence.current) {
 				setLoading(false);
 				setRefreshing(false);
 			}
@@ -170,6 +221,7 @@ export function ModelsSettings() {
 					<p className="text-text-muted tr-text-metadata">
 						{catalog.length} available · {visibleCount} shown. Visibility is a Gooseberry
 						preference. Goose keeps the canonical catalog.
+						{metadataIncomplete ? " Some optional model metadata did not finish loading." : ""}
 					</p>
 				</div>
 				<div className="flex shrink-0 items-center gap-xs">

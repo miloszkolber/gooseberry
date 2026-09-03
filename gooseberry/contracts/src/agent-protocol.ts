@@ -144,8 +144,8 @@ export type TranscriptMessage = UserMessage | AssistantMessage | ToolResultMessa
 export interface WireModelCostRates {
 	input: number;
 	output: number;
-	cacheRead: number;
-	cacheWrite: number;
+	cacheRead?: number;
+	cacheWrite?: number;
 }
 export interface WireModelCost extends WireModelCostRates {
 	/** Currency symbol reported by Goose for these per-million-token rates. */

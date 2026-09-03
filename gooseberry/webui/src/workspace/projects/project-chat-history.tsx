@@ -21,6 +21,15 @@ import { relativeTime } from "../../lib";
 import { type ClosedChat, toast, useAppStore } from "../../store";
 import { openChatInTab } from "../navigation/open-chat";
 
+export function shouldLoadArchivedChats(
+	open: boolean,
+	showArchived: boolean,
+	status: string,
+	canArchive: boolean,
+): boolean {
+	return open && showArchived && status === "connected" && canArchive;
+}
+
 export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string }) {
 	const closed = useAppStore(
 		(state) => state.closedChatsByProjectArea[projectAreaId] ?? EMPTY_CHATS,
@@ -47,6 +56,7 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 		(reason): reason is string => !!reason,
 	);
 	const [open, setOpen] = useState(false);
+	const [showArchived, setShowArchived] = useState(false);
 	const [archived, setArchived] = useState<SessionSummary[]>([]);
 	const [archivedLoading, setArchivedLoading] = useState(false);
 	const [archivedError, setArchivedError] = useState(false);
@@ -60,7 +70,7 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 	}, [canArchive, canRename]);
 
 	const loadArchived = useCallback(async () => {
-		if (!canArchive) return;
+		if (!canArchive || !showArchived) return;
 		const sequence = ++loadSequence.current;
 		setArchivedLoading(true);
 		try {
@@ -76,13 +86,20 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 		} finally {
 			if (sequence === loadSequence.current) setArchivedLoading(false);
 		}
-	}, [canArchive, projectAreaId]);
+	}, [canArchive, projectAreaId, showArchived]);
+
+	useEffect(() => {
+		if (showArchived) return;
+		loadSequence.current += 1;
+		setArchivedLoading(false);
+		setArchivedError(false);
+	}, [showArchived]);
 
 	useEffect(() => {
 		void catalogVersion;
 		void connectionGeneration;
-		if (open && status === "connected" && canArchive) void loadArchived();
-	}, [canArchive, catalogVersion, connectionGeneration, loadArchived, open, status]);
+		if (shouldLoadArchivedChats(open, showArchived, status, canArchive)) void loadArchived();
+	}, [canArchive, catalogVersion, connectionGeneration, loadArchived, open, showArchived, status]);
 
 	const restore = (sessionId: string) => {
 		if (!canArchive) return;
@@ -99,6 +116,15 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 			})
 			.catch((cause) => toast.error(errorText(cause), "Couldn't restore the chat"))
 			.finally(() => setRestoring((current) => (current === sessionId ? null : current)));
+	};
+
+	const toggleArchived = () => {
+		if (showArchived) {
+			loadSequence.current += 1;
+			setArchivedLoading(false);
+			setArchivedError(false);
+		}
+		setShowArchived((current) => !current);
 	};
 
 	return (
@@ -213,12 +239,24 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 						</p>
 					))}
 					<DropdownMenuSeparator />
-					<DropdownMenuLabel>Archived</DropdownMenuLabel>
-					{!canArchive ? (
+					<DropdownMenuItem
+						data-testid="chat-history-archived-toggle"
+						role="menuitemcheckbox"
+						aria-checked={showArchived}
+						disabled={!canArchive}
+						title={archiveUnavailable}
+						onSelect={(event) => {
+							event.preventDefault();
+							toggleArchived();
+						}}
+					>
+						{showArchived ? "Hide archived chats" : "Show archived chats"}
+					</DropdownMenuItem>
+					{showArchived && !canArchive ? (
 						<p className="max-w-[18rem] px-sm py-xs text-text-muted tr-text-metadata">
 							{archiveUnavailable}
 						</p>
-					) : archivedLoading ? (
+					) : showArchived && archivedLoading ? (
 						<p
 							role="status"
 							aria-live="polite"
@@ -226,16 +264,16 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 						>
 							Loading archived chats…
 						</p>
-					) : archivedError ? (
+					) : showArchived && archivedError ? (
 						<DropdownMenuItem
 							aria-label="Retry loading archived chats"
 							onSelect={() => void loadArchived()}
 						>
 							Couldn't load archived chats · Retry
 						</DropdownMenuItem>
-					) : archived.length === 0 ? (
+					) : showArchived && archived.length === 0 ? (
 						<p className="px-sm py-xs text-text-muted tr-text-metadata">No archived chats</p>
-					) : (
+					) : showArchived ? (
 						archived.map((session) => (
 							<DropdownMenuItem
 								key={session.sessionId}
@@ -254,7 +292,7 @@ export function ProjectChatHistory({ projectAreaId }: { projectAreaId: string })
 								<ArchiveRestore className="size-3.5" />
 							</DropdownMenuItem>
 						))
-					)}
+					) : null}
 				</DropdownMenuContent>
 			</DropdownMenu>
 			{renameTarget ? (

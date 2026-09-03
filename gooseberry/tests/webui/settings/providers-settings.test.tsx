@@ -23,6 +23,7 @@ test("provider cards gate readiness controls and expose safe status states", () 
 	);
 	expect(acpMarkup).toContain("Check readiness for OpenAI");
 	expect(acpMarkup).toContain("Check readiness");
+	expect(acpMarkup).toContain("readiness not checked");
 	expect(readinessStatusText("checking")).toBe("Checking readiness…");
 	expect(readinessStatusText("ready")).toBe("Ready");
 	expect(readinessStatusText("issue")).toBe("Ready with an issue");
@@ -37,6 +38,16 @@ test("provider cards gate readiness controls and expose safe status states", () 
 		/>,
 	);
 	expect(genericMarkup).not.toContain("Check readiness");
+	const unavailableMarkup = renderToStaticMarkup(
+		<ProviderCard
+			provider={{ ...provider, available: false, detail: "Inventory failed" }}
+			busy={false}
+			onSignIn={() => {}}
+			onSignOut={() => {}}
+		/>,
+	);
+	expect(unavailableMarkup).toContain("runtime unavailable");
+	expect(unavailableMarkup).toContain("Inventory failed");
 });
 
 test("a deferred readiness result cannot survive provider replacement or logout invalidation", () => {

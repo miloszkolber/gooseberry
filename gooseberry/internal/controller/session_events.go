@@ -668,9 +668,12 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 			reported = make(map[string]bool)
 		}
 		reported["input"], reported["output"], reported["total"] = true, true, true
-		if cost, ok := update["accumulatedCost"].(float64); ok {
+		if cost, ok := update["accumulatedCost"].(float64); ok && !math.IsNaN(cost) && !math.IsInf(cost, 0) && cost >= 0 {
 			entry.stats.Cost = cost
 			reported["cost"] = true
+		}
+		if currency := textValue(update["costCurrency"]); validCurrencyCode(currency) {
+			entry.stats.CostCurrency = currency
 		}
 		entry.stats.Reported = reported
 		limit := integerValue(update["contextLimit"])
@@ -680,7 +683,10 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 			percent = float64(used) / float64(limit) * 100
 		}
 		entry.stats.ContextUsage = map[string]any{"tokens": used, "contextWindow": limit, "percent": percent}
-		return []map[string]any{{"type": "context", "contextUsage": entry.stats.ContextUsage}}
+		return []map[string]any{
+			{"type": "usage", "usage": map[string]any{"input": entry.stats.Tokens.Input, "output": entry.stats.Tokens.Output, "cacheRead": entry.stats.Tokens.CacheRead, "cacheWrite": entry.stats.Tokens.CacheWrite, "total": entry.stats.Tokens.Total, "cost": entry.stats.Cost}, "reported": entry.stats.Reported, "costCurrency": entry.stats.CostCurrency},
+			{"type": "context", "contextUsage": entry.stats.ContextUsage},
+		}
 	case "status_message":
 		status := mapValue(update["status"])
 		kind := textValue(status["type"])

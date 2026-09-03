@@ -6,6 +6,8 @@ import {
 	filterModels,
 	ModelCatalogList,
 	ModelsSettings,
+	refreshModelCatalog,
+	shouldLoadModelCatalog,
 } from "@/settings/sections/models-settings";
 
 const model: WireModel = {
@@ -61,6 +63,20 @@ test("filters by provider and renders context, modality, cost, and visibility", 
 	expect(markup).not.toContain("Routing");
 });
 
+test("does not fabricate cache prices when Goose omits them", () => {
+	const markup = renderToStaticMarkup(
+		<ModelCatalogList
+			models={[{ ...model, cost: { currency: "$", input: 1, output: 4 } }]}
+			providers={new Map([[provider.id, provider]])}
+			busyModel={null}
+			onSetVisibility={() => {}}
+		/>,
+	);
+	expect(markup).toContain("In $1 · Out $4 / 1M");
+	expect(markup).not.toContain("Cache read");
+	expect(markup).not.toContain("write $0");
+});
+
 test("shows only models that Goose reports for configured available providers", () => {
 	const providerWithOmittedAvailability: ProviderStatus = {
 		id: "omitted",
@@ -97,4 +113,30 @@ test("labels bulk visibility controls as applying beyond the filtered catalog", 
 	expect(markup).toContain("Hide all");
 	expect(markup).toContain("Show all");
 	expect(markup).toContain("including models from disconnected providers");
+});
+
+test("a forced refresh waits to load provider status and blocks ordinary provider-version loads", async () => {
+	let finishRefresh: ((catalog: WireModel[]) => void) | undefined;
+	const refresh = new Promise<WireModel[]>((resolve) => (finishRefresh = resolve));
+	const calls: string[] = [];
+	const forced = refreshModelCatalog(
+		async () => {
+			calls.push("model.refresh");
+			return refresh;
+		},
+		async () => {
+			calls.push("provider.status");
+			return { providers: [provider] };
+		},
+	);
+	expect(calls).toEqual(["model.refresh"]);
+	expect(shouldLoadModelCatalog(false, true)).toBeFalse();
+	finishRefresh?.([model]);
+	await expect(forced).resolves.toEqual({
+		models: [model],
+		report: { providers: [provider] },
+		complete: true,
+	});
+	expect(calls).toEqual(["model.refresh", "provider.status"]);
+	expect(shouldLoadModelCatalog(false, false)).toBeTrue();
 });

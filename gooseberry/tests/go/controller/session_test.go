@@ -3,6 +3,7 @@ package controller_test
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -68,8 +69,14 @@ func newSessionManagerWithInitialize(t *testing.T, loadUpdates []map[string]any,
 				result = initialize
 			case "session/load":
 				for _, loadUpdate := range loadUpdates {
+					method := "session/update"
+					if loadUpdate["__gooseOnly"] == true {
+						method = "_goose/unstable/session/update"
+						loadUpdate = maps.Clone(loadUpdate)
+						delete(loadUpdate, "__gooseOnly")
+					}
 					if writeRPC(connection, map[string]any{
-						"jsonrpc": "2.0", "method": "session/update",
+						"jsonrpc": "2.0", "method": method,
 						"params": map[string]any{"sessionId": "chat", "update": loadUpdate},
 					}) != nil {
 						return
@@ -91,6 +98,32 @@ func newSessionManagerWithInitialize(t *testing.T, loadUpdates []map[string]any,
 	manager.SetClient(client)
 	t.Cleanup(client.Close)
 	return manager, client, project, store
+}
+
+func TestGooseUsageUpdateProjectsCumulativeTokenStats(t *testing.T) {
+	manager, _, project, _ := newSessionManager(t, []map[string]any{{
+		"__gooseOnly":             true,
+		"sessionUpdate":           "usage_update",
+		"accumulatedInputTokens":  120,
+		"accumulatedOutputTokens": 30,
+		"accumulatedCost":         0.125,
+		"costCurrency":            "USD",
+		"contextLimit":            200_000,
+		"used":                    5_000,
+	}}, nil)
+	if _, err := manager.Messages(t.Context(), "chat", project.ID, project.Roots[0], "client"); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := manager.Stats("chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Tokens.Input != 120 || stats.Tokens.Output != 30 || stats.Tokens.Total != 150 || stats.Cost != 0.125 || stats.CostCurrency != "USD" || stats.Reported["total"] != true {
+		t.Fatalf("usage stats were not projected: %#v", stats)
+	}
+	if stats.ContextUsage["tokens"] != int64(5000) || stats.ContextUsage["contextWindow"] != int64(200000) {
+		t.Fatalf("context usage was not projected: %#v", stats.ContextUsage)
+	}
 }
 
 func TestPromptEmbedsBoundedTextResourcesWithImages(t *testing.T) {
