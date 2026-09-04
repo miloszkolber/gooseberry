@@ -55,7 +55,7 @@ Check both architectures after packaging changes. Exercise state and environment
 
 ## Performance
 
-The initial JavaScript budget is **500,000 raw bytes**, including eager imports. The current production build is **439,030 raw bytes**. Keep large views and grammars lazy and transcript lists virtualized.
+The initial JavaScript budget is **500,000 raw bytes**, including eager imports. The current production build is **438,880 raw bytes**. Keep large views and grammars lazy and transcript lists virtualized.
 
 The controller target is a median round-p95 no more than **5% above the reference workload**. Prepare a fixture once, mount it read-only into two isolated applications and compare exact builds:
 
