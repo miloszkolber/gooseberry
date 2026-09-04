@@ -1,9 +1,11 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import type { UserMessage } from "@gooseberry/contracts";
 import { messagesToRuntime } from "@/chat/runtime/hydrate";
 import { createSessionRuntime, reduceSessionEvent } from "@/chat/runtime/session-runtime";
 import { appStoreApi } from "@/store";
 import { renderSvelte } from "./svelte-render";
+
+afterEach(() => appStoreApi.setState(appStoreApi.getInitialState(), true));
 
 const reviewResources = [
 	{ type: "resource" as const, name: "review.ts", mimeType: "text/x-typescript" },
