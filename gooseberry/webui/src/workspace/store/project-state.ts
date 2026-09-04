@@ -1,6 +1,6 @@
 import type { Project } from "@gooseberry/contracts";
-import type { StateCreator } from "zustand";
 import type { AppState } from "@/store/app-store";
+import type { StateCreator } from "@/store/external-store";
 import { omitKey } from "@/store/record";
 import type { ProjectArea } from "./model";
 import {

@@ -1,7 +1,7 @@
 import type { AppConfig, LoginPush, RefreshedModels, WireModel } from "@gooseberry/contracts";
 import { DEFAULT_CONFIG } from "@gooseberry/contracts";
-import type { StateCreator } from "zustand";
 import type { AppState } from "../store/app-store";
+import type { StateCreator } from "../store/external-store";
 import { foldLoginFrame, type LoginState, newLoginState } from "./login/login-state";
 
 export function selectCatalogModel(
@@ -10,6 +10,13 @@ export function selectCatalogModel(
 ): WireModel | null {
 	if (!ref) return null;
 	return models.find((m) => m.provider === ref.provider && m.id === ref.id) ?? null;
+}
+
+export function hiddenModelRevision(config: Pick<AppConfig, "hiddenModels">): string {
+	return (config.hiddenModels ?? [])
+		.map(({ provider, id }) => `${provider}\0${id}`)
+		.sort()
+		.join("\u0001");
 }
 
 export const SettingsSection = {
@@ -70,7 +77,10 @@ export const createSettingsState: StateCreator<AppState, [], [], SettingsState> 
 			providerVersion: s.providerVersion + 1,
 			providerConfigured: null,
 		})),
-	setProviderConfigured: (providerConfigured) => set({ providerConfigured }),
+	setProviderConfigured: (providerConfigured) =>
+		set((state) =>
+			state.providerConfigured === providerConfigured ? state : { providerConfigured },
+		),
 	beginModelsRefresh: () => {
 		const providerVersion = get().providerVersion;
 		set({ modelsRefreshing: true });

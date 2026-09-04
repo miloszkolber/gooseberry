@@ -7,11 +7,11 @@ import type {
 	ThinkingLevel,
 	WireModel,
 } from "@gooseberry/contracts";
-import type { StateCreator } from "zustand";
 import type { HydratedRuntime } from "@/chat/runtime/hydrate";
 import { createSessionRuntime, type SessionRuntime } from "@/chat/runtime/session-runtime";
 import { randomId } from "@/lib";
 import type { AppState } from "@/store/app-store";
+import type { StateCreator } from "@/store/external-store";
 import { omitKey } from "@/store/record";
 import { bumpProjectAreaNavigation } from "./content-state";
 import {
@@ -88,6 +88,21 @@ function isSessionDeleted(
 	sessionId: string,
 ): boolean {
 	return state.deletedSessionsByProjectArea[projectAreaId]?.[sessionId] === true;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameQueue(left: SessionQueueState, right: SessionQueueState): boolean {
+	return (
+		left.revision === right.revision &&
+		sameStrings(left.steering, right.steering) &&
+		sameStrings(left.followUp, right.followUp) &&
+		left.blocked?.lane === right.blocked?.lane &&
+		left.blocked?.index === right.blocked?.index &&
+		left.blocked?.reason === right.blocked?.reason
+	);
 }
 
 function withoutChat(
@@ -416,37 +431,46 @@ export const createSessionWorkspaceState: StateCreator<AppState, [], [], Session
 					.map((session) => [session.sessionId, session.queue as SessionQueueState]),
 			);
 			const tabs = state.tabsByProjectArea[projectAreaId] ?? [];
+			const nextTabs = tabs.map((tab) => {
+				if (tab.kind !== "chat") return tab;
+				const title = active.get(tab.sessionId);
+				return title !== undefined && title !== tab.name ? { ...tab, name: title } : tab;
+			});
 			const closed = state.closedChatsByProjectArea[projectAreaId] ?? [];
-			let next: AppState = {
-				...state,
-				tabsByProjectArea: {
-					...state.tabsByProjectArea,
-					[projectAreaId]: tabs.map((tab) => {
-						if (tab.kind !== "chat") return tab;
-						const title = active.get(tab.sessionId);
-						return title !== undefined && title !== tab.name ? { ...tab, name: title } : tab;
-					}),
-				},
-				closedChatsByProjectArea: {
-					...state.closedChatsByProjectArea,
-					[projectAreaId]: closed.map((chat) => {
-						const title = active.get(chat.sessionId);
-						return title !== undefined && title !== chat.title ? { ...chat, title } : chat;
-					}),
-				},
-				sessions: Object.fromEntries(
-					Object.entries(state.sessions).map(([sessionId, runtime]) => {
-						const queue = queues.get(sessionId);
-						return [sessionId, queue ? { ...runtime, queue } : runtime];
-					}),
-				),
-			};
+			const nextClosed = closed.map((chat) => {
+				const title = active.get(chat.sessionId);
+				return title !== undefined && title !== chat.title ? { ...chat, title } : chat;
+			});
+			let sessions = state.sessions;
+			for (const [sessionId, runtime] of Object.entries(state.sessions)) {
+				const queue = queues.get(sessionId);
+				if (!queue || sameQueue(runtime.queue, queue)) continue;
+				if (sessions === state.sessions) sessions = { ...state.sessions };
+				sessions[sessionId] = { ...runtime, queue };
+			}
+			let next: AppState = state;
+			if (nextTabs.some((tab, index) => tab !== tabs[index])) {
+				next = {
+					...next,
+					tabsByProjectArea: { ...next.tabsByProjectArea, [projectAreaId]: nextTabs },
+				};
+			}
+			if (nextClosed.some((chat, index) => chat !== closed[index])) {
+				next = {
+					...next,
+					closedChatsByProjectArea: {
+						...next.closedChatsByProjectArea,
+						[projectAreaId]: nextClosed,
+					},
+				};
+			}
+			if (sessions !== state.sessions) next = { ...next, sessions };
 			for (const sessionId of baselineSessionIds) {
 				if (!active.has(sessionId)) {
 					next = withoutChat(next, projectAreaId, sessionId, false, !archived.has(sessionId));
 				}
 			}
-			return next;
+			return next === state ? {} : next;
 		}),
 	reopenChat: (projectAreaId, sessionId, options = {}) =>
 		set((state) => {

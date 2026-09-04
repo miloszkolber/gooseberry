@@ -32,7 +32,6 @@ import (
 const (
 	projectID = "fixture-project"
 	sessionID = "fixture-1"
-	readyFile = "/tmp/gooseberry-ui-ready"
 )
 
 type fixtureAgent struct {
@@ -40,6 +39,7 @@ type fixtureAgent struct {
 	releaseOnce sync.Once
 	modeMu      sync.Mutex
 	mode        string
+	root        string
 }
 
 type rpcWriter struct {
@@ -55,9 +55,20 @@ func main() {
 }
 
 func run() error {
+	fixtureBase := os.Getenv("GOOSEBERRY_UI_FIXTURE_BASE")
+	if fixtureBase == "" {
+		fixtureBase = "/tmp/gooseberry-ui"
+	}
+	readyFile := os.Getenv("GOOSEBERRY_UI_FIXTURE_READY_FILE")
+	if readyFile == "" {
+		readyFile = "/tmp/gooseberry-ui-ready"
+	}
+	if !filepath.IsAbs(fixtureBase) || !filepath.IsAbs(readyFile) {
+		return fmt.Errorf("UI fixture paths must be absolute")
+	}
 	_ = os.Remove(readyFile)
-	root := "/tmp/gooseberry-ui/project"
-	data := "/tmp/gooseberry-ui/state"
+	root := filepath.Join(filepath.Clean(fixtureBase), "project")
+	data := filepath.Join(filepath.Clean(fixtureBase), "state")
 	if err := seedProject(root, data); err != nil {
 		return err
 	}
@@ -65,7 +76,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	agent := &fixtureAgent{release: make(chan struct{}), mode: "ask"}
+	agent := &fixtureAgent{release: make(chan struct{}), mode: "ask", root: root}
 	agentServer, agentURL, err := agent.start()
 	if err != nil {
 		return err
@@ -282,7 +293,7 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 		case "session/list":
 			result = map[string]any{"sessions": []any{map[string]any{
 				"sessionId": sessionID,
-				"cwd":       "/tmp/gooseberry-ui/project",
+				"cwd":       a.root,
 				"title":     "Fixture chat",
 				"updatedAt": "2026-01-02T00:00:00Z",
 			}}}

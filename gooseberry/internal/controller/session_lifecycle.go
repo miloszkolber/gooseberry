@@ -117,6 +117,9 @@ func (m *SessionManager) Rename(ctx context.Context, projectID, sessionID, cwd, 
 	if _, err := m.client.CallGoose(entry.context(ctx), "_goose/unstable/session/rename", map[string]any{"sessionId": sessionID, "title": title}); err != nil {
 		return err
 	}
+	if err := m.records.SetTitle(projectID, sessionID, title); err != nil {
+		return fmt.Errorf("persist session title: %w", err)
+	}
 	entry.state.Lock()
 	entry.title = title
 	entry.state.Unlock()

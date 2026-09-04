@@ -1,12 +1,12 @@
 import { projectRelativePath } from "@/lib";
 import { registerToolRenderer } from "../render/tool-registry";
-import { AskUserQuestionCard } from "./ask-user-question-card";
-import { BashCard } from "./bash-card";
-import { EditCard } from "./edit-card";
-import { ReadCard } from "./read-card";
+import AskUserQuestionCard from "./ask-user-question-card.svelte";
+import BashCard from "./bash-card.svelte";
+import EditCard from "./edit-card.svelte";
+import ReadCard from "./read-card.svelte";
 import { strArg } from "./tool-helpers";
 import "./web/register";
-import { WriteCard } from "./write-card";
+import WriteCard from "./write-card.svelte";
 import "./browser/register";
 import "./subagent/register";
 import "./signet/register";

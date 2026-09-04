@@ -9,6 +9,7 @@ on:
     paths:
       - ".github/workflows/container-images.yml"
       - "docker-compose.yaml"
+      - "docker-compose.mcp.yaml"
       - ".dockerignore"
       - "LICENSE"
       - "NOTICE.md"
@@ -20,6 +21,7 @@ on:
     paths:
       - ".github/workflows/container-images.yml"
       - "docker-compose.yaml"
+      - "docker-compose.mcp.yaml"
       - ".dockerignore"
       - "LICENSE"
       - "NOTICE.md"
@@ -58,6 +60,8 @@ jobs:
             image: gooseberry
           - target: browser
             image: gooseberry-browser
+          - target: mcp
+            image: gooseberry-mcp
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

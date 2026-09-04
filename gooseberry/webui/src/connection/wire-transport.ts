@@ -13,7 +13,7 @@ import type {
 	SessionLifecycleChangedPayload,
 } from "@gooseberry/contracts";
 import { WS_CHANNELS } from "@gooseberry/contracts";
-import { useAppStore } from "../store";
+import { appStoreApi } from "../store";
 import { WsTransport } from "./transport";
 
 let transport: WsTransport | null = null;
@@ -22,7 +22,7 @@ export function initTransport(): WsTransport {
 	if (transport) return transport;
 
 	transport = new WsTransport({
-		onStatus: (status) => useAppStore.getState().setStatus(status),
+		onStatus: (status) => appStoreApi.getState().setStatus(status),
 		onAuthenticationLoss: () => window.dispatchEvent(new Event("gooseberry-auth-lost")),
 		isAuthenticated: async () => {
 			try {
@@ -42,7 +42,7 @@ export function initTransport(): WsTransport {
 	transport.subscribe(WS_CHANNELS.serverWelcome, (data) => {
 		const welcome = data as Partial<ServerWelcome>;
 		if (typeof welcome.protocolVersion !== "number" || !Array.isArray(welcome.projects)) return;
-		useAppStore
+		appStoreApi
 			.getState()
 			.installWelcomeSnapshot(
 				welcome.protocolVersion,
@@ -54,51 +54,51 @@ export function initTransport(): WsTransport {
 			);
 	});
 	transport.subscribe(WS_CHANNELS.agentProfileChanged, (data) => {
-		useAppStore.getState().replaceAgentProfile(data as AgentProfile);
+		appStoreApi.getState().replaceAgentProfile(data as AgentProfile);
 	});
 
 	transport.subscribe(WS_CHANNELS.projectUpdated, (data) => {
-		useAppStore.getState().applyProjectUpdated(data as Project);
+		appStoreApi.getState().applyProjectUpdated(data as Project);
 	});
 
 	transport.subscribe(WS_CHANNELS.agentEvent, (data) => {
 		const { sessionId, event } = data as SessionEventPayload;
-		useAppStore.getState().handleAgentEvent(event, sessionId);
+		appStoreApi.getState().handleAgentEvent(event, sessionId);
 	});
 
 	transport.subscribe(WS_CHANNELS.permissionRequest, (data) => {
-		useAppStore.getState().setPendingPermission(data as PermissionRequest);
+		appStoreApi.getState().setPendingPermission(data as PermissionRequest);
 	});
 	transport.subscribe(WS_CHANNELS.permissionResolved, (data) => {
 		const payload = data as PermissionResolvedPayload;
-		useAppStore.getState().clearPendingPermission(payload.sessionId, payload.permissionId);
+		appStoreApi.getState().clearPendingPermission(payload.sessionId, payload.permissionId);
 	});
 
 	transport.subscribe(WS_CHANNELS.sessionDeleted, (data) => {
 		const { projectId, sessionId } = data as SessionDeletedPayload;
-		useAppStore.getState().deleteChat(projectId, sessionId, false);
+		appStoreApi.getState().deleteChat(projectId, sessionId, false);
 	});
 	transport.subscribe(WS_CHANNELS.sessionLifecycleChanged, (data) => {
-		useAppStore.getState().applySessionLifecycle(data as SessionLifecycleChangedPayload);
+		appStoreApi.getState().applySessionLifecycle(data as SessionLifecycleChangedPayload);
 	});
 	transport.subscribe(WS_CHANNELS.sessionObjectiveChanged, (data) => {
 		const objective = data as SessionGoal;
-		useAppStore.getState().setSessionGoal(objective.sessionId, objective);
+		appStoreApi.getState().setSessionGoal(objective.sessionId, objective);
 	});
 
 	transport.subscribe(WS_CHANNELS.projectFsChanged, (data) => {
-		useAppStore.getState().noteFsChanged(data as ProjectFsChangedPayload);
+		appStoreApi.getState().noteFsChanged(data as ProjectFsChangedPayload);
 	});
 	transport.subscribe(WS_CHANNELS.commandCatalogChanged, () => {
-		useAppStore.getState().noteCommandCatalogChanged();
+		appStoreApi.getState().noteCommandCatalogChanged();
 	});
 
 	transport.subscribe(WS_CHANNELS.settingsChanged, (data) => {
-		useAppStore.getState().applyConfig(data as AppConfig);
+		appStoreApi.getState().applyConfig(data as AppConfig);
 	});
 
 	transport.subscribe(WS_CHANNELS.providerLogin, (data) => {
-		useAppStore.getState().applyLoginFrame(data as LoginPush);
+		appStoreApi.getState().applyLoginFrame(data as LoginPush);
 	});
 
 	transport.connect();

@@ -1,6 +1,6 @@
 import type { AgentProfile } from "@gooseberry/contracts";
-import type { StateCreator } from "zustand";
 import type { AppState } from "../store/app-store";
+import type { StateCreator } from "../store/external-store";
 import type { ConnectionStatus } from "./transport";
 
 export function isConnectedGeneration(
@@ -15,6 +15,7 @@ export interface ConnectionState {
 	status: ConnectionStatus;
 	connectionGeneration: number;
 	welcomeGeneration: number;
+	welcomeConnectionGeneration: number;
 	protocolVersion: number | null;
 	agentProfile: AgentProfile | null;
 	setStatus: (status: ConnectionStatus) => void;
@@ -27,6 +28,7 @@ export const createConnectionState: StateCreator<AppState, [], [], ConnectionSta
 	status: "connecting",
 	connectionGeneration: 0,
 	welcomeGeneration: 0,
+	welcomeConnectionGeneration: 0,
 	protocolVersion: null,
 	agentProfile: null,
 	setStatus: (status) =>

@@ -23,6 +23,7 @@
 !gooseberry/webui/**
 **/node_modules
 **/dist
+**/.build
 **/*_test.go
 **/*.test.ts
 **/*.test.tsx

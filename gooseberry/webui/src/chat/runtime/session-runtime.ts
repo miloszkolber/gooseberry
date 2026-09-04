@@ -37,12 +37,14 @@ export interface SessionRuntime {
 	stats: SessionStats | null;
 	commands: SlashCommandInfo[];
 	commandRevision: number;
+	configRevision: number;
 	draft: string;
 	pendingExtUi: ExtUiDialogRequest | null;
 	extUiQueue: ExtUiDialogRequest[];
 	extUiStatus: Record<string, string>;
 	extUiWidget: Record<string, string[]>;
 	goal: SessionGoalRuntime;
+	goalRevision: number;
 }
 
 export interface SessionGoalRuntime {
@@ -78,6 +80,7 @@ export function createSessionRuntime(
 		stats: null,
 		commands: [],
 		commandRevision: 0,
+		configRevision: 0,
 		draft: "",
 		pendingExtUi: null,
 		extUiQueue: [],
@@ -91,6 +94,7 @@ export function createSessionRuntime(
 			updatedAt: null,
 			error: null,
 		},
+		goalRevision: 0,
 	};
 }
 
@@ -365,6 +369,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 						...rt,
 						model: event.model ?? rt.model,
 						thinkingLevel: typeof value === "string" ? value : rt.thinkingLevel,
+						configRevision: rt.configRevision + 1,
 					}
 				: rt;
 		}

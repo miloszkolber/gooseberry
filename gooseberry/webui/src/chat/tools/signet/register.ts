@@ -1,10 +1,6 @@
 import { registerToolRenderer } from "../../render/tool-registry";
-import { strArg } from "../tool-helpers";
-import { SignetCard } from "./signet-card";
-
-export function signetSummary(args: Record<string, unknown>): string {
-	return strArg(args, "query") || strArg(args, "content") || "memory";
-}
+import { signetSummary } from "./signet-card";
+import SignetCard from "./signet-card.svelte";
 
 registerToolRenderer("signet_recall", SignetCard, { summary: ({ args }) => signetSummary(args) });
 registerToolRenderer("signet_source_search", SignetCard, {

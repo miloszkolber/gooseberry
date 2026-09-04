@@ -1,7 +1,7 @@
 /*
  * GENERATED FILE — DO NOT EDIT.
  *
- * Source:    src/styles/typography.json (v3.0.0)
+ * Source:    src/styles/typography.json (v3.1.0)
  * Generator: scripts/generate-typography.ts  ·  regenerate: bun run typography:generate
  * Drift gate: bun run typography:check (fails when this file is stale)
  *
@@ -18,13 +18,13 @@
 
 :root {
 	/* Font families */
-	--tr-font-family-code: "Geist Mono Variable", "Geist Mono", "Fira Code", "SF Mono", "Cascadia Code", monospace;
+	--tr-font-family-code: geist-mono, monospace;
 
 	/* Font weights */
-	--tr-font-weight-light: 370;
+	--tr-font-weight-light: 400;
 	--tr-font-weight-regular: 400;
 	--tr-font-weight-medium: 500;
-	--tr-font-weight-semibold: 600;
+	--tr-font-weight-semibold: 550;
 	--tr-font-weight-brand: 400;
 
 	/* Font sizes (px) */

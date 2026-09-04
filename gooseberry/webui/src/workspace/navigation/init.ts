@@ -1,4 +1,4 @@
-import { projectArea, useAppStore } from "../../store";
+import { appStoreApi, projectArea } from "../../store";
 import { browserNavigationDriver, type NavigationDriver } from "./driver";
 import { startNavigation } from "./restore";
 
@@ -6,7 +6,7 @@ export function initNavigation(driver: NavigationDriver = browserNavigationDrive
 	return startNavigation({
 		driver,
 		listProjectAreas: async (projectId) => {
-			const project = useAppStore
+			const project = appStoreApi
 				.getState()
 				.projects.find((candidate) => candidate.id === projectId);
 			return project ? [projectArea(project)] : [];

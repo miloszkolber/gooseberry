@@ -55,6 +55,21 @@ func TestDurableSessionStateRecoversSafeDataAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestSessionTitleProjectionIsDurable(t *testing.T) {
+	store := persist.Store{Dir: t.TempDir()}
+	records := controller.NewSessionRecords(store)
+	if err := records.Record(controller.ProjectSessionRecord{ProjectID: "project", SessionID: "chat", CWD: "/project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := records.SetTitle("project", "chat", "Remembered title"); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := controller.NewSessionRecords(store).List()
+	if err != nil || len(recovered) != 1 || recovered[0].Title != "Remembered title" {
+		t.Fatalf("session title persistence: %#v, %v", recovered, err)
+	}
+}
+
 func TestExecutionJournalsFailClosedInsteadOfReplayingBackups(t *testing.T) {
 	t.Run("follow-up queue", func(t *testing.T) {
 		store := persist.Store{Dir: t.TempDir()}

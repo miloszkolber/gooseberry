@@ -40,12 +40,12 @@ func (h *HTTPHandler) serveBrowserArtifact(response http.ResponseWriter, request
 		http.Error(response, "browser artifact proxy unavailable", http.StatusBadGateway)
 		return
 	}
-	if h.Auth.BrowserEnabled {
-		if !strongToken(h.Auth.BrowserToken) {
+	if browserAuth, browserToken := h.Auth.BrowserServiceAuth(); browserAuth {
+		if !strongToken(browserToken) {
 			http.Error(response, "browser artifact proxy unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		upstream.Header.Set("Authorization", "Bearer "+h.Auth.BrowserToken)
+		upstream.Header.Set("Authorization", "Bearer "+browserToken)
 	}
 	result, err := h.browserClient.Do(upstream)
 	if err != nil {

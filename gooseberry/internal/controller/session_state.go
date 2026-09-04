@@ -22,6 +22,7 @@ type ProjectSessionRecord struct {
 	SessionID       string `json:"sessionId"`
 	CWD             string `json:"cwd"`
 	ParentSessionID string `json:"parentSessionId,omitempty"`
+	Title           string `json:"title,omitempty"`
 }
 
 type SessionRecords struct {
@@ -80,11 +81,39 @@ func (s *SessionRecords) Record(record ProjectSessionRecord) error {
 	}
 	for index := range records {
 		if records[index].SessionID == record.SessionID {
+			if record.Title == "" {
+				record.Title = records[index].Title
+			}
 			records[index] = record
 			return s.save(records)
 		}
 	}
 	return s.save(append(records, record))
+}
+
+// SetTitle persists the last title observed for a session without requiring
+// callers to reconstruct the rest of its durable association. Goose can emit
+// generated titles as session updates, but those updates are not guaranteed
+// to be returned by a later session/load, so the controller keeps this small
+// local projection as a restart fallback.
+func (s *SessionRecords) SetTitle(projectID, sessionID, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" || containsNUL(title) || utf16Length(title) > 200 {
+		return fmt.Errorf("session title is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records, err := s.load()
+	if err != nil {
+		return err
+	}
+	for index := range records {
+		if records[index].ProjectID == projectID && records[index].SessionID == sessionID {
+			records[index].Title = title
+			return s.save(records)
+		}
+	}
+	return fmt.Errorf("unknown session: %s", sessionID)
 }
 
 func (s *SessionRecords) Forget(projectID, sessionID string) error {
@@ -122,6 +151,9 @@ func validateSessionRecord(record ProjectSessionRecord) error {
 		return fmt.Errorf("invalid project session record")
 	}
 	if record.ParentSessionID != "" && (validateACPSessionID(record.ParentSessionID) != nil || record.ParentSessionID == record.SessionID) {
+		return fmt.Errorf("invalid project session record")
+	}
+	if record.Title != "" && (containsNUL(record.Title) || utf16Length(record.Title) > 200) {
 		return fmt.Errorf("invalid project session record")
 	}
 	return nil

@@ -66,6 +66,48 @@ export interface RuntimeStatusReport {
 	browser: RuntimeServiceStatus;
 }
 
+export type McpGatewayState =
+	| "ready"
+	| "degraded"
+	| "not-configured"
+	| "unreachable"
+	| "incompatible";
+
+export type McpModuleState = "ready" | "unavailable";
+
+export type McpModuleBinding =
+	| "not-configured"
+	| "disabled"
+	| "enabled"
+	| "conflict"
+	| "unavailable";
+
+export interface McpGatewaySummary {
+	state: McpGatewayState;
+	detail?: string;
+	revision?: string;
+}
+
+/** Browser-safe projection of one MCP module published by Gooseberry MCP. */
+export interface McpGatewayModule {
+	id: string;
+	extensionName: string;
+	displayName: string;
+	description: string;
+	path: string;
+	transport: "streamable_http";
+	state: McpModuleState;
+	detail?: string;
+	binding: McpModuleBinding;
+	bindingDetail?: string;
+}
+
+export interface McpGatewayCatalog {
+	schemaVersion: 1;
+	gateway: McpGatewaySummary;
+	modules: McpGatewayModule[];
+}
+
 /** A controller-owned, bounded browser panel. The browser service token is never exposed here. */
 export interface BrowserPanel {
 	id: string;

@@ -86,9 +86,22 @@ type AuthConfig struct {
 	BrowserToken        string
 	BrowserURL          string
 	BrowserPublicOrigin string
+	MCPURL              string
+	MCPToken            string
 	ControllerHost      string
 	PublicOrigin        string
 	AllowRemoteWithout  bool
+}
+
+// BrowserServiceAuth selects the credential for controller-owned requests to
+// the Browser HTTP surface. When the optional MCP host owns that same origin,
+// its token is authoritative; otherwise the standalone Browser token remains
+// the compatibility path.
+func (c AuthConfig) BrowserServiceAuth() (bool, string) {
+	if c.MCPURL != "" && sameAppViewOrigin(c.MCPURL, c.BrowserURL) {
+		return c.MCPToken != "", c.MCPToken
+	}
+	return c.BrowserEnabled, c.BrowserToken
 }
 
 func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
@@ -135,21 +148,42 @@ func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
 			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_PUBLIC_ORIGIN must be an absolute http(s) origin without a path")
 		}
 	}
+	mcpURL := strings.TrimSpace(getenv("GOOSEBERRY_MCP_URL"))
+	mcpToken := strings.TrimSpace(getenv("GOOSEBERRY_MCP_TOKEN"))
+	if mcpURL != "" {
+		mcpURL, err = normalizeOrigin(mcpURL)
+		if err != nil {
+			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_MCP_URL must be an absolute http(s) origin without credentials or a path")
+		}
+		if mcpToken != "" && !strongToken(mcpToken) {
+			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_MCP_TOKEN must be a strong printable random token")
+		}
+		parsedMCP, _ := url.Parse(mcpURL)
+		if parsedMCP.Hostname() != "localhost" && !net.ParseIP(parsedMCP.Hostname()).IsLoopback() && !strongToken(mcpToken) {
+			return AuthConfig{}, fmt.Errorf("a non-loopback GOOSEBERRY_MCP_URL requires a strong MCP token")
+		}
+	} else if mcpToken != "" && !strongToken(mcpToken) {
+		return AuthConfig{}, fmt.Errorf("GOOSEBERRY_MCP_TOKEN must be a strong printable random token")
+	}
 	browserURL := strings.TrimSpace(getenv("GOOSEBERRY_BROWSER_URL"))
 	if browserURL == "" {
-		browserURL = "http://127.0.0.1:8787"
+		browserURL = mcpURL
+		if browserURL == "" {
+			browserURL = "http://127.0.0.1:8787"
+		}
 	}
 	browserURL, err = normalizeOrigin(browserURL)
 	if err != nil {
 		return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_URL must be an absolute http(s) origin without credentials or a path")
 	}
 	parsedBrowser, _ := url.Parse(browserURL)
-	if !browserEnabled && parsedBrowser.Hostname() != "localhost" && !net.ParseIP(parsedBrowser.Hostname()).IsLoopback() {
+	sharedMCPOrigin := mcpURL != "" && sameAppViewOrigin(mcpURL, browserURL) && strongToken(mcpToken)
+	if !browserEnabled && !sharedMCPOrigin && parsedBrowser.Hostname() != "localhost" && !net.ParseIP(parsedBrowser.Hostname()).IsLoopback() {
 		return AuthConfig{}, fmt.Errorf("a non-loopback GOOSEBERRY_BROWSER_URL requires browser authentication")
 	}
 	browserPublicOrigin := strings.TrimSpace(getenv("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN"))
 	if browserPublicOrigin != "" {
-		if !browserEnabled {
+		if !browserEnabled && !sharedMCPOrigin {
 			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN requires browser authentication")
 		}
 		browserPublicOrigin, err = normalizeOrigin(browserPublicOrigin)
@@ -160,7 +194,7 @@ func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
 			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN must differ from GOOSEBERRY_PUBLIC_ORIGIN")
 		}
 	}
-	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, BrowserURL: browserURL, BrowserPublicOrigin: browserPublicOrigin, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil
+	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, BrowserURL: browserURL, BrowserPublicOrigin: browserPublicOrigin, MCPURL: mcpURL, MCPToken: mcpToken, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil
 }
 
 func (c AuthConfig) ExpectedOrigin(request *http.Request) (string, error) {

@@ -139,7 +139,9 @@ func (a *AppViews) Open(ctx context.Context, projectID, sessionID, toolCallID, p
 		return nil, fmt.Errorf("App sandbox is unavailable")
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+a.auth.BrowserToken)
+	if browserAuth, browserToken := a.auth.BrowserServiceAuth(); browserAuth {
+		request.Header.Set("Authorization", "Bearer "+browserToken)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := a.client.Do(request)
 	if err != nil {
@@ -221,7 +223,9 @@ func (a *AppViews) deleteTicket(ctx context.Context, viewID string) error {
 		return fmt.Errorf("App sandbox is unavailable")
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+a.auth.BrowserToken)
+	if browserAuth, browserToken := a.auth.BrowserServiceAuth(); browserAuth {
+		request.Header.Set("Authorization", "Bearer "+browserToken)
+	}
 	response, err := a.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("App sandbox is unavailable")
@@ -245,7 +249,8 @@ func (a *AppViews) cleanupTicket(viewID string) {
 }
 
 func (a *AppViews) browserOrigin() (string, error) {
-	if !a.auth.BrowserEnabled || !strongToken(a.auth.BrowserToken) {
+	browserAuth, browserToken := a.auth.BrowserServiceAuth()
+	if !browserAuth || !strongToken(browserToken) {
 		return "", fmt.Errorf("authenticated browser service is not configured")
 	}
 	origin, err := normalizeOrigin(a.auth.BrowserURL)

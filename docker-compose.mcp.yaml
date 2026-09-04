@@ -1,0 +1,25 @@
+# Optional overlay: replace the standalone Browser service with the modular
+# Gooseberry MCP host while retaining the same port and state mount.
+services:
+    gooseberry:
+        environment:
+            GOOSEBERRY_MCP_URL: "${GOOSEBERRY_MCP_URL:-http://127.0.0.1:8787}"
+            GOOSEBERRY_MCP_TOKEN: "${GOOSEBERRY_MCP_TOKEN:?set GOOSEBERRY_MCP_TOKEN in .gooseberry.mcp}"
+            GOOSEBERRY_BROWSER_URL: ""
+            GOOSEBERRY_BROWSER_PUBLIC_ORIGIN: "${GOOSEBERRY_MCP_PUBLIC_ORIGIN:-}"
+
+    browser:
+        build:
+            target: mcp
+        image: "${GOOSEBERRY_MCP_IMAGE:-ghcr.io/miloszkolber/gooseberry-mcp:latest}"
+        container_name: gooseberry-mcp
+        # Replace, rather than merge, the standalone Browser environment so
+        # the legacy Browser bearer token is not copied into the MCP container.
+        environment: !override
+            GOOSEBERRY_MCP_AUTH: "${GOOSEBERRY_MCP_AUTH:-true}"
+            GOOSEBERRY_MCP_TOKEN: "${GOOSEBERRY_MCP_TOKEN:?set GOOSEBERRY_MCP_TOKEN in .gooseberry.mcp}"
+            GOOSEBERRY_MCP_HOST: "${GOOSEBERRY_MCP_HOST:-127.0.0.1}"
+            GOOSEBERRY_MCP_PORT: "${GOOSEBERRY_MCP_PORT:-8787}"
+            GOOSEBERRY_MCP_PUBLIC_ORIGIN: "${GOOSEBERRY_MCP_PUBLIC_ORIGIN:-}"
+            GOOSEBERRY_MCP_MODULES: "${GOOSEBERRY_MCP_MODULES:-browser}"
+            GOOSEBERRY_MCP_DISABLED_MODULES: "${GOOSEBERRY_MCP_DISABLED_MODULES:-}"

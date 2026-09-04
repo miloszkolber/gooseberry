@@ -1,6 +1,6 @@
 import { getTransport } from "../../connection";
 import { STORAGE_PREFIX } from "../../constants/branding";
-import { useAppStore } from "../../store";
+import { appStoreApi } from "../../store";
 
 function storageKey(): string {
 	return `${STORAGE_PREFIX}expanded-projects:${getTransport().httpBase()}`;
@@ -25,9 +25,9 @@ function persistExpansion(expanded: Record<string, true>): void {
 }
 
 export function initProjectExpansionPersistence(): () => void {
-	useAppStore.getState().hydrateExpandedProjects(readPersistedExpansion());
-	let previous = useAppStore.getState().expandedProjectIds;
-	return useAppStore.subscribe((state) => {
+	appStoreApi.getState().hydrateExpandedProjects(readPersistedExpansion());
+	let previous = appStoreApi.getState().expandedProjectIds;
+	return appStoreApi.subscribe((state) => {
 		if (state.expandedProjectIds === previous) return;
 		previous = state.expandedProjectIds;
 		persistExpansion(previous);

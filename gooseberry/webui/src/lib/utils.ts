@@ -1,14 +1,4 @@
 import type { UserMessage } from "@gooseberry/contracts";
-import { type ClassValue, clsx } from "clsx";
-import { extendTailwindMerge } from "tailwind-merge";
-
-const mergeClasses = extendTailwindMerge({
-	extend: { theme: { spacing: ["2xs", "xs", "sm", "md", "lg", "xl", "panel-header-row"] } },
-});
-
-export function cn(...inputs: ClassValue[]): string {
-	return mergeClasses(clsx(inputs));
-}
 
 export const DOUBLE_CLICK_SETTLE_MS = 250;
 
@@ -62,15 +52,6 @@ export function normalizePath(path: string): string {
 export function isAbsolutePath(path: string): boolean {
 	const normalized = normalizePath(path);
 	return normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
-}
-
-export function shallowEqualArrays(
-	a: readonly unknown[] | undefined,
-	b: readonly unknown[] | undefined,
-): boolean {
-	if (a === b) return true;
-	if (!a || !b || a.length !== b.length) return false;
-	return a.every((value, i) => Object.is(value, b[i]));
 }
 
 function fileName(path: string): string {

@@ -12,7 +12,9 @@ const semanticPrefix =
 const classToken = /(?:^|[\s"'`])((?:bg|text|border)-[A-Za-z0-9-]+)/g;
 const issues: string[] = [];
 
-for await (const path of new Bun.Glob("src/**/*.{ts,tsx}").scan({ cwd: `${import.meta.dir}/..` })) {
+for await (const path of new Bun.Glob("src/**/*.{svelte,ts,tsx}").scan({
+	cwd: `${import.meta.dir}/..`,
+})) {
 	const source = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 	for (const match of source.matchAll(classToken)) {
 		const token = match[1];

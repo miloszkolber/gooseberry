@@ -1,5 +1,5 @@
 import type { AskUserQuestionResult } from "@gooseberry/contracts";
-import { createContext, useContext } from "react";
+import { getContext, setContext } from "svelte";
 import type { ChatTurn } from "./types";
 
 export interface AskState {
@@ -37,16 +37,16 @@ export function deriveAskStates(
 }
 
 export interface AskContextValue {
-	states: Record<string, AskState>;
+	stateFor: (toolCallId: string) => AskState | undefined;
 	focusScope: object;
 }
 
-export const AskStatesContext = createContext<AskContextValue | null>(null);
+const ASK_STATES_CONTEXT = Symbol("gooseberry.ask-states");
 
-export function useAskState(toolCallId: string): AskState | undefined {
-	return useContext(AskStatesContext)?.states[toolCallId];
+export function setAskStatesContext(value: AskContextValue): AskContextValue {
+	return setContext(ASK_STATES_CONTEXT, value);
 }
 
-export function useAskFocusScope(): object | null {
-	return useContext(AskStatesContext)?.focusScope ?? null;
+export function getAskStatesContext(): AskContextValue | null {
+	return getContext<AskContextValue | undefined>(ASK_STATES_CONTEXT) ?? null;
 }

@@ -14,10 +14,10 @@ import type {
 	ThinkingLevel,
 	WireModel,
 } from "@gooseberry/contracts";
-import type { StateCreator } from "zustand";
 import type { ChatAttachment, ChatTurn } from "@/chat/runtime/types";
 import { randomId } from "@/lib";
 import type { AppState } from "@/store/app-store";
+import type { StateCreator } from "@/store/external-store";
 import { omitKey } from "@/store/record";
 import type { ChatTab } from "../../workspace/store/model";
 import {
@@ -40,8 +40,8 @@ export interface ChatState {
 	appendErrorTurn: (sessionId: string, text: string) => void;
 	handleAgentEvent: (event: AgentEvent, sessionId: string) => void;
 	setAskAnswer: (sessionId: string, toolCallId: string, result: AskUserQuestionResult) => void;
-	setCurrentModel: (sessionId: string, model: WireModel) => void;
-	setThinkingLevel: (sessionId: string, level: ThinkingLevel) => void;
+	setCurrentModel: (sessionId: string, model: WireModel, expectedRevision?: number) => void;
+	setThinkingLevel: (sessionId: string, level: ThinkingLevel, expectedRevision?: number) => void;
 	setStats: (sessionId: string, stats: SessionStats) => void;
 	setCommands: (sessionId: string, commands: SlashCommandInfo[], expectedRevision?: number) => void;
 	setChatDraft: (sessionId: string, text: string) => void;
@@ -55,7 +55,7 @@ export interface ChatState {
 	) => void;
 	setSessionGoalLoading: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoalSaving: (sessionId: string, projectAreaId: string) => void;
-	setSessionGoal: (sessionId: string, value: SessionGoal) => void;
+	setSessionGoal: (sessionId: string, value: SessionGoal, expectedRevision?: number) => void;
 	setSessionGoalError: (sessionId: string, projectAreaId: string, error: string) => void;
 	clearPendingExtUi: (sessionId: string, id: string) => void;
 	applyExtUi: (request: ExtUiRequest) => void;
@@ -212,10 +212,22 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 		),
 	handleAgentEvent: (event, sessionId) =>
 		set((s) => withRuntime(s, sessionId, (rt) => reduceSessionEvent(rt, event))),
-	setCurrentModel: (sessionId, model) =>
-		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, model }))),
-	setThinkingLevel: (sessionId, level) =>
-		set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, thinkingLevel: level }))),
+	setCurrentModel: (sessionId, model, expectedRevision) =>
+		set((s) =>
+			withRuntime(s, sessionId, (rt) =>
+				expectedRevision !== undefined && rt.configRevision !== expectedRevision
+					? rt
+					: { ...rt, model, configRevision: rt.configRevision + 1 },
+			),
+		),
+	setThinkingLevel: (sessionId, level, expectedRevision) =>
+		set((s) =>
+			withRuntime(s, sessionId, (rt) =>
+				expectedRevision !== undefined && rt.configRevision !== expectedRevision
+					? rt
+					: { ...rt, thinkingLevel: level, configRevision: rt.configRevision + 1 },
+			),
+		),
 	setStats: (sessionId, stats) => set((s) => withRuntime(s, sessionId, (rt) => ({ ...rt, stats }))),
 	setCommands: (sessionId, commands, expectedRevision) =>
 		set((s) =>
@@ -253,6 +265,7 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 					isStreaming: summary.isStreaming,
 					model: summary.model,
 					thinkingLevel: summary.thinkingLevel,
+					configRevision: rt.configRevision + 1,
 					modes,
 					planState,
 					...(summary.queue ? { queue: summary.queue } : {}),
@@ -276,19 +289,24 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 				goal: { ...rt.goal, projectAreaId, status: "saving", error: null },
 			})),
 		),
-	setSessionGoal: (sessionId, value) =>
+	setSessionGoal: (sessionId, value, expectedRevision) =>
 		set((s) =>
-			withRuntime(s, sessionId, (rt) => ({
-				...rt,
-				goal: {
-					projectAreaId: value.projectId,
-					status: "ready",
-					goal: value.goal,
-					tasks: value.tasks,
-					updatedAt: value.updatedAt,
-					error: null,
-				},
-			})),
+			withRuntime(s, sessionId, (rt) =>
+				expectedRevision !== undefined && rt.goalRevision !== expectedRevision
+					? rt
+					: {
+							...rt,
+							goal: {
+								projectAreaId: value.projectId,
+								status: "ready",
+								goal: value.goal,
+								tasks: value.tasks,
+								updatedAt: value.updatedAt,
+								error: null,
+							},
+							goalRevision: rt.goalRevision + 1,
+						},
+			),
 		),
 	setSessionGoalError: (sessionId, projectAreaId, error) =>
 		set((s) =>

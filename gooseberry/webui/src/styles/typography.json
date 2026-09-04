@@ -1,32 +1,21 @@
 {
 	"$schema": "./typography.schema.json",
 	"metadata": {
-		"version": "3.0.0",
+		"version": "3.1.0",
 		"cssVarPrefix": "tr",
 		"classPrefix": "tr"
 	},
 	"fontFamilies": {
 		"code": {
-			"stack": [
-				"Geist Mono Variable",
-				"Geist Mono",
-				"Fira Code",
-				"SF Mono",
-				"Cascadia Code",
-				"monospace"
-			],
-			"kind": "monospace",
-			"selfHosted": [
-				"@fontsource-variable/geist-mono",
-				"@fontsource-variable/geist-mono/wght-italic.css"
-			]
+			"stack": ["geist-mono", "monospace"],
+			"kind": "monospace"
 		}
 	},
 	"fontWeights": {
-		"light": 370,
+		"light": 400,
 		"regular": 400,
 		"medium": 500,
-		"semibold": 600,
+		"semibold": 550,
 		"brand": 400
 	},
 	"fontSizes": {

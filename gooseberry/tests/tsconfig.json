@@ -1,11 +1,10 @@
 {
 	"extends": "../tsconfig.base.json",
 	"compilerOptions": {
-		"jsx": "react-jsx",
 		"types": ["bun"],
 		"paths": {
 			"@/*": ["../webui/src/*"]
 		}
 	},
-	"include": ["**/*.ts", "**/*.tsx"]
+	"include": ["**/*.ts"]
 }

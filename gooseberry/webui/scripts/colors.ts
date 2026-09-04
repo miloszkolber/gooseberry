@@ -164,7 +164,7 @@ export function renderCss(colors: Colors): string {
 	return [
 		HEADER(
 			colors.metadata.version,
-			"The semantic roles, then the Tailwind utility map. The palette they read is written to the\n * document root by the fixed system palette before React mounts.",
+			"The semantic roles, then the Tailwind utility map. The palette they read is written to the\n * document root by the fixed system palette before Svelte mounts.",
 		),
 		":root {",
 		...rootLines,

@@ -103,7 +103,9 @@ func TestBrowserPanelRejectsMalformedAndOversizeActionsBeforeProxying(t *testing
 
 func TestBrowserPanelCloseReleasesItsServerSideSession(t *testing.T) {
 	var command string
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
 		var body struct {
 			Command string `json:"command"`
 		}
@@ -122,8 +124,44 @@ func TestBrowserPanelCloseReleasesItsServerSideSession(t *testing.T) {
 	if command != "close" {
 		t.Fatalf("expected close command, got %q", command)
 	}
-	if _, err := handler.Handle(context.Background(), "browser.panelClose", []byte(`{"panelId":"`+panelID+`"}`), "client-a"); err == nil {
-		t.Fatal("closed panel remained available")
+	if _, err := handler.Handle(context.Background(), "browser.panelClose", []byte(`{"panelId":"`+panelID+`"}`), "client-a"); err != nil {
+		t.Fatalf("repeated close was not idempotent: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("repeated close reached browser service: %d calls", calls.Load())
+	}
+}
+
+func TestBrowserPanelCloseAcceptsMissingValidIDWithoutWeakeningOwnership(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(response).Encode(map[string]any{"outcome": "completed", "command": "close", "code": 0, "stdout": "", "stderr": ""})
+	}))
+	defer server.Close()
+	handler := browserPanelHandler(server.URL, server.Client())
+	panelID := openBrowserPanel(t, handler)
+
+	if _, err := handler.Handle(context.Background(), "browser.panelClose", []byte(`{"panelId":"`+panelID+`"}`), "client-b"); err == nil {
+		t.Fatal("another client closed an existing panel")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("unauthorized close reached browser service: %d calls", calls.Load())
+	}
+	if _, err := handler.Handle(context.Background(), "browser.panelClose", []byte(`{"panelId":"b-000000000000000000"}`), "client-a"); err != nil {
+		t.Fatalf("missing panel from an earlier controller generation was not treated as closed: %v", err)
+	}
+	if _, err := handler.Handle(context.Background(), "browser.panelClose", []byte(`{"panelId":"invalid"}`), "client-a"); err == nil {
+		t.Fatal("malformed panel ID was accepted")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("missing or malformed close reached browser service: %d calls", calls.Load())
+	}
+	if _, err := handler.Handle(context.Background(), "browser.panelClose", []byte(`{"panelId":"`+panelID+`"}`), "client-a"); err != nil {
+		t.Fatalf("owner could not close panel after rejected request: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("owner close did not reach browser service exactly once: %d calls", calls.Load())
 	}
 }
 

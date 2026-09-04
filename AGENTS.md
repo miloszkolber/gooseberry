@@ -39,9 +39,9 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Runtime boundaries
 
-- Goose runs on the host as the user's authenticated loopback service. Two host-networked containers run separate application and browser executables from one Go module.
-- Objective updates use session-scoped MCP on the application listener. Browser tools and essential instructions use MCP on the browser listener; its HTTP command and artifact routes remain available. Both MCP endpoints can serve trusted external host-network services.
-- The user registers the remote browser extension in private Goose configuration. Do not install host skills or put secrets in model-visible instructions.
+- Goose runs on the host as the user's authenticated loopback service. The default deployment uses two host-networked containers for separate application and Browser executables; the optional `gooseberry-mcp` container replaces Browser and composes its service from the same Go module.
+- Objective updates use session-scoped MCP on the application listener. Browser tools and essential instructions use MCP on the standalone Browser listener or the optional host's `/browser` module; the host publishes a catalog at `/v1/mcp/modules` and keeps Browser HTTP/artifact compatibility routes available. Both MCP surfaces can serve trusted external host-network services.
+- Gooseberry configures discovered MCP modules through Goose administration when the optional host is present. Standalone Browser registration remains supported in private Goose configuration. Do not install host skills or put secrets in model-visible instructions.
 - The browser has its own state mount, without project, application-state or Goose-configuration mounts. Its sessions still share one UID and filesystem; host networking is not network isolation.
 
 ## Engineering approach
@@ -54,7 +54,7 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 ## Source naming
 
 - Source directories and source, test, component, and script filenames use lowercase kebab-case.
-- Conventional lowercase entry and barrel names such as `index.ts`, `main.tsx`, and `vite.config.ts` remain unchanged. React components, types, and exports may use PascalCase inside files.
+- Conventional lowercase entry and barrel names such as `index.ts` and `main.ts` remain unchanged. Svelte components, types, and exports may use PascalCase inside files.
 - Go files use conventional lowercase names, including underscores and the required `_test.go` suffix.
 - `bun run check:filenames` enforces this convention across the application.
 
@@ -75,4 +75,4 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Current stack
 
-The controller and browser packages share one Go module, with separate executables and images. The frontend uses TypeScript, React, Zustand, and Vite, with Bun as a build/test tool only. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.
+The controller and browser packages share one Go module, with separate executables and images. The frontend uses TypeScript and Svelte 5, a small framework-neutral external store, Mewa UI foundations pinned from GitHub Releases, and Bun for compilation, development, and tests. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.

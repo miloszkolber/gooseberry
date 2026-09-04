@@ -16,7 +16,7 @@ const roots = [
 ];
 
 const ignoredDirectories = new Set(["coverage", "dist", "node_modules"]);
-const checkedExtensions = new Set(["cjs", "js", "jsx", "mjs", "sh", "ts", "tsx"]);
+const checkedExtensions = new Set(["cjs", "js", "jsx", "mjs", "sh", "svelte", "ts", "tsx"]);
 const kebabSegment = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function checkDirectoryName(name: string, path: string, errors: string[]): void {

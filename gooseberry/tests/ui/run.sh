@@ -53,12 +53,12 @@ browser open "$url" >/dev/null
 browser wait --text "Loaded answer" >/dev/null
 assert_eval "document.querySelector('[data-testid=connection-status]')?.getAttribute('data-status') === 'connected'"
 browser find testid session-plan-trigger click >/dev/null
-browser wait --fn "document.querySelector('[data-testid=session-plan-content]') !== null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.matches(':popover-open') === true" >/dev/null
 browser wait --text "Inspect the workspace" >/dev/null
 browser wait --text "1 of 2 complete" >/dev/null
 browser screenshot /artifacts/desktop-plan.png >/dev/null
 browser press Escape >/dev/null
-browser wait --fn "document.querySelector('[data-testid=session-plan-content]') === null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.matches(':popover-open') === false" >/dev/null
 browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'session-plan-trigger'" >/dev/null
 assert_eval "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'ask'"
 
@@ -130,9 +130,9 @@ browser wait --fn "(document.body.innerText.match(/Partial reply complete\\./g) 
 browser wait --fn "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'code'" >/dev/null
 assert_eval "document.querySelector('[data-testid=session-plan-trigger]') !== null"
 browser click '[data-testid="chat-attachment-chip"]' >/dev/null
-browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]') !== null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]')?.open === true" >/dev/null
 browser press Escape >/dev/null
-browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]') === null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=chat-attachment-dialog]')?.open === false" >/dev/null
 browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'chat-attachment-chip'" >/dev/null
 browser screenshot /artifacts/desktop-chat.png >/dev/null
 
@@ -140,17 +140,17 @@ browser screenshot /artifacts/desktop-chat.png >/dev/null
 echo "UI acceptance: narrow layout"
 browser set viewport 390 844 >/dev/null
 browser find testid session-plan-trigger click >/dev/null
-browser wait --fn "document.querySelector('[data-testid=session-plan-content]') !== null" >/dev/null
-assert_eval "document.querySelector('[data-testid=session-plan-content]')?.closest('[data-radix-popper-content-wrapper]')?.getBoundingClientRect().right <= window.innerWidth"
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.matches(':popover-open') === true" >/dev/null
+assert_eval "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.getBoundingClientRect().right <= window.innerWidth"
 browser screenshot /artifacts/narrow-plan.png >/dev/null
 browser press Escape >/dev/null
-browser wait --fn "document.querySelector('[data-testid=session-plan-content]') === null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.matches(':popover-open') === false" >/dev/null
 browser find role button click --name "activity" >/dev/null
 browser wait --fn "document.querySelector('[data-testid=activity-tabs]')?.offsetParent !== null" >/dev/null
 assert_eval "document.documentElement.scrollWidth === document.documentElement.clientWidth"
 browser find role button click --name "content" >/dev/null
 browser find testid open-settings click >/dev/null
-browser wait --fn "document.querySelector('[data-testid=settings-dialog]') !== null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=settings-dialog]')?.open === true" >/dev/null
 assert_eval "document.querySelector('[data-testid=settings-dialog]')?.getBoundingClientRect().right <= window.innerWidth"
 browser find role tab click --name "Agent" >/dev/null
 browser press ArrowRight >/dev/null
@@ -163,7 +163,7 @@ browser wait --text "fixture-agent" >/dev/null
 assert_eval "document.querySelector('[data-testid=system-card-browser]')?.textContent?.includes('Unavailable') === true && document.documentElement.scrollWidth === document.documentElement.clientWidth"
 browser screenshot /artifacts/narrow-system.png >/dev/null
 browser press Escape >/dev/null
-browser wait --fn "document.querySelector('[data-testid=settings-dialog]') === null" >/dev/null
+browser wait --fn "document.querySelector('[data-testid=settings-dialog]')?.open === false" >/dev/null
 browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'open-settings'" >/dev/null
 assert_eval "document.documentElement.scrollWidth === document.documentElement.clientWidth"
 browser screenshot /artifacts/narrow-workspace.png >/dev/null

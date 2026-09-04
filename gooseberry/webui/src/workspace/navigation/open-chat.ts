@@ -1,6 +1,6 @@
 import { messagesToRuntime } from "../../chat/runtime/hydrate";
 import { errorText, getTransport } from "../../connection";
-import { chatTabId, selectProjectAreaById, toast, useAppStore } from "../../store";
+import { appStoreApi, chatTabId, selectProjectAreaById, toast } from "../../store";
 
 /** Open a session in the fixed editor strip. */
 export async function openChatInTab(
@@ -8,7 +8,7 @@ export async function openChatInTab(
 	sessionId: string,
 	background = false,
 ): Promise<void> {
-	const initial = useAppStore.getState();
+	const initial = appStoreApi.getState();
 	const projectId = selectProjectAreaById(initial, projectAreaId)?.projectId ?? projectAreaId;
 	const closedChat = initial.closedChatsByProjectArea[projectAreaId]?.find(
 		(chat) => chat.sessionId === sessionId,
@@ -23,7 +23,7 @@ export async function openChatInTab(
 		return;
 	}
 	const options = background ? { activate: false } : undefined;
-	const store = useAppStore.getState();
+	const store = appStoreApi.getState();
 	const tab = (store.tabsByProjectArea[projectAreaId] ?? []).find(
 		(t) => t.kind === "chat" && t.sessionId === sessionId,
 	);
@@ -32,6 +32,10 @@ export async function openChatInTab(
 		return;
 	}
 	if (store.sessions[sessionId]) {
+		if (closedChat) {
+			store.reopenChat(projectAreaId, sessionId, options);
+			return;
+		}
 		store.openTab(
 			{
 				kind: "chat",
@@ -52,7 +56,7 @@ export async function openChatInTab(
 		});
 		if (response.kind !== "snapshot") throw new Error("invalid chat snapshot");
 		const { summary, messages, pendingTools, commands, modes, planState, page } = response;
-		const current = useAppStore.getState();
+		const current = appStoreApi.getState();
 		if (
 			!current.projects.some((project) => project.id === projectId) ||
 			current.closedChatsByProjectArea[projectAreaId]?.find(
@@ -83,8 +87,8 @@ export async function openChatInTab(
 			undefined,
 			options,
 		);
-		useAppStore.getState().setCommands(sessionId, commands);
-		const settled = useAppStore.getState();
+		appStoreApi.getState().setCommands(sessionId, commands);
+		const settled = appStoreApi.getState();
 		const installed =
 			settled.sessions[sessionId] !== undefined &&
 			(settled.tabsByProjectArea[projectAreaId] ?? []).some(
@@ -99,7 +103,7 @@ export async function openChatInTab(
 			toast.error("The chat could not be restored.", "Couldn't open the chat");
 		}
 	} catch (err) {
-		const current = useAppStore.getState();
+		const current = appStoreApi.getState();
 		if (
 			!background &&
 			!current.removedProjectAreaIds[projectAreaId] &&

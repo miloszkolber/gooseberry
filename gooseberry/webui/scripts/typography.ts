@@ -100,23 +100,16 @@ export function renderFontsCss(t: Typography): string {
 	const imports = Object.values(t.fontFamilies ?? {})
 		.filter((f): f is FontFamily => !isRef(f))
 		.flatMap((f) => f.selfHosted ?? []);
-	return `${FONTS_HEADER(t.metadata.version)}${imports.map((i) => `@import "${i}";`).join("\n")}\n`;
+	return `${FONTS_HEADER(t.metadata.version)}${imports.length ? `${imports.map((i) => `@import "${i}";`).join("\n")}\n` : ""}`;
 }
 
 const FONTS_HEADER = (version: string) => `/*
  * GENERATED — do not edit. Source: \`src/styles/typography.json\` (v${version}), the \`selfHosted\`
  * entries of each font family. Regenerate with \`bun run typography:generate\`.
  *
- * The app's faces are self-hosted — no runtime call to a font CDN. gooseberry runs locally (often
- * offline) and ships as a single-file binary, so the fonts have to be part of the artifact: Vite
- * fingerprints these woff2 files into \`dist/assets\` and the CLI embeds that output. A \`<link>\` to a
- * font CDN satisfied none of it — it left an air-gapped host in system faces, put first paint behind a
- * third party and put first paint behind a network request.
- *
- * The bundled faces are VARIABLE fonts (the interface + code families carry real italics), which is
- * what makes the type scale honest: every weight and markdown \`<em>\` are real faces, not the
- * browser's synthetic bold/oblique. Every unicode subset stays declared — each is its own
- * \`@font-face\` with a \`unicode-range\`, so a document downloads only the ranges it renders.
+ * Font files are supplied by the pinned Mewa UI release and imported by the application entrypoint.
+ * Keeping this generated file lets typography validation continue to reject undeclared font packages
+ * while the production artifact remains self-hosted and usable offline.
  */
 `;
 

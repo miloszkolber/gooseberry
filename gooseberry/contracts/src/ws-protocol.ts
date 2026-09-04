@@ -50,6 +50,7 @@ import type {
 	HistorySearchResult,
 	LoginFrame,
 	LoginReply,
+	McpGatewayCatalog,
 	Project,
 	ProviderStatusReport,
 	RuntimeStatusReport,
@@ -562,6 +563,14 @@ export interface WsMethodMap {
 	"runtime.status": {
 		params: Record<string, never>;
 		result: RuntimeStatusReport;
+	};
+	"mcpGateway.catalog": {
+		params: Record<string, never>;
+		result: McpGatewayCatalog;
+	};
+	"mcpGateway.moduleSetGooseEnabled": {
+		params: { moduleId: string; enabled: boolean; revision?: string };
+		result: McpGatewayCatalog;
 	};
 	"browser.panelOpen": { params: { projectId: string }; result: BrowserPanel };
 	"browser.panelCommand": {

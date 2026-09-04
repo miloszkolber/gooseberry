@@ -14,3 +14,8 @@ Container images may be published from `main` and version tags. Distributions mu
 license, this notice, and the applicable third-party notices alongside the release artifacts. This repository
 notice records provenance and modifications, but it is not a legal opinion. Apache-2.0 distribution
 compliance must be reviewed for each release format.
+
+The frontend includes pinned release packages from Mewa UI under the MIT License, self-hosted Geist
+fonts under the SIL Open Font License 1.1, and selected Lucide icons under the ISC License. Their
+license texts and the verified release lock are stored under `gooseberry/webui/vendor/` and copied
+into application distributions.

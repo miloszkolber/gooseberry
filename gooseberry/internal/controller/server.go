@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime"
@@ -9,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +23,12 @@ import (
 const (
 	maxAuthBodyBytes     = 4_096
 	projectImageMaxBytes = 16 * 1024 * 1024
+	immutableCachePolicy = "public, max-age=31536000, immutable"
+)
+
+var (
+	inlineScriptPattern = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>`)
+	scriptSourcePattern = regexp.MustCompile(`(?i)(?:^|\s)src\s*=`)
 )
 
 type HTTPHandler struct {
@@ -226,6 +236,8 @@ func (h *HTTPHandler) serveProjectImage(response http.ResponseWriter, request *h
 }
 
 func (h *HTTPHandler) serveStatic(response http.ResponseWriter, request *http.Request) {
+	h.setStaticSecurityHeaders(response, request, nil)
+	response.Header().Set("Cache-Control", "no-store")
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
 		methodNotAllowed(response, http.MethodGet)
 		return
@@ -234,15 +246,194 @@ func (h *HTTPHandler) serveStatic(response http.ResponseWriter, request *http.Re
 	if requested == "" || requested == "." {
 		requested = "index.html"
 	}
+	if strings.HasSuffix(requested, ".gz") {
+		http.NotFound(response, request)
+		return
+	}
 	file := filepath.Join(h.StaticDir, filepath.FromSlash(requested))
 	if !workspace.Within(h.StaticDir, file) || !regularFile(file) {
+		if path.Ext(requested) != "" {
+			http.NotFound(response, request)
+			return
+		}
 		file = filepath.Join(h.StaticDir, "index.html")
 	}
 	if !regularFile(file) {
 		http.NotFound(response, request)
 		return
 	}
-	http.ServeFile(response, request, file)
+	if filepath.Base(file) == "index.html" {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			http.NotFound(response, request)
+			return
+		}
+		info, err := os.Stat(file)
+		if err != nil || !info.Mode().IsRegular() {
+			http.NotFound(response, request)
+			return
+		}
+		h.setStaticSecurityHeaders(response, request, inlineScriptHashes(content))
+		response.Header().Set("Cache-Control", "no-cache")
+		http.ServeContent(response, request, "index.html", info.ModTime(), bytes.NewReader(content))
+		return
+	}
+	if immutableStaticAsset(requested) {
+		response.Header().Set("Cache-Control", immutableCachePolicy)
+	} else {
+		response.Header().Set("Cache-Control", "no-cache")
+	}
+	h.serveStaticFile(response, request, file)
+}
+
+func (h *HTTPHandler) serveStaticFile(response http.ResponseWriter, request *http.Request, file string) {
+	compressedFile := file + ".gz"
+	if !regularFile(compressedFile) || !precompressibleStaticAsset(file) {
+		http.ServeFile(response, request, file)
+		return
+	}
+	response.Header().Add("Vary", "Accept-Encoding")
+	if !acceptsContentEncoding(request.Header.Get("Accept-Encoding"), "gzip") {
+		http.ServeFile(response, request, file)
+		return
+	}
+	compressed, err := os.Open(compressedFile)
+	if err != nil {
+		http.ServeFile(response, request, file)
+		return
+	}
+	defer compressed.Close()
+	compressedInfo, err := compressed.Stat()
+	if err != nil || !compressedInfo.Mode().IsRegular() {
+		http.ServeFile(response, request, file)
+		return
+	}
+	originalInfo, err := os.Stat(file)
+	if err != nil || !originalInfo.Mode().IsRegular() {
+		http.NotFound(response, request)
+		return
+	}
+	response.Header().Set("Content-Encoding", "gzip")
+	if contentType := mime.TypeByExtension(filepath.Ext(file)); contentType != "" {
+		response.Header().Set("Content-Type", contentType)
+	}
+	http.ServeContent(
+		response,
+		request,
+		filepath.Base(file),
+		originalInfo.ModTime(),
+		io.NewSectionReader(compressed, 0, compressedInfo.Size()),
+	)
+}
+
+func precompressibleStaticAsset(file string) bool {
+	switch strings.ToLower(filepath.Ext(file)) {
+	case ".css", ".js":
+		return true
+	default:
+		return false
+	}
+}
+
+func acceptsContentEncoding(header, wanted string) bool {
+	wildcard := false
+	for _, raw := range strings.Split(header, ",") {
+		parts := strings.Split(raw, ";")
+		encoding := strings.ToLower(strings.TrimSpace(parts[0]))
+		quality := 1.0
+		for _, parameter := range parts[1:] {
+			name, value, found := strings.Cut(strings.TrimSpace(parameter), "=")
+			if !found || !strings.EqualFold(name, "q") {
+				continue
+			}
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil {
+				quality = 0
+			} else {
+				quality = parsed
+			}
+		}
+		if encoding == wanted {
+			return quality > 0
+		}
+		if encoding == "*" && quality > 0 {
+			wildcard = true
+		}
+	}
+	return wildcard
+}
+
+func (h *HTTPHandler) setStaticSecurityHeaders(response http.ResponseWriter, request *http.Request, scriptHashes []string) {
+	frameSources := "'self'"
+	frameOrigin := h.Auth.BrowserPublicOrigin
+	if frameOrigin == "" {
+		frameOrigin = h.Auth.BrowserURL
+	}
+	if normalized, err := normalizeOrigin(frameOrigin); err == nil {
+		frameSources += " " + normalized
+	}
+	connectSources := "'self'"
+	if origin, err := h.Auth.ExpectedOrigin(request); err == nil {
+		if parsed, parseErr := url.Parse(origin); parseErr == nil {
+			if parsed.Scheme == "https" {
+				parsed.Scheme = "wss"
+			} else {
+				parsed.Scheme = "ws"
+			}
+			connectSources += " " + parsed.String()
+		}
+	}
+	scriptSources := "'self'"
+	if len(scriptHashes) > 0 {
+		scriptSources += " " + strings.Join(scriptHashes, " ")
+	}
+	response.Header().Set("Content-Security-Policy", strings.Join([]string{
+		"default-src 'none'",
+		"base-uri 'none'",
+		"connect-src " + connectSources,
+		"font-src 'self'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		"frame-src " + frameSources,
+		"img-src 'self' data:",
+		"object-src 'none'",
+		"script-src " + scriptSources,
+		"style-src 'self' 'unsafe-inline'",
+	}, "; "))
+	response.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	response.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	response.Header().Set("Referrer-Policy", "no-referrer")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	response.Header().Set("X-Frame-Options", "DENY")
+}
+
+func inlineScriptHashes(document []byte) []string {
+	var result []string
+	for _, match := range inlineScriptPattern.FindAllSubmatch(document, -1) {
+		if scriptSourcePattern.Match(match[1]) {
+			continue
+		}
+		digest := sha256.Sum256(match[2])
+		result = append(result, "'sha256-"+base64.StdEncoding.EncodeToString(digest[:])+"'")
+	}
+	return result
+}
+
+func immutableStaticAsset(requested string) bool {
+	extension := path.Ext(requested)
+	stem := strings.TrimSuffix(path.Base(requested), extension)
+	separator := strings.LastIndexByte(stem, '-')
+	if extension == "" || separator < 0 || len(stem)-separator-1 < 8 {
+		return false
+	}
+	for _, character := range stem[separator+1:] {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'z' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func regularFile(file string) bool {

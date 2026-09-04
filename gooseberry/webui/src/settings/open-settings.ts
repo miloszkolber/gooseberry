@@ -1,4 +1,4 @@
-import { type SettingsSection, useAppStore } from "@/store";
+import { appStoreApi, type SettingsSection } from "@/store";
 
 export interface SettingsFocusTarget {
 	isConnected: boolean;
@@ -9,7 +9,7 @@ let returnFocus: SettingsFocusTarget | null = null;
 
 export function openSettingsFrom(target: SettingsFocusTarget, section?: SettingsSection): void {
 	returnFocus = target;
-	useAppStore.getState().openSettings(section);
+	appStoreApi.getState().openSettings(section);
 }
 
 export function restoreSettingsFocus(): boolean {

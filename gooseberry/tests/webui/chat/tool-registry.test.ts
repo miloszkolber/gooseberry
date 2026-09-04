@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import type { ToolRenderProps } from "@/chat/render/tool-registry";
 import {
+	DefaultToolRenderer,
 	getToolChrome,
 	getToolRenderer,
 	getToolSummary,
 	registerToolRenderer,
 	resolveProminence,
+	type ToolRenderer,
 } from "@/chat/render/tool-registry";
 
 const props = (args: Record<string, unknown>): ToolRenderProps => ({
@@ -19,7 +21,7 @@ const props = (args: Record<string, unknown>): ToolRenderProps => ({
 
 test("unknown tools use the safe fallback presentation", () => {
 	expect(getToolSummary("never-registered", props({}))).toBe("");
-	expect(typeof getToolRenderer("never-registered")).toBe("function");
+	expect(getToolRenderer("never-registered")).toBe(DefaultToolRenderer);
 	expect(getToolChrome("never-registered")).toBe("card");
 	expect(resolveProminence("never-registered")).toEqual({
 		prominence: "routine",
@@ -28,7 +30,7 @@ test("unknown tools use the safe fallback presentation", () => {
 });
 
 test("registration applies the renderer, summary, chrome and prominence precedence", () => {
-	const renderer = () => null;
+	const renderer = (() => {}) as unknown as ToolRenderer;
 	registerToolRenderer("self-framed-tool", renderer, {
 		summary: ({ args }) => `ran ${String(args.command)}`,
 		chrome: "bare",

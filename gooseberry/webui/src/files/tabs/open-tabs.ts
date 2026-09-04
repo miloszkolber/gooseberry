@@ -2,12 +2,11 @@ import type { GitDiffScope } from "@gooseberry/contracts";
 import { errorText, getTransport } from "../../connection";
 import { DOUBLE_CLICK_SETTLE_MS, projectRelativePath, tupleKey } from "../../lib";
 import {
+	appStoreApi,
 	type ContentTab,
 	selectProjectAreaById,
 	selectProjectAreaTick,
 	type TabIntent,
-	toast,
-	useAppStore,
 } from "../../store";
 import { diffTabId, diffTabName, scopeKey } from "../changes/changes-model";
 import { isImagePath } from "../tree/file-kind";
@@ -42,7 +41,7 @@ async function openReadTab<T>(
 	read: () => Promise<T>,
 	build: (payload: T, loadedTick: number) => ContentTab,
 ): Promise<boolean> {
-	const store = useAppStore.getState();
+	const store = appStoreApi.getState();
 	if (store.removedProjectAreaIds[projectAreaId]) return false;
 	const pending = inFlight.get(id);
 	if (pending) {
@@ -62,7 +61,7 @@ async function openReadTab<T>(
 		) {
 			return false;
 		}
-		const latest = useAppStore.getState();
+		const latest = appStoreApi.getState();
 		if (latest.removedProjectAreaIds[projectAreaId]) return false;
 		const cached = (latest.tabsByProjectArea[projectAreaId] ?? []).find(
 			(tab) => (tab.kind === "file" || tab.kind === "diff") && resourceIdentity(tab) === identity,
@@ -77,7 +76,7 @@ async function openReadTab<T>(
 		}
 		const loadedTick = selectProjectAreaTick(latest, projectAreaId);
 		const payload = await read();
-		const current = useAppStore.getState();
+		const current = appStoreApi.getState();
 		if (
 			flight.intent === "preview" &&
 			flight.epoch !== (previewEpochByProjectArea.get(projectAreaId) ?? 0)
@@ -92,13 +91,17 @@ async function openReadTab<T>(
 			flight.intent,
 			flight.intent === "keep" && flight.claimPreview ? { claimPreview: true } : undefined,
 		);
-		return !useAppStore.getState().removedProjectAreaIds[projectAreaId];
+		return !appStoreApi.getState().removedProjectAreaIds[projectAreaId];
 	} catch (error) {
 		if (
-			!useAppStore.getState().removedProjectAreaIds[projectAreaId] &&
+			!appStoreApi.getState().removedProjectAreaIds[projectAreaId] &&
 			(flight.intent !== "preview" || flight.epoch === previewEpochByProjectArea.get(projectAreaId))
 		) {
-			toast.error(errorText(error), "Couldn't open the file");
+			appStoreApi.getState().pushToast({
+				variant: "error",
+				message: errorText(error),
+				title: "Couldn't open the file",
+			});
 		}
 		return false;
 	} finally {
@@ -112,7 +115,7 @@ export function openFileInTab(
 	intent: TabIntent,
 	_requestedNavigation?: unknown,
 ): Promise<boolean> {
-	const projectArea = selectProjectAreaById(useAppStore.getState(), projectAreaId);
+	const projectArea = selectProjectAreaById(appStoreApi.getState(), projectAreaId);
 	const selectedRoot = projectArea?.root ?? "";
 	const path = projectRelativePath(reported, selectedRoot);
 	const id = tupleKey("file", projectAreaId, selectedRoot, path);

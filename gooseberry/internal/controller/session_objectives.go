@@ -13,7 +13,11 @@ func (m *SessionManager) Objective(ctx context.Context, projectID, sessionID str
 
 func (m *SessionManager) UpdateObjective(ctx context.Context, projectID, sessionID string, goal *string, tasks *[]SessionTask) (SessionGoal, error) {
 	return m.withObjective(ctx, projectID, sessionID, func() (SessionGoal, error) {
-		return m.objectives.Update(projectID, sessionID, goal, tasks)
+		state, err := m.objectives.Update(projectID, sessionID, goal, tasks)
+		if err == nil {
+			m.emit("session.objectiveChanged", state)
+		}
+		return state, err
 	})
 }
 
@@ -32,7 +36,11 @@ func (m *SessionManager) ClearObjectiveGoal(ctx context.Context, projectID, sess
 		if err := m.objectives.ClearGoal(projectID, sessionID); err != nil {
 			return SessionGoal{}, err
 		}
-		return m.objectives.Get(projectID, sessionID)
+		state, err := m.objectives.Get(projectID, sessionID)
+		if err == nil {
+			m.emit("session.objectiveChanged", state)
+		}
+		return state, err
 	})
 }
 

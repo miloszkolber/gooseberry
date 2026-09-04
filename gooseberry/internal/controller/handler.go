@@ -27,6 +27,7 @@ type CoreHandler struct {
 	Requests      *diagnostics.RequestCounter
 	RuntimeStatus func(context.Context) runtimeStatusReport
 	BrowserPanels *BrowserPanels
+	MCPGateway    *MCPGateway
 }
 
 func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMessage, clientKey string) (result any, err error) {
@@ -68,6 +69,21 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 			return nil, fmt.Errorf("runtime status is not configured")
 		}
 		return h.RuntimeStatus(ctx), nil
+	case "mcpGateway.catalog":
+		if h.MCPGateway == nil {
+			return map[string]any{"schemaVersion": 1, "gateway": map[string]any{"state": "not-configured", "detail": "MCP host is not configured."}, "modules": []any{}}, nil
+		}
+		return h.MCPGateway.Catalog(ctx, h.Admin)
+	case "mcpGateway.moduleSetGooseEnabled":
+		var request struct {
+			ModuleID string `json:"moduleId"`
+			Enabled  *bool  `json:"enabled"`
+			Revision string `json:"revision"`
+		}
+		if h.MCPGateway == nil || h.Admin == nil || decodeParams(raw, &request) != nil || request.ModuleID == "" || request.Enabled == nil {
+			return nil, fmt.Errorf("malformed MCP module request")
+		}
+		return h.MCPGateway.SetGooseEnabled(ctx, h.Admin, request.ModuleID, *request.Enabled, request.Revision)
 	case "history.search":
 		var request map[string]any
 		if h.Sessions == nil || decodeParams(raw, &request) != nil {

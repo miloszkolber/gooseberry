@@ -1,5 +1,5 @@
-import type { StateCreator } from "zustand";
 import type { AppState } from "@/store/app-store";
+import type { StateCreator } from "@/store/external-store";
 import { type ContentWorkspaceState, createContentWorkspaceState } from "./content-state";
 import {
 	createProjectWorkspaceState,

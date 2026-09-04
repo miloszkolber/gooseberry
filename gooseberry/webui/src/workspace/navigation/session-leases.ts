@@ -1,7 +1,7 @@
 import type { WsParams } from "@gooseberry/contracts";
 import { errorText, getTransport } from "../../connection";
 import type { WsTransport } from "../../connection/transport";
-import { isConnectedGeneration, toast, useAppStore } from "../../store";
+import { appStoreApi, isConnectedGeneration, toast } from "../../store";
 
 // The transport's client ID lasts for the page, including authentication resets.
 let revision = 0;
@@ -15,7 +15,7 @@ export function initSessionLeases(
 	const flush = () => {
 		scheduled = false;
 		if (stopped) return;
-		const state = useAppStore.getState();
+		const state = appStoreApi.getState();
 		if (state.status !== "connected" || state.welcomeGeneration === 0) {
 			previousSnapshot = "";
 			return;
@@ -46,7 +46,7 @@ export function initSessionLeases(
 			if (
 				!stopped &&
 				request.revision === revision &&
-				isConnectedGeneration(useAppStore.getState(), generation)
+				isConnectedGeneration(appStoreApi.getState(), generation)
 			) {
 				previousSnapshot = "";
 				toast.error(errorText(error), "Couldn't synchronize open chats");
@@ -58,7 +58,7 @@ export function initSessionLeases(
 		scheduled = true;
 		queueMicrotask(flush);
 	};
-	const unsubscribe = useAppStore.subscribe((state, previous) => {
+	const unsubscribe = appStoreApi.subscribe((state, previous) => {
 		if (
 			state.tabsByProjectArea !== previous.tabsByProjectArea ||
 			state.projects !== previous.projects ||

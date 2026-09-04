@@ -1,12 +1,6 @@
 import { registerToolRenderer } from "../../render/tool-registry";
-import { strArg } from "../tool-helpers";
-import { BrowserCard } from "./browser-card";
-
-export function browserSummary(args: Record<string, unknown>): string {
-	const command = strArg(args, "command");
-	const session = strArg(args, "session");
-	return [command || "browser", session ? `in ${session}` : ""].filter(Boolean).join(" ");
-}
+import { browserSummary } from "./browser-card";
+import BrowserCard from "./browser-card.svelte";
 
 registerToolRenderer("browser", BrowserCard, { summary: ({ args }) => browserSummary(args) });
 registerToolRenderer("browser_command", BrowserCard, {

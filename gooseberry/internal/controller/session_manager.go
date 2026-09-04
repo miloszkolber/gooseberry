@@ -227,7 +227,7 @@ func (m *SessionManager) create(ctx context.Context, projectID, cwd string, mode
 	entry.modes = projectSessionModes(response.Modes)
 	entry.attached = generation
 	entry.agentIdentity = agentProfileIdentity(profile, generation)
-	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: sessionID, CWD: admitted}); err != nil {
+	if err := m.records.Record(ProjectSessionRecord{ProjectID: projectID, SessionID: sessionID, CWD: admitted, Title: entry.title}); err != nil {
 		return nil, nil, err
 	}
 	m.mu.Lock()
@@ -305,6 +305,9 @@ func (m *SessionManager) EnsureAttached(ctx context.Context, sessionID, projectI
 			return nil, fmt.Errorf("unknown session: %s", sessionID)
 		}
 		entry = newSessionEntry(sessionID, projectID, admitted, record.ParentSessionID, identifier.New())
+		if record.Title != "" {
+			entry.title = record.Title
+		}
 		queue, queueErr := m.restoredQueue(projectID, sessionID)
 		if queueErr != nil {
 			return nil, queueErr
@@ -550,7 +553,11 @@ func (m *SessionManager) List(ctx context.Context, projectID string, archived an
 		if stored, ok := queues[record.SessionID]; ok {
 			queue = stored.wire(true)
 		}
-		result = append(result, SessionSummary{SessionID: record.SessionID, ProjectID: projectID, CWD: record.CWD, ParentSessionID: record.ParentSessionID, Title: source.title, ThinkingLevel: "off", MessageCount: source.messageCount, UpdatedAt: source.updatedAt, Live: false, Archived: source.archived, Queue: &queue})
+		title := source.title
+		if record.Title != "" && (title == "" || title == "Chat") {
+			title = record.Title
+		}
+		result = append(result, SessionSummary{SessionID: record.SessionID, ProjectID: projectID, CWD: record.CWD, ParentSessionID: record.ParentSessionID, Title: title, ThinkingLevel: "off", MessageCount: source.messageCount, UpdatedAt: source.updatedAt, Live: false, Archived: source.archived, Queue: &queue})
 	}
 	return result, nil
 }
@@ -716,7 +723,13 @@ func (m *SessionManager) SetThinking(ctx context.Context, sessionID, level strin
 	entry.state.Lock()
 	entry.configOptions = options
 	entry.thinkingLevel = level
+	var model *WireModel
+	if entry.model != nil {
+		copied := *entry.model
+		model = &copied
+	}
 	entry.state.Unlock()
+	m.emitSessionConfig(sessionID, model, options)
 	return nil
 }
 
@@ -809,6 +822,9 @@ func (m *SessionManager) queueEntry(sessionID string) (*sessionEntry, error) {
 		return nil, loadErr
 	}
 	candidate := newSessionEntry(sessionID, record.ProjectID, record.CWD, record.ParentSessionID, identifier.New())
+	if record.Title != "" {
+		candidate.title = record.Title
+	}
 	candidate.queue = queue
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -964,6 +980,9 @@ func (m *SessionManager) SetLeases(clientKey string, revision uint64, requested 
 			// A long disconnect may outlive eviction. Restore only the association;
 			// the next read/prompt loads the authoritative transcript from Goose.
 			entry := newSessionEntry(sessionID, projectID, record.CWD, record.ParentSessionID, identifier.New())
+			if record.Title != "" {
+				entry.title = record.Title
+			}
 			if queue, ok := durableQueues[sessionID]; ok {
 				entry.queue = queue
 			}
@@ -1194,6 +1213,9 @@ func (m *SessionManager) prepareQueueResume() ([]queueResume, error) {
 			continue
 		}
 		candidate := newSessionEntry(record.SessionID, record.ProjectID, admitted, association.ParentSessionID, identifier.New())
+		if association.Title != "" {
+			candidate.title = association.Title
+		}
 		candidate.queue = state
 		candidates = append(candidates, queueResume{sessionID: record.SessionID, entry: candidate})
 	}

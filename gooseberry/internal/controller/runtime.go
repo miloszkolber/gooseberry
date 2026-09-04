@@ -48,6 +48,7 @@ type Runtime struct {
 	watches  *workspace.ProjectWatches
 	status   *runtimeStatusProvider
 	browser  *BrowserPanels
+	mcp      *MCPGateway
 	errors   chan error
 }
 
@@ -115,8 +116,9 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	apps := NewAppViews(sessions, authConfig, config.Port)
 	requests := &diagnostics.RequestCounter{}
 	browserPanels := NewBrowserPanels(authConfig, nil)
+	mcpGateway := NewMCPGateway(authConfig)
 	statusProvider := newRuntimeStatusProvider(build, requests, projects, settings, config.StaticDir, client, authConfig)
-	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Apps: apps, Settings: settings, Admin: admin, Git: git, Watches: watches, Requests: requests, RuntimeStatus: statusProvider.snapshot, BrowserPanels: browserPanels}
+	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Apps: apps, Settings: settings, Admin: admin, Git: git, Watches: watches, Requests: requests, RuntimeStatus: statusProvider.snapshot, BrowserPanels: browserPanels, MCPGateway: mcpGateway}
 	welcome := func(ctx context.Context) (any, error) {
 		recent, err := projects.List(true)
 		if err != nil {
@@ -176,7 +178,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{config: config, auth: authConfig, server: &http.Server{Handler: httpHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}, client: client, sessions: sessions, apps: apps, socket: socket, logins: admin.logins, watches: watches, status: statusProvider, browser: browserPanels}, nil
+	return &Runtime{config: config, auth: authConfig, server: &http.Server{Handler: httpHandler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}, client: client, sessions: sessions, apps: apps, socket: socket, logins: admin.logins, watches: watches, status: statusProvider, browser: browserPanels, mcp: mcpGateway}, nil
 }
 
 func (r *Runtime) Start() (string, error) {
@@ -203,6 +205,7 @@ func (r *Runtime) Errors() <-chan error { return r.errors }
 
 func (r *Runtime) Shutdown(ctx context.Context) error {
 	r.status.close()
+	r.mcp.Close()
 	r.browser.CloseAll(ctx)
 	r.logins.Close()
 	r.watches.Close()

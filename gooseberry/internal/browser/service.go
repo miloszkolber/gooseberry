@@ -205,6 +205,11 @@ func (s *Service) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	s.app.ServeHTTP(response, request)
 }
 
+// Ready reports whether the browser executable, configuration and storage
+// boundaries can accept work. It is intentionally a small lifecycle surface
+// for composite hosts; detailed diagnostics remain available at /readyz.
+func (s *Service) Ready() bool { return s.app.readiness().Ready }
+
 // Shutdown rejects new work, cancels active commands, and revokes App views.
 func (s *Service) Shutdown() {
 	s.app.shutdown()

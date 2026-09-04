@@ -27,6 +27,7 @@ jq -e --arg root "$repo_root" --arg data "$GOOSEBERRY_DATA_PATH" --slurpfile saf
   all(.services | to_entries[]; .key as $service | .value |
     .user == "1000:1000" and .read_only == true and .network_mode == "host" and
     .cap_drop == ["ALL"] and .security_opt == ["no-new-privileges:true"] and
+    (.mem_limit | tonumber) > 0 and (.cpus | tonumber) > 0 and .pids_limit > 0 and
     .build.context == $root and .build.dockerfile == "gooseberry/Dockerfile" and
     .logging.driver == "local" and .logging.options."max-size" == "10m" and
     .logging.options."max-file" == "3" and
@@ -37,6 +38,12 @@ jq -e --arg root "$repo_root" --arg data "$GOOSEBERRY_DATA_PATH" --slurpfile saf
   ) and
   .services.gooseberry.build.target == "gooseberry" and
   .services.browser.build.target == "browser" and
+  (.services.gooseberry.mem_limit | tonumber) == 1073741824 and
+  (.services.gooseberry.cpus | tonumber) == 2 and
+  .services.gooseberry.pids_limit == 256 and
+  (.services.browser.mem_limit | tonumber) == 2147483648 and
+  (.services.browser.cpus | tonumber) == 2 and
+  .services.browser.pids_limit == 512 and
   .services.gooseberry.volumes[0].source == ($data + "/app") and
   .services.gooseberry.volumes[0].target == "/var/lib/gooseberry" and
   .services.browser.volumes[0].source == ($data + "/browser") and
@@ -61,4 +68,29 @@ if GOOSEBERRY_BROWSER_TOKEN= compose --env-file /dev/null -f "$repo_root/docker-
 	echo "Compose accepted a missing browser credential" >&2
 	exit 1
 fi
+
+export GOOSEBERRY_MCP_TOKEN=ci-mcp-token-0123456789abcdef0123456789
+export GOOSEBERRY_MCP_URL=http://127.0.0.1:8787
+compose --env-file /dev/null -f "$repo_root/docker-compose.yaml" -f "$repo_root/docker-compose.mcp.yaml" config --format json > "$fixture/mcp-compose.json"
+jq -e --arg root "$repo_root" --arg data "$GOOSEBERRY_DATA_PATH" '
+  (.services | keys) == ["browser", "gooseberry"] and
+  .services.gooseberry.build.target == "gooseberry" and
+  .services.browser.build.target == "mcp" and
+  .services.browser.container_name == "gooseberry-mcp" and
+  .services.browser.image == "ghcr.io/miloszkolber/gooseberry-mcp:latest" and
+  .services.gooseberry.environment.GOOSEBERRY_MCP_URL == env.GOOSEBERRY_MCP_URL and
+  .services.gooseberry.environment.GOOSEBERRY_MCP_TOKEN == env.GOOSEBERRY_MCP_TOKEN and
+  .services.gooseberry.environment.GOOSEBERRY_BROWSER_URL == "" and
+  .services.gooseberry.environment.GOOSEBERRY_BROWSER_PUBLIC_ORIGIN == "" and
+  .services.browser.environment.GOOSEBERRY_MCP_AUTH == "true" and
+  .services.browser.environment.GOOSEBERRY_MCP_TOKEN == env.GOOSEBERRY_MCP_TOKEN and
+  .services.browser.environment.GOOSEBERRY_MCP_HOST == "127.0.0.1" and
+  .services.browser.environment.GOOSEBERRY_MCP_PORT == "8787" and
+  .services.browser.volumes[0].source == ($data + "/browser") and
+  (.services.browser.environment.GOOSEBERRY_BROWSER_TOKEN == null) and
+  (.services.browser.environment.GOOSEBERRY_BROWSER_AUTH == null)
+' "$fixture/mcp-compose.json" > /dev/null || {
+	echo "Compose MCP overlay checks failed" >&2
+	exit 1
+}
 echo "Compose service isolation checks passed"

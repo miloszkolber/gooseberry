@@ -1,5 +1,4 @@
-import { createHighlighterCore, type HighlighterCore } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import type { HighlighterCore } from "shiki/core";
 import { GOOSEBERRY_SHIKI_THEME, GOOSEBERRY_SHIKI_THEME_NAME } from "./shiki-theme";
 
 const LANGUAGE_LOADERS = {
@@ -63,37 +62,73 @@ export function languageForPath(path: string): string {
 	return EXTENSION_LANGUAGE[extension] ?? "text";
 }
 
-let highlighterPromise: Promise<HighlighterCore> | null = null;
-function getHighlighter(): Promise<HighlighterCore> {
-	highlighterPromise ??= createHighlighterCore({
+class RetryablePromiseCache<Key, Value> {
+	readonly #pending = new Map<Key, Promise<Value>>();
+
+	get(key: Key, load: () => Promise<Value>): Promise<Value> {
+		const current = this.#pending.get(key);
+		if (current) return current;
+		const pending = Promise.resolve().then(load);
+		this.#pending.set(key, pending);
+		void pending.catch(() => {
+			if (this.#pending.get(key) === pending) this.#pending.delete(key);
+		});
+		return pending;
+	}
+}
+
+async function createHighlighter(): Promise<HighlighterCore> {
+	const [{ createHighlighterCore }, { createJavaScriptRegexEngine }] = await Promise.all([
+		import("shiki/core"),
+		import("shiki/engine/javascript"),
+	]);
+	return createHighlighterCore({
 		themes: [GOOSEBERRY_SHIKI_THEME],
 		langs: [],
 		engine: createJavaScriptRegexEngine(),
 	});
-	return highlighterPromise;
 }
 
-const languageLoads = new Map<CanonicalLanguage, Promise<void>>();
-function loadLanguage(highlighter: HighlighterCore, language: CanonicalLanguage): Promise<void> {
-	let pending = languageLoads.get(language);
-	if (!pending) {
-		pending = LANGUAGE_LOADERS[language]().then(async (module) => {
-			await highlighter.loadLanguage(module.default);
-		});
-		languageLoads.set(language, pending);
-	}
-	return pending;
+interface HighlighterRuntimeDependencies<Highlighter> {
+	createHighlighter: () => Promise<Highlighter>;
+	loadLanguage: (highlighter: Highlighter, language: CanonicalLanguage) => Promise<void>;
+	codeToHtml: (highlighter: Highlighter, code: string, language: CanonicalLanguage) => string;
 }
 
-export async function highlightCode(code: string, lang: string): Promise<string | null> {
-	const key = lang.toLowerCase();
-	const canonical = ALIAS[key] ?? key;
-	if (!(canonical in LANGUAGE_LOADERS)) return null;
-	try {
-		const hl = await getHighlighter();
-		await loadLanguage(hl, canonical as CanonicalLanguage);
-		return hl.codeToHtml(code, { lang: canonical, theme: GOOSEBERRY_SHIKI_THEME_NAME });
-	} catch {
-		return null;
-	}
+export function createHighlighterRuntime<Highlighter>(
+	dependencies: HighlighterRuntimeDependencies<Highlighter>,
+): (code: string, lang: string) => Promise<string | null> {
+	const highlighterLoads = new RetryablePromiseCache<"core", Highlighter>();
+	const languageLoads = new RetryablePromiseCache<CanonicalLanguage, void>();
+
+	return async (code: string, lang: string): Promise<string | null> => {
+		const key = lang.toLowerCase();
+		const canonical = ALIAS[key] ?? key;
+		if (!(canonical in LANGUAGE_LOADERS)) return null;
+		try {
+			const language = canonical as CanonicalLanguage;
+			const highlighter = await highlighterLoads.get("core", dependencies.createHighlighter);
+			await languageLoads.get(language, () => dependencies.loadLanguage(highlighter, language));
+			return dependencies.codeToHtml(highlighter, code, language);
+		} catch {
+			return null;
+		}
+	};
+}
+
+const runHighlightCode = createHighlighterRuntime<HighlighterCore>({
+	createHighlighter,
+	loadLanguage: async (highlighter, language) => {
+		const module = await LANGUAGE_LOADERS[language]();
+		await highlighter.loadLanguage(module.default);
+	},
+	codeToHtml: (highlighter, code, language) =>
+		highlighter.codeToHtml(code, {
+			lang: language,
+			theme: GOOSEBERRY_SHIKI_THEME_NAME,
+		}),
+});
+
+export function highlightCode(code: string, lang: string): Promise<string | null> {
+	return runHighlightCode(code, lang);
 }

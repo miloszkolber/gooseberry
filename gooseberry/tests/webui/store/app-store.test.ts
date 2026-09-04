@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { AgentProfile, Project, SessionGoal } from "@gooseberry/contracts";
-import { EMPTY_RUNTIME, projectArea, reduceSessionEvent, useAppStore } from "@/store/app-store";
+import { appStoreApi, EMPTY_RUNTIME, projectArea, reduceSessionEvent } from "@/store/app-store";
 import { selectDiffTabTargetRef, selectSkillsStale } from "@/workspace/store/selectors";
 
 const project: Project = {
@@ -35,7 +35,7 @@ test("a project area always uses the project's sole root", () => {
 });
 
 test("content identity keeps file and repository previews isolated", () => {
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	state.openTab(
 		{
 			kind: "file",
@@ -98,11 +98,11 @@ test("content identity keeps file and repository previews isolated", () => {
 			"keep",
 		);
 	}
-	expect(useAppStore.getState().tabsByProjectArea.p1).toHaveLength(5);
+	expect(appStoreApi.getState().tabsByProjectArea.p1).toHaveLength(5);
 });
 
 test("browser panel tabs retain distinct random panel lifecycles", () => {
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	state.setBrowserPanelState("b-one", { address: "https://one.example" });
 	state.setBrowserPanelState("b-two", { address: "https://two.example" });
 	state.openTab(
@@ -114,19 +114,19 @@ test("browser panel tabs retain distinct random panel lifecycles", () => {
 		"keep",
 	);
 	expect(
-		useAppStore.getState().tabsByProjectArea.p1?.filter((tab) => tab.kind === "browser"),
+		appStoreApi.getState().tabsByProjectArea.p1?.filter((tab) => tab.kind === "browser"),
 	).toHaveLength(2);
 	state.closeTab("browser-one", false, "p1");
-	expect(useAppStore.getState().tabsByProjectArea.p1?.map((tab) => tab.id)).toEqual([
+	expect(appStoreApi.getState().tabsByProjectArea.p1?.map((tab) => tab.id)).toEqual([
 		"browser-two",
 	]);
-	expect(useAppStore.getState().browserPanelStateById).toEqual({
+	expect(appStoreApi.getState().browserPanelStateById).toEqual({
 		"b-two": expect.objectContaining({ address: "https://two.example" }),
 	});
 });
 
 test("browser panel state is partitioned by panel and ignores delayed completions", () => {
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	state.setBrowserPanelState("b-one", { address: "https://one.example" });
 	state.setBrowserPanelState("b-two", { address: "https://two.example" });
 	const first = state.beginBrowserPanelRequest("b-one");
@@ -137,7 +137,7 @@ test("browser panel state is partitioned by panel and ignores delayed completion
 	).toBeFalse();
 	expect(state.completeBrowserPanelRequest("b-two", second, { snapshot: "two" })).toBeTrue();
 	expect(state.completeBrowserPanelRequest("b-one", latest, { snapshot: "one" })).toBeTrue();
-	expect(useAppStore.getState().browserPanelStateById).toMatchObject({
+	expect(appStoreApi.getState().browserPanelStateById).toMatchObject({
 		"b-one": { address: "https://one.example", snapshot: "one" },
 		"b-two": { address: "https://two.example", snapshot: "two" },
 	});
@@ -150,11 +150,11 @@ test("browser panel state is partitioned by panel and ignores delayed completion
 		"keep",
 	);
 	state.clearProjectAreaTabs("p1");
-	expect(useAppStore.getState().browserPanelStateById).toEqual({});
+	expect(appStoreApi.getState().browserPanelStateById).toEqual({});
 });
 
 test("branch diff content follows the resolved comparison instead of the branch label", () => {
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	const scope = { kind: "branch", baseRef: "refs/heads/main" } as const;
 	const first = `${"a".repeat(40)}..${"b".repeat(40)}`;
 	const second = `${"a".repeat(40)}..${"c".repeat(40)}`;
@@ -176,13 +176,13 @@ test("branch diff content follows the resolved comparison instead of the branch 
 	);
 
 	state.noteDiffComparison("p1", "/tmp/project/repo", scope, second);
-	let tab = useAppStore
+	let tab = appStoreApi
 		.getState()
 		.tabsByProjectArea.p1?.find((candidate) => candidate.id === "branch-diff");
 	expect(tab?.kind).toBe("diff");
 	if (tab?.kind !== "diff") throw new Error("missing branch diff tab");
 	expect(tab.loadedTarget).toBe(first);
-	expect(selectDiffTabTargetRef(useAppStore.getState(), tab)).toBe(second);
+	expect(selectDiffTabTargetRef(appStoreApi.getState(), tab)).toBe(second);
 
 	state.updateDiffTabContent(
 		"p1",
@@ -191,7 +191,7 @@ test("branch diff content follows the resolved comparison instead of the branch 
 		1,
 		second,
 	);
-	tab = useAppStore
+	tab = appStoreApi
 		.getState()
 		.tabsByProjectArea.p1?.find((candidate) => candidate.id === "branch-diff");
 	expect(tab?.kind === "diff" ? tab.modified : null).toBe("second");
@@ -200,7 +200,7 @@ test("branch diff content follows the resolved comparison instead of the branch 
 });
 
 beforeEach(() => {
-	useAppStore.setState({
+	appStoreApi.setState({
 		projects: [project],
 		recentProjects: [project],
 		projectAreas: { p1: [area] },
@@ -233,10 +233,10 @@ test("chat turn IDs work when randomUUID is unavailable on an insecure origin", 
 	const original = crypto.randomUUID;
 	Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
 	try {
-		const state = useAppStore.getState();
+		const state = appStoreApi.getState();
 		state.openChatSession("p1", "session", null, "medium");
 		state.appendUserMessage("session", "hello");
-		const turn = useAppStore.getState().sessions.session?.turns.at(-1);
+		const turn = appStoreApi.getState().sessions.session?.turns.at(-1);
 		expect(turn?.kind).toBe("user");
 		expect(turn?.id).toMatch(/^turn-[0-9a-f]{32}$/);
 	} finally {
@@ -245,17 +245,17 @@ test("chat turn IDs work when randomUUID is unavailable on an insecure origin", 
 });
 
 test("truncated skill watches keep concurrent session command baselines independent", () => {
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	state.openChatSession("p1", "one", null, "medium");
 	state.openChatSession("p1", "two", null, "medium");
 	state.noteFsChanged({ projectId: "p1", changes: [], truncated: true });
-	expect(selectSkillsStale(useAppStore.getState(), "p1", "one")).toBe(true);
-	expect(selectSkillsStale(useAppStore.getState(), "p1", "two")).toBe(true);
+	expect(selectSkillsStale(appStoreApi.getState(), "p1", "one")).toBe(true);
+	expect(selectSkillsStale(appStoreApi.getState(), "p1", "two")).toBe(true);
 	state.markSkillsSynced("one", 1);
-	expect(selectSkillsStale(useAppStore.getState(), "p1", "one")).toBe(false);
-	expect(selectSkillsStale(useAppStore.getState(), "p1", "two")).toBe(true);
+	expect(selectSkillsStale(appStoreApi.getState(), "p1", "one")).toBe(false);
+	expect(selectSkillsStale(appStoreApi.getState(), "p1", "two")).toBe(true);
 	state.noteCommandCatalogChanged();
-	expect(useAppStore.getState().commandCatalogGeneration).toBe(1);
+	expect(appStoreApi.getState().commandCatalogGeneration).toBe(1);
 });
 
 test("live text preserves thinking and parallel tool calls after terminal tool updates", () => {
@@ -339,9 +339,9 @@ test("authoritative config events reconcile the visible session model", () => {
 });
 
 test("a newer ACP command snapshot replaces the catalog and rejects a delayed refresh", () => {
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	state.openChatSession("p1", "commands", null, "medium");
-	const revision = useAppStore.getState().sessions.commands?.commandRevision;
+	const revision = appStoreApi.getState().sessions.commands?.commandRevision;
 	const command = (name: string) => ({
 		name,
 		inputHint: `${name} input`,
@@ -355,9 +355,9 @@ test("a newer ACP command snapshot replaces the catalog and rejects a delayed re
 	});
 	state.handleAgentEvent({ type: "commands", commands: [command("new")] }, "commands");
 	state.setCommands("commands", [command("stale")], revision);
-	expect(useAppStore.getState().sessions.commands?.commands[0]?.name).toBe("new");
-	expect(useAppStore.getState().sessions.commands?.commands[0]?.inputHint).toBe("new input");
-	expect(useAppStore.getState().sessions.commands?.commandRevision).toBe(1);
+	expect(appStoreApi.getState().sessions.commands?.commands[0]?.name).toBe("new");
+	expect(appStoreApi.getState().sessions.commands?.commands[0]?.inputHint).toBe("new input");
+	expect(appStoreApi.getState().sessions.commands?.commandRevision).toBe(1);
 });
 
 test("live assistant content only merges adjacent compatible blocks", () => {
@@ -404,14 +404,14 @@ test("live assistant images retain their place between text blocks", () => {
 });
 
 test("a welcome snapshot replaces stale permissions and restores pending approvals", () => {
-	useAppStore.getState().setPendingPermission({
+	appStoreApi.getState().setPendingPermission({
 		id: "stale",
 		sessionId: "old-session",
 		toolCallId: "old-tool",
 		title: "Old",
 		options: [],
 	});
-	useAppStore.getState().installWelcomeSnapshot(57, [project], [project], undefined, [
+	appStoreApi.getState().installWelcomeSnapshot(57, [project], [project], undefined, [
 		{
 			id: "permission-1",
 			sessionId: "reconnected-session",
@@ -421,7 +421,7 @@ test("a welcome snapshot replaces stale permissions and restores pending approva
 		},
 	]);
 
-	expect(useAppStore.getState().pendingPermissions).toEqual({
+	expect(appStoreApi.getState().pendingPermissions).toEqual({
 		"reconnected-session": {
 			"permission-1": {
 				id: "permission-1",
@@ -435,34 +435,34 @@ test("a welcome snapshot replaces stale permissions and restores pending approva
 });
 
 test("welcome and profile-change snapshots replace connection-scoped agent capabilities", () => {
-	useAppStore
+	appStoreApi
 		.getState()
 		.installWelcomeSnapshot(77, [project], [project], undefined, [], genericProfile);
-	expect(useAppStore.getState().agentProfile).toEqual(genericProfile);
+	expect(appStoreApi.getState().agentProfile).toEqual(genericProfile);
 
 	const changed = {
 		...genericProfile,
 		version: "1.1.0",
 		operations: { ...genericProfile.operations, forkSession: true },
 	};
-	useAppStore.getState().replaceAgentProfile(changed);
-	expect(useAppStore.getState().agentProfile).toEqual(changed);
+	appStoreApi.getState().replaceAgentProfile(changed);
+	expect(appStoreApi.getState().agentProfile).toEqual(changed);
 
-	useAppStore.getState().setStatus("connecting");
-	expect(useAppStore.getState().agentProfile).toBeNull();
-	useAppStore
+	appStoreApi.getState().setStatus("connecting");
+	expect(appStoreApi.getState().agentProfile).toBeNull();
+	appStoreApi
 		.getState()
 		.installWelcomeSnapshot(77, [project], [project], undefined, [], genericProfile);
-	expect(useAppStore.getState().agentProfile).toEqual(genericProfile);
+	expect(appStoreApi.getState().agentProfile).toEqual(genericProfile);
 });
 
 test("closing chats releases idle state but retains active work", () => {
-	useAppStore.getState().openChatSession("p1", "idle", null, "medium");
-	useAppStore.getState().openChatSession("p1", "running", null, "medium");
-	useAppStore.getState().handleAgentEvent({ type: "agent_start" }, "running");
-	useAppStore.getState().closeChatToHistory("idle", "p1", false);
-	useAppStore.getState().closeChatToHistory("running", "p1", false);
-	const state = useAppStore.getState();
+	appStoreApi.getState().openChatSession("p1", "idle", null, "medium");
+	appStoreApi.getState().openChatSession("p1", "running", null, "medium");
+	appStoreApi.getState().handleAgentEvent({ type: "agent_start" }, "running");
+	appStoreApi.getState().closeChatToHistory("idle", "p1", false);
+	appStoreApi.getState().closeChatToHistory("running", "p1", false);
+	const state = appStoreApi.getState();
 	expect(state.closedChatsByProjectArea.p1?.map((chat) => chat.sessionId)).toEqual([
 		"running",
 		"idle",
@@ -472,36 +472,36 @@ test("closing chats releases idle state but retains active work", () => {
 });
 
 test("Goose session lifecycle pushes rename and archive local presentation without deleting", () => {
-	useAppStore.getState().openChatSession("p1", "s1", null, "medium");
-	useAppStore
+	appStoreApi.getState().openChatSession("p1", "s1", null, "medium");
+	appStoreApi
 		.getState()
 		.applySessionLifecycle({ projectId: "p1", sessionId: "s1", operation: "created" });
-	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(1);
-	useAppStore.getState().applySessionLifecycle({
+	expect(appStoreApi.getState().sessionCatalogVersionByProjectArea.p1).toBe(1);
+	appStoreApi.getState().applySessionLifecycle({
 		projectId: "p1",
 		sessionId: "s1",
 		operation: "renamed",
 		title: "Focused work",
 	});
-	expect(useAppStore.getState().tabsByProjectArea.p1?.[0]?.name).toBe("Focused work");
-	useAppStore.getState().applySessionLifecycle({
+	expect(appStoreApi.getState().tabsByProjectArea.p1?.[0]?.name).toBe("Focused work");
+	appStoreApi.getState().applySessionLifecycle({
 		projectId: "p1",
 		sessionId: "s1",
 		operation: "archived",
 	});
-	const archived = useAppStore.getState();
+	const archived = appStoreApi.getState();
 	expect(archived.tabsByProjectArea.p1).toEqual([]);
 	expect(archived.sessions.s1).toBeUndefined();
 	expect(archived.deletedSessionsByProjectArea.p1?.s1).toBeUndefined();
 	archived.applySessionLifecycle({ projectId: "p1", sessionId: "s1", operation: "unarchived" });
-	expect(useAppStore.getState().sessionCatalogVersionByProjectArea.p1).toBe(4);
+	expect(appStoreApi.getState().sessionCatalogVersionByProjectArea.p1).toBe(4);
 });
 
 test("authoritative session reconciliation repairs missed chat title pushes", () => {
-	useAppStore.getState().openChatSession("p1", "open", null, "medium");
-	useAppStore.getState().openChatSession("p1", "closed", null, "medium");
-	useAppStore.getState().closeChatToHistory("closed", "p1", false);
-	useAppStore.getState().reconcileProjectAreaSessions(
+	appStoreApi.getState().openChatSession("p1", "open", null, "medium");
+	appStoreApi.getState().openChatSession("p1", "closed", null, "medium");
+	appStoreApi.getState().closeChatToHistory("closed", "p1", false);
+	appStoreApi.getState().reconcileProjectAreaSessions(
 		"p1",
 		["open", "closed"],
 		[
@@ -509,32 +509,63 @@ test("authoritative session reconciliation repairs missed chat title pushes", ()
 			{ sessionId: "closed", title: "Renamed closed chat", archived: false },
 		],
 	);
-	const state = useAppStore.getState();
+	const state = appStoreApi.getState();
 	expect(state.tabsByProjectArea.p1?.find((tab) => tab.kind === "chat")?.name).toBe(
 		"Renamed open chat",
 	);
 	expect(state.closedChatsByProjectArea.p1?.[0]?.title).toBe("Renamed closed chat");
 });
 
+test("identical session reconciliation is a no-op", () => {
+	appStoreApi.getState().openChatSession("p1", "stable", null, "medium");
+	appStoreApi.getState().setCommands("stable", []);
+	const queue = { revision: "queue-1", steering: ["one"], followUp: [] };
+	appStoreApi
+		.getState()
+		.reconcileProjectAreaSessions(
+			"p1",
+			["stable"],
+			[{ sessionId: "stable", title: "Chat", archived: false, queue }],
+		);
+	let notifications = 0;
+	const unsubscribe = appStoreApi.subscribe(() => {
+		notifications += 1;
+	});
+	appStoreApi.getState().reconcileProjectAreaSessions(
+		"p1",
+		["stable"],
+		[
+			{
+				sessionId: "stable",
+				title: "Chat",
+				archived: false,
+				queue: { revision: "queue-1", steering: ["one"], followUp: [] },
+			},
+		],
+	);
+	unsubscribe();
+	expect(notifications).toBe(0);
+});
+
 test("missed archive reconciliation does not tombstone a restorable chat", () => {
-	useAppStore.getState().openChatSession("p1", "archived", null, "medium");
-	useAppStore
+	appStoreApi.getState().openChatSession("p1", "archived", null, "medium");
+	appStoreApi
 		.getState()
 		.reconcileProjectAreaSessions(
 			"p1",
 			["archived"],
 			[{ sessionId: "archived", title: "Archived chat", archived: true }],
 		);
-	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
-	expect(useAppStore.getState().deletedSessionsByProjectArea.p1?.archived).toBeUndefined();
-	useAppStore
+	expect(appStoreApi.getState().tabsByProjectArea.p1).toEqual([]);
+	expect(appStoreApi.getState().deletedSessionsByProjectArea.p1?.archived).toBeUndefined();
+	appStoreApi
 		.getState()
 		.applySessionLifecycle({ projectId: "p1", sessionId: "archived", operation: "unarchived" });
-	useAppStore
+	appStoreApi
 		.getState()
 		.noteClosedChats("p1", [{ sessionId: "archived", title: "Restored chat", closedAt: 42 }]);
-	useAppStore.getState().reopenChat("p1", "archived");
-	expect(useAppStore.getState().tabsByProjectArea.p1?.[0]).toMatchObject({
+	appStoreApi.getState().reopenChat("p1", "archived");
+	expect(appStoreApi.getState().tabsByProjectArea.p1?.[0]).toMatchObject({
 		kind: "chat",
 		sessionId: "archived",
 		name: "Restored chat",
@@ -542,10 +573,10 @@ test("missed archive reconciliation does not tombstone a restorable chat", () =>
 });
 
 test("missed deletion reconciliation tombstones late hydration", () => {
-	useAppStore.getState().openChatSession("p1", "deleted", null, "medium");
-	useAppStore.getState().reconcileProjectAreaSessions("p1", ["deleted"], []);
-	expect(useAppStore.getState().deletedSessionsByProjectArea.p1?.deleted).toBe(true);
-	useAppStore.getState().hydrateSession(
+	appStoreApi.getState().openChatSession("p1", "deleted", null, "medium");
+	appStoreApi.getState().reconcileProjectAreaSessions("p1", ["deleted"], []);
+	expect(appStoreApi.getState().deletedSessionsByProjectArea.p1?.deleted).toBe(true);
+	appStoreApi.getState().hydrateSession(
 		{
 			sessionId: "deleted",
 			projectId: "p1",
@@ -571,36 +602,117 @@ test("missed deletion reconciliation tombstones late hydration", () => {
 		null,
 		null,
 	);
-	expect(useAppStore.getState().sessions.deleted).toBeUndefined();
-	expect(useAppStore.getState().tabsByProjectArea.p1).toEqual([]);
+	expect(appStoreApi.getState().sessions.deleted).toBeUndefined();
+	expect(appStoreApi.getState().tabsByProjectArea.p1).toEqual([]);
 });
 
 test("session goal state keeps loading, ready, and error transitions isolated to one runtime", () => {
-	useAppStore.getState().openChatSession("p1", "s1", null, "medium");
-	useAppStore.getState().openChatSession("p1", "s2", null, "medium");
-	useAppStore.getState().setSessionGoalLoading("s1", "p1");
-	useAppStore.getState().setSessionGoal("s1", {
+	appStoreApi.getState().openChatSession("p1", "s1", null, "medium");
+	appStoreApi.getState().openChatSession("p1", "s2", null, "medium");
+	appStoreApi.getState().setSessionGoalLoading("s1", "p1");
+	appStoreApi.getState().setSessionGoal("s1", {
 		projectId: "p1",
 		sessionId: "s1",
 		goal: "Ship the focused chat",
 		tasks: [],
 		updatedAt: 42,
 	} satisfies SessionGoal);
-	useAppStore.getState().setSessionGoalError("s2", "p1", "not found");
+	appStoreApi.getState().setSessionGoalError("s2", "p1", "not found");
 
-	expect(useAppStore.getState().sessions.s1?.goal).toMatchObject({
+	expect(appStoreApi.getState().sessions.s1?.goal).toMatchObject({
 		projectAreaId: "p1",
 		status: "ready",
 		goal: "Ship the focused chat",
 		updatedAt: 42,
 		error: null,
 	});
-	expect(useAppStore.getState().sessions.s2?.goal).toMatchObject({
+	expect(appStoreApi.getState().sessions.s2?.goal).toMatchObject({
 		projectAreaId: "p1",
 		status: "error",
 		goal: null,
 		error: "not found",
 	});
+});
+
+test("delayed goal and config responses cannot replace newer push events", () => {
+	appStoreApi.getState().openChatSession("p1", "ordered", null, "medium");
+	const initial = appStoreApi.getState().sessions.ordered;
+	expect(initial).toBeDefined();
+	const goalRevision = initial?.goalRevision ?? 0;
+	const configRevision = initial?.configRevision ?? 0;
+
+	appStoreApi.getState().setSessionGoal("ordered", {
+		projectId: "p1",
+		sessionId: "ordered",
+		goal: "Newer broadcast goal",
+		tasks: [],
+		updatedAt: 20,
+	});
+	appStoreApi.getState().handleAgentEvent(
+		{
+			type: "config",
+			model: {
+				provider: "new-provider",
+				id: "new-model",
+				name: "New model",
+				available: true,
+				hidden: false,
+			},
+			configOptions: [{ id: "thinking_effort", currentValue: "high" }],
+		},
+		"ordered",
+	);
+
+	appStoreApi.getState().setSessionGoal(
+		"ordered",
+		{
+			projectId: "p1",
+			sessionId: "ordered",
+			goal: "Stale response goal",
+			tasks: [],
+			updatedAt: 10,
+		},
+		goalRevision,
+	);
+	appStoreApi.getState().setCurrentModel(
+		"ordered",
+		{
+			provider: "old-provider",
+			id: "old-model",
+			name: "Old model",
+			available: true,
+			hidden: false,
+		},
+		configRevision,
+	);
+	appStoreApi.getState().setThinkingLevel("ordered", "low", configRevision);
+
+	const current = appStoreApi.getState().sessions.ordered;
+	expect(current?.goal.goal).toBe("Newer broadcast goal");
+	expect(current?.model?.id).toBe("new-model");
+	expect(current?.thinkingLevel).toBe("high");
+});
+
+test("mutation responses remain a fallback when their push event was missed", () => {
+	appStoreApi.getState().openChatSession("p1", "fallback", null, "medium");
+	const initial = appStoreApi.getState().sessions.fallback;
+	expect(initial).toBeDefined();
+	appStoreApi.getState().setSessionGoal(
+		"fallback",
+		{
+			projectId: "p1",
+			sessionId: "fallback",
+			goal: "Recovered from the response",
+			tasks: [],
+			updatedAt: 30,
+		},
+		initial?.goalRevision,
+	);
+	appStoreApi.getState().setThinkingLevel("fallback", "high", initial?.configRevision);
+	expect(appStoreApi.getState().sessions.fallback?.goal.goal).toBe("Recovered from the response");
+	expect(appStoreApi.getState().sessions.fallback?.thinkingLevel).toBe("high");
+	expect(appStoreApi.getState().sessions.fallback?.goalRevision).toBe(1);
+	expect(appStoreApi.getState().sessions.fallback?.configRevision).toBe(1);
 });
 
 test("mode and plan events update live state while a replay snapshot replaces it authoritatively", () => {
@@ -611,12 +723,12 @@ test("mode and plan events update live state while a replay snapshot replaces it
 			{ id: "code", name: "Code" },
 		],
 	};
-	useAppStore.getState().openChatSession("p1", "mode-plan", null, "medium", modes);
-	useAppStore.getState().handleAgentEvent({ type: "run-start" }, "mode-plan");
-	useAppStore
+	appStoreApi.getState().openChatSession("p1", "mode-plan", null, "medium", modes);
+	appStoreApi.getState().handleAgentEvent({ type: "run-start" }, "mode-plan");
+	appStoreApi
 		.getState()
 		.handleAgentEvent({ type: "current-mode", currentModeId: "code" }, "mode-plan");
-	useAppStore.getState().handleAgentEvent(
+	appStoreApi.getState().handleAgentEvent(
 		{
 			type: "plan",
 			planState: {
@@ -625,12 +737,12 @@ test("mode and plan events update live state while a replay snapshot replaces it
 		},
 		"mode-plan",
 	);
-	expect(useAppStore.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("code");
-	expect(useAppStore.getState().sessions["mode-plan"]?.planState?.entries[0]?.content).toBe(
+	expect(appStoreApi.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("code");
+	expect(appStoreApi.getState().sessions["mode-plan"]?.planState?.entries[0]?.content).toBe(
 		"Inspect",
 	);
 
-	useAppStore.getState().replaceTranscriptSnapshot(
+	appStoreApi.getState().replaceTranscriptSnapshot(
 		"mode-plan",
 		{
 			sessionId: "mode-plan",
@@ -657,12 +769,12 @@ test("mode and plan events update live state while a replay snapshot replaces it
 		{ currentModeId: "review", availableModes: [{ id: "review", name: "Review" }] },
 		null,
 	);
-	expect(useAppStore.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("review");
-	expect(useAppStore.getState().sessions["mode-plan"]?.planState).toBeNull();
+	expect(appStoreApi.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("review");
+	expect(appStoreApi.getState().sessions["mode-plan"]?.planState).toBeNull();
 });
 
 test("session hydration restores controller queues and question replies", () => {
-	useAppStore.getState().hydrateSession(
+	appStoreApi.getState().hydrateSession(
 		{
 			sessionId: "s1",
 			projectId: "p1",
@@ -696,11 +808,11 @@ test("session hydration restores controller queues and question replies", () => 
 		null,
 	);
 	const result = { answers: [], cancelled: true };
-	useAppStore.getState().setAskAnswer("s1", "question-1", result);
-	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual(["continue after refresh"]);
-	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("loaded");
-	expect(useAppStore.getState().sessions.s1?.queue.blocked?.reason).toBe("delivery-uncertain");
-	useAppStore.getState().handleAgentEvent(
+	appStoreApi.getState().setAskAnswer("s1", "question-1", result);
+	expect(appStoreApi.getState().sessions.s1?.queue.followUp).toEqual(["continue after refresh"]);
+	expect(appStoreApi.getState().sessions.s1?.queue.revision).toBe("loaded");
+	expect(appStoreApi.getState().sessions.s1?.queue.blocked?.reason).toBe("delivery-uncertain");
+	appStoreApi.getState().handleAgentEvent(
 		{
 			type: "queue_update",
 			revision: "changed",
@@ -709,11 +821,11 @@ test("session hydration restores controller queues and question replies", () => 
 		},
 		"s1",
 	);
-	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("changed");
-	expect(useAppStore.getState().sessions.s1?.queue.blocked).toBeUndefined();
-	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
-	expect(useAppStore.getState().sessions.s1?.askAnswers["question-1"]).toEqual(result);
-	useAppStore.getState().reconcileProjectAreaSessions(
+	expect(appStoreApi.getState().sessions.s1?.queue.revision).toBe("changed");
+	expect(appStoreApi.getState().sessions.s1?.queue.blocked).toBeUndefined();
+	expect(appStoreApi.getState().sessions.s1?.parentSessionId).toBe("parent-session");
+	expect(appStoreApi.getState().sessions.s1?.askAnswers["question-1"]).toEqual(result);
+	appStoreApi.getState().reconcileProjectAreaSessions(
 		"p1",
 		["s1"],
 		[
@@ -725,7 +837,7 @@ test("session hydration restores controller queues and question replies", () => 
 			},
 		],
 	);
-	expect(useAppStore.getState().sessions.s1?.queue.followUp).toEqual([]);
-	expect(useAppStore.getState().sessions.s1?.queue.revision).toBe("reconciled");
-	expect(useAppStore.getState().sessions.s1?.parentSessionId).toBe("parent-session");
+	expect(appStoreApi.getState().sessions.s1?.queue.followUp).toEqual([]);
+	expect(appStoreApi.getState().sessions.s1?.queue.revision).toBe("reconciled");
+	expect(appStoreApi.getState().sessions.s1?.parentSessionId).toBe("parent-session");
 });

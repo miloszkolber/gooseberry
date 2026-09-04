@@ -198,7 +198,12 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 		entry.state.Unlock()
 		return nil
 	}
+	previousTitle := target.title
 	events := applySessionUpdate(target, kind, update, origin)
+	var persistedTitle string
+	if target.title != "" && target.title != previousTitle {
+		persistedTitle = target.title
+	}
 	wakeQueue := false
 	if publish {
 		for _, event := range events {
@@ -212,6 +217,12 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 		}
 	}
 	entry.state.Unlock()
+	if persistedTitle != "" && m.records != nil {
+		// A title update is useful even when Goose does not return it from a
+		// later session/load. The live projection remains authoritative if the
+		// small local persistence write fails; the next update can retry it.
+		_ = m.records.SetTitle(entry.projectID, sessionID, persistedTitle)
+	}
 	if wakeQueue {
 		m.scheduleFollowUp(sessionID, entry)
 	}
@@ -380,7 +391,12 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		return []map[string]any{{"type": "config", "configOptions": entry.configOptions}}
 	case "session_info_update":
 		if title := textValue(update["title"]); title != "" {
-			entry.title = title
+			// Goose commonly emits its placeholder title while replaying a
+			// session. Do not let that placeholder erase a title remembered by
+			// the controller; an explicit rename is persisted separately.
+			if title != "Chat" || entry.title == "Chat" {
+				entry.title = title
+			}
 		}
 		if trustedGoose {
 			gooseMeta := mapValue(mapValue(update["_meta"])["goose"])

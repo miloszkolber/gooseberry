@@ -1,8 +1,6 @@
 import type { ProjectFsChange } from "@gooseberry/contracts";
-import { useEffect, useRef } from "react";
-import { useAppStore } from "../../store";
 
-type LiveTab = {
+export type LiveTab = {
 	projectAreaId: string;
 	path: string;
 	root?: string;
@@ -25,71 +23,30 @@ export function changeNamesResource(change: ProjectFsChange, tab: LiveTab): bool
 	return changeNamesPath(change, tab.root ?? tab.repository, tab.path);
 }
 
-export function useLiveTabContent<T>(
+export type LiveTabChange = {
+	tick: number;
+	changes: readonly ProjectFsChange[];
+	truncated: boolean;
+};
+
+export type LiveTabDecision =
+	| { kind: "none" }
+	| { kind: "acknowledge"; tick: number }
+	| { kind: "reload"; tick: number };
+
+export function decideLiveTabChange(
+	change: LiveTabChange | undefined,
 	tab: LiveTab,
-	ops: {
-		read: () => Promise<T>;
-		applyFresh: (fresh: T, tick: number) => void;
-		keepCurrent: (tick: number) => void;
-	},
-	reloadKey?: string,
-	loadedKey?: string,
-) {
-	const change = useAppStore((s) => s.fsChangesByProjectArea[tab.projectAreaId]);
-	const opsRef = useRef(ops);
-	opsRef.current = ops;
-	const sequencerRef = useRef<ReadSequencer | null>(null);
-	sequencerRef.current ??= createReadSequencer();
-	const sequencer = sequencerRef.current;
+): LiveTabDecision {
+	if (!change || change.tick <= (tab.loadedTick ?? 0)) return { kind: "none" };
 	const resourceRoot = tab.root ?? tab.repository;
-
-	useEffect(() => {
-		if (!change) return;
-		const loaded = tab.loadedTick ?? 0;
-		if (change.tick <= loaded) return;
-		const { read, applyFresh, keepCurrent } = opsRef.current;
-		const namesOtherFiles =
-			change.changes.length > 0 &&
-			!change.changes.some((item) => changeNamesPath(item, resourceRoot, tab.path));
-		if (change.tick === loaded + 1 && !change.truncated && namesOtherFiles) {
-			keepCurrent(change.tick);
-			return;
-		}
-		let cancelled = false;
-		const isCurrent = sequencer.begin();
-		read()
-			.then((fresh) => {
-				if (!cancelled && isCurrent()) applyFresh(fresh, change.tick);
-			})
-			.catch(() => {
-				if (!cancelled && isCurrent()) keepCurrent(change.tick);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [change, tab.path, tab.loadedTick, resourceRoot, sequencer]);
-
-	const lastKey = useRef(loadedKey ?? reloadKey);
-	useEffect(() => {
-		if (reloadKey === undefined) return;
-		if (reloadKey === loadedKey) {
-			lastKey.current = reloadKey;
-			return;
-		}
-		if (reloadKey === lastKey.current) return;
-		lastKey.current = reloadKey;
-		const { read, applyFresh } = opsRef.current;
-		let cancelled = false;
-		const isCurrent = sequencer.begin();
-		read()
-			.then((fresh) => {
-				if (!cancelled && isCurrent()) applyFresh(fresh, tab.loadedTick ?? 0);
-			})
-			.catch(() => {});
-		return () => {
-			cancelled = true;
-		};
-	}, [reloadKey, loadedKey, tab.loadedTick, sequencer]);
+	const namesOtherFiles =
+		change.changes.length > 0 &&
+		!change.changes.some((item) => changeNamesPath(item, resourceRoot, tab.path));
+	if (change.tick === (tab.loadedTick ?? 0) + 1 && !change.truncated && namesOtherFiles) {
+		return { kind: "acknowledge", tick: change.tick };
+	}
+	return { kind: "reload", tick: change.tick };
 }
 
 export type ReadSequencer = { begin: () => () => boolean };
@@ -102,4 +59,46 @@ export function createReadSequencer(): ReadSequencer {
 			return () => seq === latest;
 		},
 	};
+}
+
+export interface RefreshAttemptGate {
+	reset: (key?: string, revision?: number) => void;
+	claim: (key: string, revision: number) => boolean;
+}
+
+export function createRefreshAttemptGate(): RefreshAttemptGate {
+	let lastKey: string | undefined;
+	let lastRevision = -1;
+	return {
+		reset: (key, revision = -1) => {
+			lastKey = key;
+			lastRevision = revision;
+		},
+		claim: (key, revision) => {
+			if (key === lastKey && revision === lastRevision) return false;
+			lastKey = key;
+			lastRevision = revision;
+			return true;
+		},
+	};
+}
+
+export type LiveTabRefreshResult = "applied" | "failed" | "stale";
+
+export async function runLiveTabRefresh<T>(
+	read: () => Promise<T>,
+	isCurrent: () => boolean,
+	onSuccess: (value: T) => void,
+	onFailure: (cause: unknown) => void,
+): Promise<LiveTabRefreshResult> {
+	try {
+		const value = await read();
+		if (!isCurrent()) return "stale";
+		onSuccess(value);
+		return "applied";
+	} catch (cause) {
+		if (!isCurrent()) return "stale";
+		onFailure(cause);
+		return "failed";
+	}
 }

@@ -48,6 +48,6 @@
  * one name for each value. Self-hosted variable faces are imported by `styles/generated/fonts.css`.
  *
  * Palette-specific values are intentionally absent too. `styles/palette.css` owns the fixed system
- * light/dark palette and writes its CSS custom properties before React mounts.
+ * light/dark palette and writes its CSS custom properties before Svelte mounts.
  * block here.
  */

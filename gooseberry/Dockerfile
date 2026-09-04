@@ -7,6 +7,8 @@ ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01
 ARG AGENT_BROWSER_VERSION=0.34.0
 ARG VERSION=0.0.0-dev
 ARG REVISION=unknown
+ARG SOURCE_URL=https://github.com/miloszkolber/gooseberry
+ARG CREATED=1970-01-01T00:00:00Z
 
 FROM --platform=$BUILDPLATFORM ${BUN_IMAGE} AS web-build
 WORKDIR /work
@@ -21,7 +23,18 @@ COPY gooseberry/tsconfig.base.json ./
 RUN bun run build:web \
     && mkdir -p /out/licenses/frontend \
     && find node_modules -type f \( -iname 'license*' -o -iname 'notice*' \) \
-        -exec cp --parents '{}' /out/licenses/frontend/ \;
+        -exec cp --parents '{}' /out/licenses/frontend/ \; \
+    && mkdir -p /out/licenses/frontend/vendor/mewa-ui \
+        /out/licenses/frontend/vendor/mewa-svelte \
+        /out/licenses/frontend/vendor/mewa-icons \
+    && cp webui/vendor/mewa-ui/LICENSE /out/licenses/frontend/vendor/mewa-ui/LICENSE \
+    && cp webui/vendor/mewa-ui/licenses/GEIST-OFL.txt \
+        /out/licenses/frontend/vendor/mewa-ui/GEIST-OFL.txt \
+    && cp webui/vendor/mewa-svelte/LICENSE /out/licenses/frontend/vendor/mewa-svelte/LICENSE \
+    && cp webui/vendor/mewa-icons/LICENSE /out/licenses/frontend/vendor/mewa-icons/LICENSE \
+    && cp webui/vendor/mewa-icons/licenses/LUCIDE-LICENSE.txt \
+        /out/licenses/frontend/vendor/mewa-icons/LUCIDE-LICENSE.txt \
+    && cp webui/vendor/mewa.lock.json /out/licenses/frontend/vendor/mewa.lock.json
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-source
 WORKDIR /work
@@ -41,7 +54,7 @@ RUN --mount=type=cache,id=go-module-cache,target=/go/pkg/mod,sharing=locked \
     export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH; \
     set -eu; \
     mkdir -p /out; \
-    for entry in gooseberry:./cmd/gooseberry gooseberry-browser:./cmd/gooseberry-browser; do \
+    for entry in gooseberry:./cmd/gooseberry gooseberry-browser:./cmd/gooseberry-browser gooseberry-mcp:./cmd/gooseberry-mcp; do \
         binary=${entry%%:*}; package=${entry#*:}; \
         go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.revision=$REVISION" -o "/out/$binary" "$package"; \
         mkdir -p "/out/licenses/$binary/go"; \
@@ -156,6 +169,15 @@ RUN printf '%s\n' \
     && test -s /app/licenses/agent-browser/LICENSE
 
 FROM browser-automation AS browser
+ARG VERSION
+ARG REVISION
+ARG SOURCE_URL
+ARG CREATED
+LABEL org.opencontainers.image.title="Gooseberry Browser" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${REVISION}" \
+    org.opencontainers.image.source="${SOURCE_URL}" \
+    org.opencontainers.image.created="${CREATED}"
 COPY --from=go-build /out/gooseberry-browser /app/gooseberry-browser
 COPY --from=go-build /out/licenses/gooseberry-browser /app/licenses
 COPY gooseberry/internal/browser/config.json /app/config.json
@@ -168,6 +190,28 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/app/gooseberry-browser", "healthcheck"]
 CMD ["/app/gooseberry-browser"]
+
+FROM browser-automation AS mcp
+ARG VERSION
+ARG REVISION
+ARG SOURCE_URL
+ARG CREATED
+LABEL org.opencontainers.image.title="Gooseberry MCP" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${REVISION}" \
+    org.opencontainers.image.source="${SOURCE_URL}" \
+    org.opencontainers.image.created="${CREATED}"
+COPY --from=go-build /out/gooseberry-mcp /app/gooseberry-mcp
+COPY --from=go-build /out/licenses/gooseberry-mcp /app/licenses
+COPY gooseberry/internal/browser/config.json /app/config.json
+RUN test -x /app/gooseberry-mcp \
+    && test -f /app/config.json \
+    && ! command -v git && ! command -v bun && ! command -v node && ! command -v go
+USER 1000:1000
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/app/gooseberry-mcp", "healthcheck"]
+CMD ["/app/gooseberry-mcp"]
 
 FROM browser-automation AS ui-acceptance
 RUN --mount=type=cache,id=ui-acceptance-apt,target=/var/cache/apt,sharing=locked \
@@ -188,6 +232,15 @@ CMD ["/app/run-ui-acceptance"]
 
 # Keep the application last: a build without --target produces only Gooseberry.
 FROM scratch AS gooseberry
+ARG VERSION
+ARG REVISION
+ARG SOURCE_URL
+ARG CREATED
+LABEL org.opencontainers.image.title="Gooseberry" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${REVISION}" \
+    org.opencontainers.image.source="${SOURCE_URL}" \
+    org.opencontainers.image.created="${CREATED}"
 ENV HOME=/home/goose \
     PATH=/usr/local/bin:/usr/bin:/bin \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \

@@ -3,7 +3,7 @@
  * Regenerate with `bun run colors:generate`; `colors:check` fails when this file is stale.
  *
  * The semantic roles, then the Tailwind utility map. The palette they read is written to the
- * document root by the fixed system palette before React mounts.
+ * document root by the fixed system palette before Svelte mounts.
  */
 
 :root {

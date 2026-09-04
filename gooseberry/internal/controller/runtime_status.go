@@ -160,8 +160,8 @@ func (s *runtimeStatusProvider) browserStatus(ctx context.Context) runtimeServic
 	if err != nil {
 		return unavailableBrowser("Browser status is unavailable.")
 	}
-	if s.auth.BrowserEnabled {
-		request.Header.Set("Authorization", "Bearer "+s.auth.BrowserToken)
+	if browserAuth, browserToken := s.auth.BrowserServiceAuth(); browserAuth {
+		request.Header.Set("Authorization", "Bearer "+browserToken)
 	}
 	response, err := s.browserClient.Do(request)
 	if err != nil {

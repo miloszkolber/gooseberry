@@ -13,6 +13,8 @@
 			"!**/.claude",
 			"!**/node_modules",
 			"!**/dist",
+			"!webui/.build",
+			"!webui/vendor",
 			"!webui/src/styles/generated"
 		]
 	},
@@ -46,6 +48,27 @@
 		}
 	},
 	"overrides": [
+		{
+			"includes": ["**/*.svelte"],
+			"assist": {
+				"actions": {
+					"source": {
+						"organizeImports": "off"
+					}
+				}
+			},
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedVariables": "off",
+						"noUnusedImports": "off"
+					},
+					"style": {
+						"useImportType": "off"
+					}
+				}
+			}
+		},
 		{
 			"includes": ["**/*.astro"],
 			"linter": {

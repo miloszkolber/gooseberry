@@ -97,3 +97,46 @@ func TestRemoteAndBrowserConfigurationFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPHostCredentialOwnsSharedBrowserOrigin(t *testing.T) {
+	browserToken := "browser-token-0123456789abcdef0123456789"
+	mcpToken := "mcp-token-0123456789abcdef0123456789"
+	config, err := controller.ReadAuthConfig(func(key string) string {
+		return map[string]string{
+			"GOOSEBERRY_BROWSER_AUTH":  "true",
+			"GOOSEBERRY_BROWSER_TOKEN": browserToken,
+			"GOOSEBERRY_MCP_URL":       "http://127.0.0.1:8787",
+			"GOOSEBERRY_MCP_TOKEN":     mcpToken,
+		}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated, token := config.BrowserServiceAuth()
+	if !authenticated || token != mcpToken {
+		t.Fatalf("shared MCP browser credential = %v, %q", authenticated, token)
+	}
+
+	config.MCPURL = "http://127.0.0.1:8788"
+	authenticated, token = config.BrowserServiceAuth()
+	if !authenticated || token != browserToken {
+		t.Fatalf("standalone browser credential = %v, %q", authenticated, token)
+	}
+
+	remote, err := controller.ReadAuthConfig(func(key string) string {
+		return map[string]string{
+			"GOOSEBERRY_MCP_URL":   "https://mcp.example:443",
+			"GOOSEBERRY_MCP_TOKEN": mcpToken,
+		}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.BrowserURL != "https://mcp.example" {
+		t.Fatalf("MCP origin was not reused for Browser HTTP: %q", remote.BrowserURL)
+	}
+	authenticated, token = remote.BrowserServiceAuth()
+	if !authenticated || token != mcpToken {
+		t.Fatalf("remote MCP browser credential = %v, %q", authenticated, token)
+	}
+}

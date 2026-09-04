@@ -2,6 +2,8 @@
 
 Gooseberry is a self-hosted Web UI for [Goose](https://github.com/aaif-goose/goose). It groups conversations, project files and agent work without replacing Goose's models, tools or configuration.
 
+Its frontend uses Svelte 5 with Mewa UI foundations. Bun compiles it directly without a separate application bundler, and the pinned Mewa packages come from a verified GitHub Release rather than a package registry.
+
 ## Features
 
 - Concurrent persistent chats with streaming, bounded images and text-file attachments, steering, queues, search and forks.
@@ -10,8 +12,9 @@ Gooseberry is a self-hosted Web UI for [Goose](https://github.com/aaif-goose/goo
 - Goals, tasks, permission prompts, plans, modes and custom agent mentions.
 - Provider, model, extension, recipe, schedule and tool controls supplied by Goose.
 - Browser automation over MCP, a bounded interactive browser panel and isolated interactive App views.
+- An optional modular MCP host that publishes Browser and future services from one authenticated origin.
 
-Goose runs on the host. Two containers provide the application and the browser service. Project root directories are mounted only into the application; the browser has separate state and no project or Goose configuration mounts.
+Goose runs on the host. The default deployment uses application and Browser containers; an optional MCP host replaces the Browser container and embeds its first module. Project root directories are mounted only into the application; the Browser module has separate state and no project or Goose configuration mounts.
 
 ## Run
 

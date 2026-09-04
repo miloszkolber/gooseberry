@@ -1,4 +1,4 @@
-export { ControllerAccess, logoutController } from "./controller-access";
+export { logoutController } from "./auth";
 export { errorText } from "./error-text";
 export { RequestError, wsErrorCode } from "./request-error";
 export type { ConnectionStatus, TransportOptions } from "./transport";

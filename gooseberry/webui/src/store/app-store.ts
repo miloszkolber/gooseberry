@@ -1,5 +1,4 @@
 import type { AgentProfile, AppConfig, PermissionRequest, Project } from "@gooseberry/contracts";
-import { create } from "zustand";
 import { type ChatState, createChatState } from "@/chat/runtime/state";
 import { type ConnectionState, createConnectionState } from "@/connection/state";
 import { randomId } from "@/lib";
@@ -9,6 +8,7 @@ import {
 	projectSnapshot,
 	type WorkspaceState,
 } from "@/workspace/store/state";
+import { createExternalStore, toReadableStore } from "./external-store";
 
 export { SettingsSection } from "@/settings/state";
 export {
@@ -71,7 +71,7 @@ function pendingPermissionSnapshot(
 	return pending;
 }
 
-export const useAppStore = create<AppState>((...args) => {
+export const appStoreApi = createExternalStore<AppState>((...args) => {
 	const [set, get] = args;
 	return {
 		...createWorkspaceState(...args),
@@ -94,6 +94,7 @@ export const useAppStore = create<AppState>((...args) => {
 				pendingPermissions: pendingPermissionSnapshot(pendingPermissions),
 				agentProfile: agentProfile ?? null,
 				welcomeGeneration: state.welcomeGeneration + 1,
+				welcomeConnectionGeneration: state.connectionGeneration,
 			})),
 		pushToast: (toast) => {
 			const twin = get().toasts.find(
@@ -112,11 +113,13 @@ export const useAppStore = create<AppState>((...args) => {
 	};
 });
 
+export const appStore = toReadableStore(appStoreApi);
+
 export const toast = {
 	error: (message: string, title?: string) =>
-		useAppStore.getState().pushToast({ variant: "error", message, ...(title ? { title } : {}) }),
+		appStoreApi.getState().pushToast({ variant: "error", message, ...(title ? { title } : {}) }),
 	success: (message: string, title?: string) =>
-		useAppStore.getState().pushToast({ variant: "success", message, ...(title ? { title } : {}) }),
+		appStoreApi.getState().pushToast({ variant: "success", message, ...(title ? { title } : {}) }),
 	info: (message: string, title?: string) =>
-		useAppStore.getState().pushToast({ variant: "info", message, ...(title ? { title } : {}) }),
+		appStoreApi.getState().pushToast({ variant: "info", message, ...(title ? { title } : {}) }),
 };

@@ -1,9 +1,9 @@
 import {
+	appStoreApi,
 	type ProjectArea,
 	selectCurrentRouteChatTarget,
 	selectProjectAreaById,
 	selectProjectAreaNavTick,
-	useAppStore,
 } from "../../store";
 import type { NavigationDriver } from "./driver";
 import { type NavigationLocation, parseFragment, serializeLocation } from "./location";
@@ -81,7 +81,7 @@ export function startNavigation({ driver, listProjectAreas }: NavigationDeps): (
 
 	const syncNow = () => {
 		if (pending) return;
-		const state = useAppStore.getState();
+		const state = appStoreApi.getState();
 		if (state.routeChatTarget) return;
 		const location = deriveLocation(state);
 		if (!location) return;
@@ -102,19 +102,25 @@ export function startNavigation({ driver, listProjectAreas }: NavigationDeps): (
 		if (pending?.generation !== gen || attempting.has(gen)) return;
 		const location = pending.location;
 		if (location.kind === "main") {
-			applyRoute(() => useAppStore.getState().selectMain());
+			applyRoute(() => appStoreApi.getState().selectMain());
 			resolvePending(gen);
 			return;
 		}
-		const state = useAppStore.getState();
-		if (state.welcomeGeneration === 0) return;
+		const state = appStoreApi.getState();
+		if (
+			state.status !== "connected" ||
+			state.welcomeGeneration === 0 ||
+			state.welcomeConnectionGeneration !== state.connectionGeneration
+		) {
+			return;
+		}
 		if (!state.projects.some((p) => p.id === location.projectId)) {
-			applyRoute(() => useAppStore.getState().selectMain());
+			applyRoute(() => appStoreApi.getState().selectMain());
 			resolvePending(gen);
 			return;
 		}
 		if (location.kind === "project") {
-			applyRoute(() => useAppStore.getState().selectProject(location.projectId));
+			applyRoute(() => appStoreApi.getState().selectProject(location.projectId));
 			resolvePending(gen);
 			return;
 		}
@@ -128,21 +134,21 @@ export function startNavigation({ driver, listProjectAreas }: NavigationDeps): (
 		}
 		attempting.delete(gen);
 		if (pending?.generation !== gen) return;
-		const now = useAppStore.getState();
+		const now = appStoreApi.getState();
 		if (!now.projects.some((p) => p.id === location.projectId)) {
-			applyRoute(() => useAppStore.getState().selectMain());
+			applyRoute(() => appStoreApi.getState().selectMain());
 			resolvePending(gen);
 			return;
 		}
 		applyRoute(() => now.setProjectAreas(location.projectId, rows));
 		const projectArea = rows.find((w) => w.id === location.projectAreaId);
 		if (!projectArea) {
-			applyRoute(() => useAppStore.getState().selectProject(location.projectId));
+			applyRoute(() => appStoreApi.getState().selectProject(location.projectId));
 			resolvePending(gen);
 			return;
 		}
 		applyRoute(() =>
-			useAppStore
+			appStoreApi
 				.getState()
 				.activateProjectAreaFromRoute(
 					projectArea,
@@ -158,9 +164,9 @@ export function startNavigation({ driver, listProjectAreas }: NavigationDeps): (
 		pending = { generation, location };
 		armedPush = false;
 		applyRoute(() => {
-			const state = useAppStore.getState();
+			const state = appStoreApi.getState();
 			if (state.activeProjectAreaId) state.noteNavigation(state.activeProjectAreaId);
-			useAppStore.getState().clearRouteChatTarget();
+			appStoreApi.getState().clearRouteChatTarget();
 		});
 		const canonical = serializeLocation(location);
 		if (canonical !== fragment) driver.replace(canonical);
@@ -169,7 +175,7 @@ export function startNavigation({ driver, listProjectAreas }: NavigationDeps): (
 	};
 
 	const unsubscribeDriver = driver.onIncoming(acceptFragment);
-	const unsubscribeStore = useAppStore.subscribe((state, previous) => {
+	const unsubscribeStore = appStoreApi.subscribe((state, previous) => {
 		if (!applyingRoute && isUserNavigationEdge(state, previous)) {
 			armedPush = true;
 		}

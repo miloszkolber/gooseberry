@@ -26,6 +26,14 @@ func newSessionManager(t *testing.T, loadUpdates []map[string]any, promptRequest
 }
 
 func newSessionManagerWithInitialize(t *testing.T, loadUpdates []map[string]any, promptRequests chan<- map[string]any, initialize map[string]any) (*controller.SessionManager, *controller.GooseClient, workspace.Project, persist.Store) {
+	return newSessionManagerWithInitializeAndPublisher(t, loadUpdates, promptRequests, initialize, nil)
+}
+
+func newSessionManagerWithPublisher(t *testing.T, publish controller.SessionPublisher) (*controller.SessionManager, *controller.GooseClient, workspace.Project, persist.Store) {
+	return newSessionManagerWithInitializeAndPublisher(t, nil, nil, gooseInitializeResponse(), publish)
+}
+
+func newSessionManagerWithInitializeAndPublisher(t *testing.T, loadUpdates []map[string]any, promptRequests chan<- map[string]any, initialize map[string]any, publish controller.SessionPublisher) (*controller.SessionManager, *controller.GooseClient, workspace.Project, persist.Store) {
 	t.Helper()
 	ctx := t.Context()
 	root := t.TempDir()
@@ -43,7 +51,7 @@ func newSessionManagerWithInitialize(t *testing.T, loadUpdates []map[string]any,
 	if err := records.Record(controller.ProjectSessionRecord{ProjectID: project.ID, SessionID: "chat", CWD: project.Roots[0]}); err != nil {
 		t.Fatal(err)
 	}
-	manager := controller.NewSessionManager(projects, policy, records, controller.NewSessionQueues(store), controller.NewObjectives(store), nil)
+	manager := controller.NewSessionManager(projects, policy, records, controller.NewSessionQueues(store), controller.NewObjectives(store), publish)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		connection, err := websocket.Accept(response, request, nil)
 		if err != nil {
@@ -98,6 +106,99 @@ func newSessionManagerWithInitialize(t *testing.T, loadUpdates []map[string]any,
 	manager.SetClient(client)
 	t.Cleanup(client.Close)
 	return manager, client, project, store
+}
+
+type publishedEvent struct {
+	channel string
+	data    any
+}
+
+func TestUserObjectiveAndThinkingMutationsPublishAuthoritativeState(t *testing.T) {
+	events := make(chan publishedEvent, 16)
+	manager, _, project, _ := newSessionManagerWithPublisher(t, func(channel string, data any) {
+		events <- publishedEvent{channel: channel, data: data}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := manager.Messages(ctx, "chat", project.ID, project.Roots[0], "client-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	goal := "Keep every connected client current"
+	updated, err := manager.UpdateObjective(ctx, project.ID, "chat", &goal, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublishedObjective(t, nextPublishedEvent(t, events, "session.objectiveChanged"), updated)
+
+	cleared, err := manager.ClearObjectiveGoal(ctx, project.ID, "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublishedObjective(t, nextPublishedEvent(t, events, "session.objectiveChanged"), cleared)
+
+	if err := manager.SetThinking(ctx, "chat", "high"); err != nil {
+		t.Fatal(err)
+	}
+	thinking := nextPublishedEvent(t, events, "agent.event")
+	payload, ok := thinking.data.(map[string]any)
+	if !ok || payload["sessionId"] != "chat" {
+		t.Fatalf("thinking payload: %#v", thinking.data)
+	}
+	event, ok := payload["event"].(map[string]any)
+	if !ok || event["type"] != "config" {
+		t.Fatalf("thinking event: %#v", payload["event"])
+	}
+}
+
+func TestSessionInfoTitleIsDurableAcrossControllerRestart(t *testing.T) {
+	manager, _, project, store := newSessionManager(t, []map[string]any{{
+		"sessionUpdate": "session_info_update",
+		"title":         "Generated title",
+	}}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := manager.Messages(ctx, "chat", project.ID, project.Roots[0], "client-a"); err != nil {
+		t.Fatal(err)
+	}
+	records, err := controller.NewSessionRecords(store).List()
+	if err != nil || len(records) != 1 || records[0].Title != "Generated title" {
+		t.Fatalf("generated title was not persisted: %#v, %v", records, err)
+	}
+}
+
+func nextPublishedEvent(t *testing.T, events <-chan publishedEvent, channel string) publishedEvent {
+	t.Helper()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event.channel == channel {
+				return event
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for published %s event", channel)
+		}
+	}
+}
+
+func assertPublishedObjective(t *testing.T, event struct {
+	channel string
+	data    any
+}, want controller.SessionGoal) {
+	t.Helper()
+	if event.channel != "session.objectiveChanged" {
+		t.Fatalf("objective channel: got %q", event.channel)
+	}
+	got, ok := event.data.(controller.SessionGoal)
+	if !ok || got.SessionID != want.SessionID || got.ProjectID != want.ProjectID || !equalOptionalString(got.Goal, want.Goal) || len(got.Tasks) != len(want.Tasks) {
+		t.Fatalf("objective event: got %#v, want %#v", event.data, want)
+	}
+}
+
+func equalOptionalString(left, right *string) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 func TestGooseUsageUpdateProjectsCumulativeTokenStats(t *testing.T) {

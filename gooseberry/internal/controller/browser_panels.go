@@ -95,11 +95,17 @@ func (p *BrowserPanels) command(ctx context.Context, clientKey, panelID string, 
 }
 
 func (p *BrowserPanels) Close(ctx context.Context, clientKey, panelID string) error {
-	panel, ok := p.beginClose(clientKey, panelID)
-	if !ok {
-		return fmt.Errorf("browser panel is unavailable")
+	panel, found, err := p.beginClose(clientKey, panelID)
+	if err != nil {
+		return err
 	}
-	_, err := p.call(ctx, panel.id, "close", nil)
+	if !found {
+		// The controller may have restarted while the browser tab remained in
+		// the client store. A valid panel ID that is already absent is safe to
+		// treat as closed, while existing panels still require ownership below.
+		return nil
+	}
+	_, err = p.call(ctx, panel.id, "close", nil)
 	p.finishClose(panel.id, err == nil)
 	return err
 }
@@ -177,19 +183,22 @@ func (p *BrowserPanels) owned(clientKey, panelID string) (browserPanel, bool) {
 	return panel, ok && panel.clientKey == clientKey && !panel.closing
 }
 
-func (p *BrowserPanels) beginClose(clientKey, panelID string) (browserPanel, bool) {
+func (p *BrowserPanels) beginClose(clientKey, panelID string) (browserPanel, bool, error) {
 	if !browserPanelIDPattern.MatchString(panelID) {
-		return browserPanel{}, false
+		return browserPanel{}, false, fmt.Errorf("browser panel is unavailable")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	panel, ok := p.panels[panelID]
-	if !ok || panel.clientKey != clientKey || panel.closing {
-		return browserPanel{}, false
+	if !ok {
+		return browserPanel{}, false, nil
+	}
+	if panel.clientKey != clientKey || panel.closing {
+		return browserPanel{}, false, fmt.Errorf("browser panel is unavailable")
 	}
 	panel.closing = true
 	p.panels[panelID] = panel
-	return panel, true
+	return panel, true, nil
 }
 
 func (p *BrowserPanels) finishClose(panelID string, closed bool) {
@@ -270,11 +279,11 @@ func (p *BrowserPanels) call(ctx context.Context, session, command string, args 
 		return browserPanelResult{}, fmt.Errorf("create browser command: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	if p.auth.BrowserEnabled {
-		if !strongToken(p.auth.BrowserToken) {
+	if browserAuth, browserToken := p.auth.BrowserServiceAuth(); browserAuth {
+		if !strongToken(browserToken) {
 			return browserPanelResult{}, fmt.Errorf("browser panel is unavailable")
 		}
-		request.Header.Set("Authorization", "Bearer "+p.auth.BrowserToken)
+		request.Header.Set("Authorization", "Bearer "+browserToken)
 	}
 	response, err := p.client.Do(request)
 	if err != nil {
