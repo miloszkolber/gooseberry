@@ -48,6 +48,7 @@ test("provider cards gate readiness controls and expose safe status states", () 
 	);
 	expect(unavailableMarkup).toContain("runtime unavailable");
 	expect(unavailableMarkup).toContain("Inventory failed");
+	expect(unavailableMarkup).not.toContain("runtime available");
 });
 
 test("a deferred readiness result cannot survive provider replacement or logout invalidation", () => {

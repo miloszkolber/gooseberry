@@ -16,6 +16,7 @@ import type {
 } from "@gooseberry/contracts";
 import type { StateCreator } from "zustand";
 import type { ChatAttachment, ChatTurn } from "@/chat/runtime/types";
+import { randomId } from "@/lib";
 import type { AppState } from "@/store/app-store";
 import { omitKey } from "@/store/record";
 import type { ChatTab } from "../../workspace/store/model";
@@ -175,7 +176,7 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 					...rt.turns,
 					{
 						kind: "user",
-						id: crypto.randomUUID(),
+						id: randomId("turn"),
 						message: {
 							role: "user",
 							content:
@@ -206,7 +207,7 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 				isStreaming: false,
 				currentAssistantId: null,
 				attemptAssistantId: null,
-				turns: [...clearTurnStreaming(rt.turns), { kind: "error", id: crypto.randomUUID(), text }],
+				turns: [...clearTurnStreaming(rt.turns), { kind: "error", id: randomId("turn"), text }],
 			})),
 		),
 	handleAgentEvent: (event, sessionId) =>

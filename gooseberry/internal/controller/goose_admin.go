@@ -100,7 +100,7 @@ func (a *GooseAdmin) models(ctx context.Context) ([]WireModel, bool, error) {
 	}
 	result := make([]WireModel, 0)
 	for _, provider := range providers {
-		available := provider.Configured != nil && *provider.Configured && boolDefault(provider.Available, true)
+		available := provider.Configured != nil && *provider.Configured && providerRuntimeAvailable(provider)
 		for _, model := range provider.Models {
 			if model.ID == "" {
 				continue
@@ -327,7 +327,7 @@ func (a *GooseAdmin) ProviderStatus(ctx context.Context) (map[string]any, error)
 		if !boolDefault(provider.VisibleInSetup, true) && !configured {
 			continue
 		}
-		available := boolDefault(provider.Available, true)
+		available := providerRuntimeAvailable(provider)
 		canOAuth, canAPIKey := false, false
 		for _, key := range provider.ConfigKeys {
 			canOAuth = canOAuth || key.OAuthFlow
@@ -358,6 +358,10 @@ func (a *GooseAdmin) ProviderStatus(ctx context.Context) (map[string]any, error)
 		result = append(result, item)
 	}
 	return map[string]any{"providers": result}, nil
+}
+
+func providerRuntimeAvailable(provider gooseProvider) bool {
+	return boolDefault(provider.Available, true) && provider.LastRefreshError == ""
 }
 
 func (a *GooseAdmin) ProviderReadiness(ctx context.Context, providerID string) (map[string]any, error) {
@@ -476,7 +480,7 @@ func (a *GooseAdmin) SaveDefaults(ctx context.Context, providerID string, modelI
 	}
 	valid := false
 	for _, provider := range providers {
-		if provider.ProviderID == providerID && boolDefault(provider.Configured, false) && boolDefault(provider.Available, true) {
+		if provider.ProviderID == providerID && boolDefault(provider.Configured, false) && providerRuntimeAvailable(provider) {
 			valid = true
 		}
 	}

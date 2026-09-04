@@ -373,7 +373,7 @@ export interface ProviderStatus {
 	id: string;
 	name: string;
 	configured: boolean;
-	/** Whether Goose reports that this configured provider can run. */
+	/** Whether Goose reports the runtime available without a current inventory failure. */
 	available?: boolean;
 	kind?: ProviderAuthKind;
 	detail?: string;

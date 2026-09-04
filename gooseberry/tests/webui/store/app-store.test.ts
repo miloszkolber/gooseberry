@@ -229,6 +229,21 @@ beforeEach(() => {
 	});
 });
 
+test("chat turn IDs work when randomUUID is unavailable on an insecure origin", () => {
+	const original = crypto.randomUUID;
+	Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
+	try {
+		const state = useAppStore.getState();
+		state.openChatSession("p1", "session", null, "medium");
+		state.appendUserMessage("session", "hello");
+		const turn = useAppStore.getState().sessions.session?.turns.at(-1);
+		expect(turn?.kind).toBe("user");
+		expect(turn?.id).toMatch(/^turn-[0-9a-f]{32}$/);
+	} finally {
+		Object.defineProperty(crypto, "randomUUID", { configurable: true, value: original });
+	}
+});
+
 test("truncated skill watches keep concurrent session command baselines independent", () => {
 	const state = useAppStore.getState();
 	state.openChatSession("p1", "one", null, "medium");

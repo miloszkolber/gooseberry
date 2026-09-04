@@ -34,6 +34,7 @@ import {
 	useState,
 } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { randomId } from "@/lib";
 import type { ChatAttachment } from "../runtime/types";
 import { FileChip } from "./file-chip";
 import { type AttachedImage, fileToAttachedImage } from "./image-attachment";
@@ -390,7 +391,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		if (removedImages) {
 			setAttachErrors([
 				{
-					id: crypto.randomUUID(),
+					id: randomId(),
 					name: "images",
 					reason: "connected agent does not support image prompts",
 				},
@@ -405,7 +406,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 		if (removedTexts) {
 			setAttachErrors([
 				{
-					id: crypto.randomUUID(),
+					id: randomId(),
 					name: "text files",
 					reason: "connected agent does not support text resource prompts",
 				},
@@ -552,7 +553,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				const name = reservedImageNames?.[i] ?? (file?.name || "image");
 				if (supportsImagesRef.current === false) {
 					errors.push({
-						id: crypto.randomUUID(),
+						id: randomId(),
 						name,
 						reason: "connected agent does not support image prompts",
 					});
@@ -560,20 +561,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					return;
 				}
 				if (result.status !== "fulfilled" || result.value === null) {
-					errors.push({ id: crypto.randomUUID(), name, reason: "unsupported image format" });
+					errors.push({ id: randomId(), name, reason: "unsupported image format" });
 					if (reservedImageNames) failedImageNames.push(name);
 					return;
 				}
 				const size = result.value.content.data.length;
 				if (used + size > REQUEST_IMAGE_BASE64_BUDGET) {
-					errors.push({ id: crypto.randomUUID(), name, reason: "message image limit reached" });
+					errors.push({ id: randomId(), name, reason: "message image limit reached" });
 					if (reservedImageNames) failedImageNames.push(name);
 					return;
 				}
 				used += size;
 				imageNames.push(name);
 				additions.push({
-					id: crypto.randomUUID(),
+					id: randomId(),
 					name,
 					...(reservedImageNames ? { tag: imageAttachmentTag(name) } : {}),
 					...result.value,
@@ -583,7 +584,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				const name = textFiles[i]?.name || "file";
 				if (supportsTextResourcesRef.current === false) {
 					errors.push({
-						id: crypto.randomUUID(),
+						id: randomId(),
 						name,
 						reason: "connected agent does not support text resource prompts",
 					});
@@ -591,7 +592,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				}
 				if (result.status !== "fulfilled") {
 					errors.push({
-						id: crypto.randomUUID(),
+						id: randomId(),
 						name,
 						reason:
 							result.reason instanceof Error ? result.reason.message : "unsupported text file",
@@ -606,18 +607,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					]);
 				} catch (error) {
 					errors.push({
-						id: crypto.randomUUID(),
+						id: randomId(),
 						name,
 						reason:
 							error instanceof Error ? error.message : "message text attachment limit reached",
 					});
 					return;
 				}
-				textAdditions.push({ id: crypto.randomUUID(), name, content: result.value });
+				textAdditions.push({ id: randomId(), name, content: result.value });
 			});
 			unsupported.forEach((file) => {
 				errors.push({
-					id: crypto.randomUUID(),
+					id: randomId(),
 					name: file.name || "file",
 					reason: "supported image or text file required",
 				});
@@ -759,7 +760,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			e.preventDefault();
 			setAttachErrors([
 				{
-					id: crypto.randomUUID(),
+					id: randomId(),
 					name: "clipboard image",
 					reason: "connected agent does not support file attachments",
 				},
@@ -775,7 +776,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 			} else {
 				setAttachErrors([
 					{
-						id: crypto.randomUUID(),
+						id: randomId(),
 						name: "dropped image",
 						reason: "connected agent does not support file attachments",
 					},

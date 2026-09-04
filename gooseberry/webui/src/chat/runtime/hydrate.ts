@@ -4,6 +4,7 @@ import type {
 	TranscriptMessage,
 	TranscriptPage,
 } from "@gooseberry/contracts";
+import { randomId } from "@/lib";
 import { assistantFailureText } from "./assistant-failure";
 import type { SessionRuntime } from "./session-runtime";
 import type { ChatTurn, ToolResultState } from "./types";
@@ -26,7 +27,7 @@ interface HydrationOptions {
 }
 
 function replayTurnId(page: TranscriptPage | undefined, messageIndex: number): string {
-	return page ? `transcript:${page.projectionId}:${messageIndex}` : crypto.randomUUID();
+	return page ? `transcript:${page.projectionId}:${messageIndex}` : randomId("turn");
 }
 
 /** Goose session/load replays are normalized in the server adapter before UI hydration. */
@@ -103,7 +104,7 @@ export function messagesToRuntime(
 	if (failure) {
 		turns.push({
 			kind: "error",
-			id: page ? `settlement:${page.projectionId}:${page.total}` : crypto.randomUUID(),
+			id: page ? `settlement:${page.projectionId}:${page.total}` : randomId("settlement"),
 			text: failure,
 		});
 	}

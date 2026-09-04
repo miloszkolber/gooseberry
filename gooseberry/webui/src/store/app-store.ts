@@ -2,6 +2,7 @@ import type { AgentProfile, AppConfig, PermissionRequest, Project } from "@goose
 import { create } from "zustand";
 import { type ChatState, createChatState } from "@/chat/runtime/state";
 import { type ConnectionState, createConnectionState } from "@/connection/state";
+import { randomId } from "@/lib";
 import { createSettingsState, type SettingsState } from "@/settings/state";
 import {
 	createWorkspaceState,
@@ -100,7 +101,7 @@ export const useAppStore = create<AppState>((...args) => {
 					t.variant === toast.variant && t.title === toast.title && t.message === toast.message,
 			);
 			if (twin) return twin.id;
-			const id = crypto.randomUUID();
+			const id = randomId("toast");
 			set((s) => ({ toasts: [...s.toasts, { ...toast, id }].slice(-MAX_TOASTS) }));
 			return id;
 		},

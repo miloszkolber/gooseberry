@@ -13,6 +13,7 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { errorText, getTransport } from "@/connection";
+import { randomId } from "@/lib";
 import type { ToolRenderProps } from "../../render/tool-registry";
 import { toText } from "../tool-helpers";
 import {
@@ -117,7 +118,7 @@ async function runAppOperation<T>(
 	operation: (transport: ReturnType<typeof getTransport>, operationId: string) => Promise<T>,
 ): Promise<T> {
 	const transport = getTransport();
-	const operationId = crypto.randomUUID();
+	const operationId = randomId("operation");
 	const cancel = () => {
 		void transport
 			.request("session.appOperationCancel", { viewId, operationId }, { timeoutMs: 5_000 })

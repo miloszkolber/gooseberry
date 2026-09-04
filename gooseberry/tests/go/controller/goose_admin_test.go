@@ -16,7 +16,7 @@ import (
 	"github.com/miloszkolber/gooseberry/internal/persist"
 )
 
-func TestGooseAdminModelsRequireExplicitProviderConfiguration(t *testing.T) {
+func TestGooseAdminModelsRequireUsableProviderInventory(t *testing.T) {
 	configured := true
 	providers := []map[string]any{
 		{"providerId": "missing", "models": []any{map[string]any{"id": "model"}}},
@@ -50,6 +50,8 @@ func TestGooseAdminModelsRequireExplicitProviderConfiguration(t *testing.T) {
 				result = gooseInitializeResponse()
 			} else if rpc.Method == "_goose/unstable/providers/list" {
 				result = map[string]any{"entries": providers}
+			} else if rpc.Method == "_goose/unstable/defaults/save" {
+				result = map[string]any{"providerId": "refresh-error", "modelId": nil}
 			}
 			if err := writeRPC(connection, map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": result}); err != nil {
 				return
@@ -67,7 +69,7 @@ func TestGooseAdminModelsRequireExplicitProviderConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"missing": false, "false": false, "unavailable": false, "refresh-error": true, "available": true}
+	want := map[string]bool{"missing": false, "false": false, "unavailable": false, "refresh-error": false, "available": true}
 	for _, model := range models {
 		if model.ID != "model" {
 			t.Fatalf("unexpected model: %#v", model)
@@ -80,6 +82,23 @@ func TestGooseAdminModelsRequireExplicitProviderConfiguration(t *testing.T) {
 	if len(want) != 0 {
 		t.Fatalf("missing providers: %#v", want)
 	}
+	status, err := admin.ProviderStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range status["providers"].([]map[string]any) {
+		if provider["id"] != "refresh-error" {
+			continue
+		}
+		if provider["available"] != false || provider["availableModelCount"] != 0 || provider["detail"] != "authentication failed" {
+			t.Fatalf("refresh failure reported as usable: %#v", provider)
+		}
+		if _, err := admin.SaveDefaults(ctx, "refresh-error", nil); err == nil {
+			t.Fatal("accepted a provider with a current inventory failure as the default")
+		}
+		return
+	}
+	t.Fatal("missing refresh-error provider status")
 }
 
 func TestGooseAdminUsesReleaseMatchedExtensionsAndGenericPreferenceRemoval(t *testing.T) {

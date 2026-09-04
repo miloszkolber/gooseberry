@@ -14,7 +14,7 @@ import type {
 	UserMessage,
 	WireModel,
 } from "@gooseberry/contracts";
-import { matchesSkillInvocationCommand, parseSkillInvocation, userText } from "../../lib";
+import { matchesSkillInvocationCommand, parseSkillInvocation, randomId, userText } from "../../lib";
 import { assistantFailureText } from "./assistant-failure";
 import type { ChatTurn, CompactionState, ExtUiDialogRequest, ToolResultState } from "./types";
 
@@ -145,7 +145,7 @@ function settleCompactionTurn(
 ): ChatTurn[] {
 	const outcome = compactionOutcome(event);
 	const index = turns.findLastIndex((t) => t.kind === "compaction" && t.status === "running");
-	if (index < 0) return [...turns, { kind: "compaction", id: crypto.randomUUID(), ...outcome }];
+	if (index < 0) return [...turns, { kind: "compaction", id: randomId("turn"), ...outcome }];
 	return turns.map((t, i) => (i === index ? { kind: "compaction", id: t.id, ...outcome } : t));
 }
 
@@ -162,7 +162,7 @@ function appendRetryTurn(
 			...rt.turns.filter((t) => !(t.kind === "retry" && t.source === source)),
 			{
 				kind: "retry",
-				id: crypto.randomUUID(),
+				id: randomId("turn"),
 				source,
 				attempt: event.attempt,
 				maxAttempts: event.maxAttempts,
@@ -191,7 +191,7 @@ function updateStreamingAssistant(
 	rt: SessionRuntime,
 	updateContent: (content: AssistantMessage["content"]) => AssistantMessage["content"],
 ): SessionRuntime {
-	const id = rt.currentAssistantId ?? crypto.randomUUID();
+	const id = rt.currentAssistantId ?? randomId("turn");
 	const existing = rt.turns.find((turn) => turn.id === id && turn.kind === "assistant");
 	const turn: ChatTurn = {
 		kind: "assistant",
@@ -375,7 +375,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				currentAssistantId: null,
 				turns: [
 					...clearTurnStreaming(rt.turns),
-					{ kind: "system", id: crypto.randomUUID(), text: "✓ Done", endedAt: Date.now() },
+					{ kind: "system", id: randomId("turn"), text: "✓ Done", endedAt: Date.now() },
 				],
 			};
 		case "error":
@@ -385,7 +385,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				currentAssistantId: null,
 				turns: [
 					...clearTurnStreaming(rt.turns),
-					{ kind: "error", id: crypto.randomUUID(), text: event.error ?? "Agent request failed." },
+					{ kind: "error", id: randomId("turn"), text: event.error ?? "Agent request failed." },
 				],
 			};
 		case "session-info":
@@ -412,7 +412,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			if (event.message.role === "assistant")
 				return {
 					...rt,
-					currentAssistantId: crypto.randomUUID(),
+					currentAssistantId: randomId("turn"),
 					attemptAssistantId: null,
 					turns: clearTurnStreaming(rt.turns),
 				};
@@ -443,7 +443,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				}
 				return {
 					...rt,
-					turns: [...rt.turns, { kind: "user", id: crypto.randomUUID(), message }],
+					turns: [...rt.turns, { kind: "user", id: randomId("turn"), message }],
 				};
 			}
 			return rt;
@@ -459,7 +459,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 							? ame.error
 							: null;
 			if (!snapshot) return rt;
-			const id = rt.currentAssistantId ?? crypto.randomUUID();
+			const id = rt.currentAssistantId ?? randomId("turn");
 			const streaming = !(ame.type === "done" || ame.type === "error");
 			const existing = rt.turns.find((turn) => turn.id === id && turn.kind === "assistant");
 			const turn: ChatTurn = {
@@ -543,8 +543,8 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 		case "agent_settled": {
 			const failure = assistantFailureText(event.terminal);
 			const closer: ChatTurn = failure
-				? { kind: "error", id: crypto.randomUUID(), text: failure }
-				: { kind: "system", id: crypto.randomUUID(), text: "✓ Done", endedAt: Date.now() };
+				? { kind: "error", id: randomId("turn"), text: failure }
+				: { kind: "system", id: randomId("turn"), text: "✓ Done", endedAt: Date.now() };
 			return {
 				...rt,
 				turns: [
@@ -561,7 +561,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 		case "compaction_start":
 			return {
 				...rt,
-				turns: [...rt.turns, { kind: "compaction", id: crypto.randomUUID(), status: "running" }],
+				turns: [...rt.turns, { kind: "compaction", id: randomId("turn"), status: "running" }],
 			};
 		case "compaction_end": {
 			const settled = settleCompactionTurn(rt.turns, event);
@@ -640,7 +640,7 @@ export function reduceSessionExtUi(
 		case "notify":
 			return {
 				...rt,
-				turns: [...rt.turns, { kind: "system", id: crypto.randomUUID(), text: request.message }],
+				turns: [...rt.turns, { kind: "system", id: randomId("turn"), text: request.message }],
 			};
 		case "setStatus": {
 			if (request.text === null) {
