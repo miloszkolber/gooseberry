@@ -111,6 +111,8 @@ test("the Svelte editor retains the default and agent form contracts", async () 
 	expect(source).toContain("bind:value={draft.instructions}");
 	expect(source).toContain("defaultModelSuggestions(models, defaults.providerId)");
 	expect(source).toContain("(current, unavailable)");
-	expect(source).toContain("disabled={busy || loading || !selectedDefaultProviderAvailable}");
+	expect(source).toContain(
+		"disabled={busy || loading || !defaultsReady || !selectedDefaultProviderAvailable}",
+	);
 	expect(source).toContain("applyPreferences(saved)");
 });

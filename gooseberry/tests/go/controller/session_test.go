@@ -33,7 +33,7 @@ func newSessionManagerWithPublisher(t *testing.T, publish controller.SessionPubl
 	return newSessionManagerWithInitializeAndPublisher(t, nil, nil, gooseInitializeResponse(), publish)
 }
 
-func newSessionManagerWithInitializeAndPublisher(t *testing.T, loadUpdates []map[string]any, promptRequests chan<- map[string]any, initialize map[string]any, publish controller.SessionPublisher) (*controller.SessionManager, *controller.GooseClient, workspace.Project, persist.Store) {
+func newSessionManagerWithInitializeAndPublisher(t *testing.T, loadUpdates []map[string]any, promptRequests chan<- map[string]any, initialize map[string]any, publish controller.SessionPublisher, observers ...func(string, map[string]any)) (*controller.SessionManager, *controller.GooseClient, workspace.Project, persist.Store) {
 	t.Helper()
 	ctx := t.Context()
 	root := t.TempDir()
@@ -70,6 +70,9 @@ func newSessionManagerWithInitializeAndPublisher(t *testing.T, loadUpdates []map
 			}
 			if json.Unmarshal(payload, &rpc) != nil {
 				return
+			}
+			for _, observer := range observers {
+				observer(rpc.Method, rpc.Params)
 			}
 			result := any(map[string]any{})
 			switch rpc.Method {
@@ -452,9 +455,10 @@ func TestPermissionsAndQuestionsStaySessionBoundAndSingleUse(t *testing.T) {
 		t.Fatal("permission response was accepted twice")
 	}
 
+	emitLiveQuestion(t, manager, "question-tool", questionArgs)
 	questionResult := make(chan map[string]any, 1)
 	go func() {
-		result, _ := manager.AskQuestion("chat", questionArgs)
+		result, _ := manager.AskQuestion(ctx, "chat", questionArgs)
 		questionResult <- result
 	}()
 	malformed := map[string]any{"answers": []any{map[string]any{"questionIndex": 2}}, "cancelled": false}

@@ -1,14 +1,18 @@
 <script lang="ts">
 import { untrack } from "svelte";
+import DefaultToolRenderer from "./default-tool-renderer.svelte";
 import Icon from "../../components/icon.svelte";
-import { readFold, toggleFold } from "../runtime/fold-state";
+import { useFoldState } from "../runtime/fold-state";
 import type { ToolResultState } from "../runtime/types";
 import McpAppView from "../tools/apps/mcp-app-view.svelte";
 import { getToolRenderer, getToolSummary, resolveProminence } from "./tool-registry";
 
+const { readFold, toggleFold } = useFoldState();
+
 interface Props {
 	toolCallId: string;
 	toolName: string;
+	title?: string;
 	args: Record<string, unknown>;
 	tool: ToolResultState | undefined;
 	dead?: boolean;
@@ -19,6 +23,7 @@ interface Props {
 let {
 	toolCallId,
 	toolName,
+	title,
 	args,
 	tool,
 	dead = false,
@@ -39,7 +44,11 @@ let renderProps = $derived({
 	projectAreaRoot,
 	streaming,
 });
-let summary = $derived(getToolSummary(toolName, renderProps));
+let summary = $derived(
+	status === "interrupted"
+		? "Interrupted · final result not reported"
+		: getToolSummary(toolName, renderProps),
+);
 let autoExpand = $derived(
 	isError || (resolveProminence(toolName).defaultExpanded && status === "done"),
 );
@@ -65,18 +74,18 @@ $effect(() => {
 		class="flex w-full cursor-pointer select-none items-center gap-xs px-sm py-xs text-left tr-text-metadata outline-none focus-visible:ring-2 focus-visible:ring-primary"
 	>
 		<Icon
-			name={status === "running" ? "loader-circle" : isError ? "x" : "check"}
+			name={status === "running" ? "loader-circle" : isError || status === "interrupted" ? "x" : "check"}
 			size={12}
-			class={`shrink-0 ${status === "running" ? "animate-spin text-text-muted motion-reduce:animate-none" : isError ? "text-feedback-error" : "text-feedback-success"}`}
+			class={`shrink-0 ${status === "running" ? "animate-spin text-text-muted motion-reduce:animate-none" : isError ? "text-feedback-error" : status === "interrupted" ? "text-text-muted" : "text-feedback-success"}`}
 		/>
-		<span class="shrink-0 text-text-default">{toolName}</span>
+		<span class="min-w-0 break-words text-text-default">{title || toolName}</span>
 		{#if summary}<span class="min-w-0 flex-1 truncate text-text-muted" title={summary}>{summary}</span>
 		{:else}<span class="flex-1"></span>{/if}
 		<Icon name="chevron-right" size={12} class={`shrink-0 text-text-muted transition-transform ${expanded ? "rotate-90" : ""}`} />
 	</button>
 	{#if expanded}
 		<div class={`flex flex-col items-start gap-sm px-sm pb-xs ${isError ? "text-feedback-error" : ""}`}>
-			<Renderer {...renderProps} />
+			{#if status === "interrupted"}<DefaultToolRenderer {...renderProps} />{:else}<Renderer {...renderProps} />{/if}
 			<McpAppView {...renderProps} />
 		</div>
 	{/if}

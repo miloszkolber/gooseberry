@@ -1,17 +1,34 @@
 <script lang="ts">
+import type { Component } from "svelte";
+import Button from "@/components/button.svelte";
 import Dialog from "@/components/dialog.svelte";
 import { appStore, appStoreApi } from "@/store";
 import { restoreSettingsFocus } from "./open-settings";
 import AgentSettings from "./sections/agent-settings.svelte";
-import GooseAutomationSettings from "./sections/goose-automation-settings.svelte";
-import GooseSettings from "./sections/goose-settings.svelte";
-import GooseToolsSettings from "./sections/goose-tools-settings.svelte";
-import ModelsSettings from "./sections/models-settings.svelte";
-import ProvidersSettings from "./sections/providers-settings.svelte";
-import SignetSettings from "./sections/signet-settings.svelte";
-import SystemSettings from "./sections/system-settings.svelte";
 import { resolveSettingsSection, settingsTabs } from "./settings-dialog";
 import { SettingsSection } from "./state";
+
+const loaders: Partial<Record<SettingsSection, () => Promise<{ default: Component }>>> = {
+	goose: () => import("./sections/goose-settings.svelte"),
+	automation: () => import("./sections/goose-automation-settings.svelte"),
+	tools: () => import("./sections/goose-tools-settings.svelte"),
+	models: () => import("./sections/models-settings.svelte"),
+	providers: () => import("./sections/providers-settings.svelte"),
+	signet: () => import("./sections/signet-settings.svelte"),
+	system: () => import("./sections/system-settings.svelte"),
+};
+let visited = $state<SettingsSection[]>([]);
+let loads = $state<Partial<Record<SettingsSection, Promise<{ default: Component }>>>>({});
+$effect(() => {
+	if (!$appStore.settingsOpen) {
+		visited = [];
+		loads = {};
+		return;
+	}
+	if (!visited.includes(activeSection)) visited = [...visited, activeSection];
+	const loader = loaders[activeSection];
+	if (loader && !loads[activeSection]) loads = { ...loads, [activeSection]: loader() };
+});
 
 let profilePending = $derived($appStore.agentProfile === null);
 let genericAgent = $derived(
@@ -84,29 +101,22 @@ function handleTabKeydown(event: KeyboardEvent): void {
 				</button>
 			{/each}
 		</div>
-		<div
-			id={`settings-panel-${activeSection}`}
-			role="tabpanel"
-			class="min-h-0 min-w-0 flex-1 overflow-y-auto p-md sm:p-lg"
-		>
-			{#if activeSection === SettingsSection.System}
-				<SystemSettings />
-			{:else if activeSection === SettingsSection.Agent && $appStore.agentProfile}
-				<AgentSettings profile={$appStore.agentProfile} />
-			{:else if activeSection === SettingsSection.Goose}
-				<GooseSettings />
-			{:else if activeSection === SettingsSection.Models}
-				<ModelsSettings />
-			{:else if activeSection === SettingsSection.Automation}
-				<GooseAutomationSettings />
-			{:else if activeSection === SettingsSection.Tools}
-				<GooseToolsSettings />
-			{:else if activeSection === SettingsSection.Signet}
-				<SignetSettings />
-			{:else}
-				<ProvidersSettings />
-			{/if}
-		</div>
+  {#each visited as section (section)}
+   {#if section === activeSection || section === SettingsSection.Goose || section === SettingsSection.Automation || section === SettingsSection.Signet}
+    <div id={`settings-panel-${section}`} role="tabpanel" hidden={section !== activeSection} class="min-h-0 min-w-0 flex-1 overflow-y-auto p-md sm:p-lg">
+     {#if section === SettingsSection.Agent && $appStore.agentProfile}
+      <AgentSettings profile={$appStore.agentProfile} />
+     {:else}
+      {#await loads[section]}<p class="tr-text-ui text-text-muted">Loading settings…</p>
+      {:then module}{#if module}{@const Section = module.default}<Section />{/if}
+      {:catch}<p role="alert" class="tr-text-ui text-feedback-error">Couldn't load this settings section. Your open form drafts are retained. If retry still fails after a deployment, copy unsaved work before reloading.</p>
+       <Button variant="outline" onclick={() => { const loader = loaders[section]; if (loader) loads = { ...loads, [section]: loader() }; }}>Retry loading</Button>
+       <Button variant="ghost" onclick={() => { if (window.confirm("Reload the application? Unsaved settings, drafts and retained local messages will be lost. Copy anything you need first.")) window.location.reload(); }}>Reload application</Button>
+      {/await}
+     {/if}
+    </div>
+   {/if}
+  {/each}
 	{/if}
 </Dialog>
 

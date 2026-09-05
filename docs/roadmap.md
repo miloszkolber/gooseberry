@@ -15,5 +15,5 @@ Current behavior is documented in the [README](../README.md), [architecture](arc
 
 - Nested-agent durability, approvals and cancellation await reliable Goose methods or replayable events.
 - Named ACP plan updates and removal await a stable capability.
-- Reclaim controller-owned browser panel state after an ungraceful controller exit with a browser-service lease or bounded cleanup operation.
-- Deployment-host p95 enforcement, long-history acceptance and native x86-64 browser checks remain postponed.
+- Deployment-host p95 enforcement, long-history browser paint acceptance and native x86-64 browser checks remain postponed. Local projection CPU and Chromium history paging/frame/heap probes are available in the development guide.
+- Further reduce large-history traversal work using the history probe. Unchanged row reuse and viewport-scoped syntax highlighting reduce paging work and retained markup; base transcript DOM still grows with loaded history. Any windowing must preserve older-page anchors, search jumps, disclosures, native find, text selection and active tool/App lifetimes. User-visible history caps require an operator decision.

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type historyEntry struct {
 	title     string
 	messages  []historyMessage
 	indexed   bool
+	truncated bool
 	attempts  int
 	retryAt   time.Time
 	used      uint64
@@ -79,6 +81,12 @@ func (h *HistoryIndex) Search(ctx context.Context, request map[string]any) (map[
 	if err != nil {
 		return nil, err
 	}
+	eligible := make(map[string]bool)
+	for _, record := range records {
+		if kind == "all" || kind == "chat" && record.SessionID == textValue(scope["sessionId"]) || kind == "project" && record.ProjectID == textValue(scope["projectId"]) {
+			eligible[record.SessionID] = true
+		}
+	}
 	var catalog []acp.SessionInfo
 	var cursor *string
 	seen := make(map[string]bool)
@@ -89,13 +97,20 @@ func (h *HistoryIndex) Search(ctx context.Context, request map[string]any) (map[
 			return nil, err
 		}
 		remaining := historyMaxSessions - len(catalog)
-		catalog = append(catalog, response.Sessions[:min(len(response.Sessions), remaining)]...)
-		if len(catalog) == historyMaxSessions || response.NextCursor == nil {
-			incomplete = incomplete || len(response.Sessions) > remaining || len(catalog) == historyMaxSessions && response.NextCursor != nil
+		matches := make([]acp.SessionInfo, 0)
+		for _, session := range response.Sessions {
+			if eligible[string(session.SessionId)] {
+				matches = append(matches, session)
+			}
+		}
+		catalog = append(catalog, matches[:min(len(matches), remaining)]...)
+		if len(catalog) == historyMaxSessions || response.NextCursor == nil || len(catalog) == len(eligible) {
+			incomplete = incomplete || len(matches) > remaining || len(catalog) == historyMaxSessions && response.NextCursor != nil
 			break
 		}
 		if seen[*response.NextCursor] || page == 19 {
-			return nil, fmt.Errorf("Goose history pagination did not finish within its safety limit")
+			incomplete = true
+			break
 		}
 		seen[*response.NextCursor] = true
 		cursor = response.NextCursor
@@ -211,7 +226,7 @@ func (h *HistoryIndex) Search(ctx context.Context, request map[string]any) (map[
 	normalized := strings.ToLower(query)
 	for _, record := range selected {
 		entry := h.entries[record.SessionID]
-		if entry.attempts >= 3 {
+		if entry.attempts >= 3 || entry.truncated {
 			incomplete = true
 		}
 		if !entry.indexed || entry.timestamp != remote[record.SessionID].updatedAt {
@@ -263,21 +278,28 @@ func (h *HistoryIndex) index(ctx context.Context, record ProjectSessionRecord, s
 	}
 	m.mu.Unlock()
 	defer entry.state.Unlock()
-	result := historyEntry{timestamp: source.updatedAt, title: source.title, indexed: true}
+	result := historyEntry{timestamp: source.updatedAt, title: source.title, indexed: true, truncated: len(entry.messages) > 500}
 	remaining := 256 * 1024
-	for index := max(0, len(entry.messages)-500); index < len(entry.messages) && remaining > 0; index++ {
+	for index := len(entry.messages) - 1; index >= max(0, len(entry.messages)-500); index-- {
+		if remaining <= 0 {
+			result.truncated = true
+			break
+		}
 		message := mapValue(entry.messages[index])
 		role := textValue(message["role"])
 		if role != "user" && role != "assistant" {
 			continue
 		}
-		text := clipUTF16(historyText(message), min(16*1024, remaining))
+		fullText := historyText(message)
+		text := clipUTF16(fullText, min(16*1024, remaining))
+		result.truncated = result.truncated || text != fullText
 		if text == "" {
 			continue
 		}
 		remaining -= utf16Length(text)
 		result.messages = append(result.messages, historyMessage{role: role, text: text, index: index})
 	}
+	slices.Reverse(result.messages)
 	return result
 }
 

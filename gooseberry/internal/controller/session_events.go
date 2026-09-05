@@ -70,7 +70,7 @@ func (m *SessionManager) Permission(ctx context.Context, request acp.RequestPerm
 		value := objectValue(option)
 		options = append(options, map[string]any{"optionId": textValue(value["optionId"]), "name": textValue(value["name"]), "kind": textValue(value["kind"])})
 	}
-	m.emit("session.permissionRequest", map[string]any{"id": id, "sessionId": pending.sessionID, "toolCallId": textValue(tool["toolCallId"]), "title": textValue(tool["title"]), "options": options})
+	m.emit("session.permissionRequest", map[string]any{"id": id, "sessionId": pending.sessionID, "toolCallId": textValue(tool["toolCallId"]), "title": textValue(tool["title"]), "options": options, "tool": tool})
 	timer := time.NewTimer(permissionTimeout)
 	defer timer.Stop()
 	var result acp.RequestPermissionResponse
@@ -135,7 +135,7 @@ func (m *SessionManager) PendingPermissions() []map[string]any {
 			value := objectValue(option)
 			options = append(options, map[string]any{"optionId": textValue(value["optionId"]), "name": textValue(value["name"]), "kind": textValue(value["kind"])})
 		}
-		result = append(result, map[string]any{"id": id, "sessionId": pending.sessionID, "toolCallId": textValue(tool["toolCallId"]), "title": textValue(tool["title"]), "options": options})
+		result = append(result, map[string]any{"id": id, "sessionId": pending.sessionID, "toolCallId": textValue(tool["toolCallId"]), "title": textValue(tool["title"]), "options": options, "tool": tool})
 	}
 	return result
 }
@@ -200,6 +200,10 @@ func (m *SessionManager) applyUpdate(ctx context.Context, notification map[strin
 	}
 	previousTitle := target.title
 	events := applySessionUpdate(target, kind, update, origin)
+	if !publish && kind == "tool_call" {
+		// Replay is historical evidence, never authority for a new HTTP question.
+		target.consumedQuestions[textValue(update["toolCallId"])] = true
+	}
 	var persistedTitle string
 	if target.title != "" && target.title != previousTitle {
 		persistedTitle = target.title
@@ -253,6 +257,14 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			role = "user"
 		}
 		content := mapValue(update["content"])
+		if role == "assistant" && textValue(content["type"]) == "resource" {
+			resource := mapValue(content["resource"])
+			text := textValue(resource["text"])
+			if text == "" {
+				text = "[Resource content: " + textValue(resource["uri"]) + "]"
+			}
+			content = map[string]any{"type": "text", "text": text}
+		}
 		if textValue(content["type"]) == "resource" {
 			marker, byteLength, valid := replayTextResourceMarker(content)
 			if !valid {
@@ -272,7 +284,7 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			if role == "user" && consumeEchoImage(entry, image) {
 				return nil
 			}
-			appendMessageBlock(entry, role, image)
+			appendMessageBlock(entry, role, image, textValue(update["messageId"]))
 			entry.stats.TotalMessages = len(entry.messages)
 			if role == "user" {
 				return []map[string]any{{"type": "message_start", "message": entry.messages[len(entry.messages)-1]}}
@@ -280,14 +292,17 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			entry.streaming = true
 			return []map[string]any{{"type": "image", "messageId": optionalText(update["messageId"]), "image": image}}
 		}
+		if content["type"] == "resource_link" {
+			content = map[string]any{"type": "text", "text": "Resource: " + textValue(content["name"]) + " (" + textValue(content["uri"]) + ")"}
+		}
 		if content["type"] != "text" && content["text"] == nil {
-			return nil
+			content = map[string]any{"type": "text", "text": "[Unsupported content: " + textValue(content["type"]) + "]"}
 		}
 		text := textValue(content["text"])
 		if role == "user" && consumeEchoText(entry, text) {
 			return nil
 		}
-		appendMessageBlock(entry, role, map[string]any{"type": "text", "text": text})
+		appendMessageBlock(entry, role, map[string]any{"type": "text", "text": text}, textValue(update["messageId"]))
 		entry.streaming = true
 		entry.stats.TotalMessages = len(entry.messages)
 		if role == "user" {
@@ -314,7 +329,7 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		return []map[string]any{{"type": "current-mode", "currentModeId": modeID}}
 	case "agent_thought_chunk":
 		text := textValue(mapValue(update["content"])["text"])
-		appendMessageBlock(entry, "assistant", map[string]any{"type": "thinking", "thinking": text})
+		appendMessageBlock(entry, "assistant", map[string]any{"type": "thinking", "thinking": text}, textValue(update["messageId"]))
 		entry.streaming = true
 		return []map[string]any{{"type": "thinking", "messageId": optionalText(update["messageId"]), "text": text}}
 	case "tool_call":
@@ -325,10 +340,11 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		toolName := textValue(trustedTool["toolName"])
 		activityTool := textValue(trustedTool["extensionName"]) == "summon" && (toolName == "delegate" || toolName == "load")
 		if toolName == "" {
-			toolName = textValue(update["title"])
-		}
-		if toolName == "" {
-			toolName = "tool"
+			if textValue(update["title"]) == "ask_user_question" {
+				toolName = "ask_user_question"
+			} else {
+				toolName = "tool"
+			}
 		}
 		if strings.HasSuffix(toolName, "__ask_user_question") {
 			toolName = "ask_user_question"
@@ -341,16 +357,43 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 		// tools after reconnect, this tombstones a completed older invocation if
 		// an upstream reuses its call ID.
 		entry.pendingToolOutputs[toolID] = toolOutput{SubagentActivityTool: activityTool}
+		delete(entry.consumedQuestions, toolID)
+		if entry.toolChanged != nil {
+			close(entry.toolChanged)
+			entry.toolChanged = nil
+		}
 		delete(entry.appAttachments, toolID)
 		input := update["rawInput"]
 		if input == nil {
 			input = map[string]any{}
 		}
-		appendMessageBlock(entry, "assistant", map[string]any{"type": "toolCall", "id": toolID, "toolName": toolName, "name": toolName, "arguments": input})
+		appendMessageBlock(entry, "assistant", map[string]any{"type": "toolCall", "id": toolID, "toolName": toolName, "name": toolName, "title": textValue(update["title"]), "arguments": input})
 		entry.stats.TotalMessages = len(entry.messages)
-		return []map[string]any{{"type": "tool-start", "toolCallId": toolID, "toolName": toolName, "tool": input}}
+		events := []map[string]any{{"type": "tool-start", "toolCallId": toolID, "toolName": toolName, "title": textValue(update["title"]), "tool": input}}
+		return append(events, applySessionUpdate(entry, "tool_call_update", update, origin)...)
+
 	case "tool_call_update":
 		toolID := textValue(update["toolCallId"])
+		var projectedCall map[string]any
+		for index := len(entry.messages) - 1; index >= 0 && projectedCall == nil; index-- {
+			message := mapValue(entry.messages[index])
+			for _, value := range contentBlocks(message["content"]) {
+				block := mapValue(value)
+				if block["type"] != "toolCall" || textValue(block["id"]) != toolID {
+					continue
+				}
+				for source, destination := range map[string]string{"title": "title", "kind": "kind", "locations": "locations", "rawInput": "arguments", "status": "status"} {
+					if value, present := update[source]; present {
+						block[destination] = value
+					}
+				}
+				projectedCall = block
+			}
+		}
+		if entry.toolChanged != nil {
+			close(entry.toolChanged)
+			entry.toolChanged = nil
+		}
 		status := textValue(update["status"])
 		finished := status == "completed" || status == "error" || status == "failed"
 		result, activity := projectToolOutputAndActivity(entry, toolID, update, finished, trustedGoose)
@@ -378,6 +421,9 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 			eventType = "tool-end"
 		}
 		event := map[string]any{"type": eventType, "toolCallId": toolID, "status": status, "tool": result}
+		if projectedCall != nil {
+			event["toolCall"] = cloneJSON(projectedCall)
+		}
 		if activity != nil {
 			event["subagentActivity"] = activity
 		}
@@ -388,7 +434,8 @@ func applySessionUpdate(entry *sessionEntry, kind string, update map[string]any,
 	case "config_option_update":
 		entry.configOptions = arrayValue(update["configOptions"])
 		entry.thinkingLevel = thinkingFromOptions(entry.configOptions)
-		return []map[string]any{{"type": "config", "configOptions": entry.configOptions}}
+		entry.model = modelFromSetup(entry.configOptions, nil)
+		return []map[string]any{{"type": "config", "configOptions": projectConfigOptions(entry.configOptions), "model": entry.model}}
 	case "session_info_update":
 		if title := textValue(update["title"]); title != "" {
 			// Goose commonly emits its placeholder title while replaying a
@@ -641,6 +688,11 @@ func subagentActivityValue(output toolOutput) map[string]any {
 	return activity
 }
 
+type messageUsage struct {
+	input, output, cacheRead, cacheWrite, total int64
+	cost                                        float64
+}
+
 func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]any) []map[string]any {
 	switch kind {
 	case "message_usage":
@@ -653,12 +705,26 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 		if !totalReported {
 			total = input + output + cacheRead + cacheWrite
 		}
+		cost := floatValue(usage["cost"])
+		if id := textValue(update["messageId"]); id != "" {
+			if entry.messageUsage == nil {
+				entry.messageUsage = make(map[string]messageUsage)
+			}
+			previous := entry.messageUsage[id]
+			entry.messageUsage[id] = messageUsage{input, output, cacheRead, cacheWrite, total, cost}
+			input -= previous.input
+			output -= previous.output
+			cacheRead -= previous.cacheRead
+			cacheWrite -= previous.cacheWrite
+			total -= previous.total
+			cost -= previous.cost
+		}
 		entry.stats.Tokens.Input += input
 		entry.stats.Tokens.Output += output
 		entry.stats.Tokens.CacheRead += cacheRead
 		entry.stats.Tokens.CacheWrite += cacheWrite
 		entry.stats.Tokens.Total += total
-		entry.stats.Cost += floatValue(usage["cost"])
+		entry.stats.Cost += cost
 		reported := maps.Clone(entry.stats.Reported)
 		if reported == nil {
 			reported = make(map[string]bool)
@@ -707,6 +773,9 @@ func applyGooseOnlyUpdate(entry *sessionEntry, kind string, update map[string]an
 		status := mapValue(update["status"])
 		kind := textValue(status["type"])
 		message := textValue(status["message"])
+		if kind == "notice" || kind == "progress" {
+			return []map[string]any{{"type": "activity", "status": kind, "text": clipUTF16(message, 4000)}}
+		}
 		// Goose may publish a terminal status before session/prompt returns.
 		// Keep the browser busy until that RPC supplies the authoritative result;
 		// otherwise a second optimistic prompt can be admitted and then rejected.
@@ -733,12 +802,20 @@ func terminalStatusKind(kind string) bool {
 	return strings.Contains(kind, "error") || strings.Contains(kind, "fail") || strings.Contains(kind, "complete") || strings.Contains(kind, "idle") || strings.Contains(kind, "done") || strings.Contains(kind, "cancel")
 }
 
-func appendMessageBlock(entry *sessionEntry, role string, block map[string]any) {
-	if len(entry.messages) == 0 || textValue(mapValue(entry.messages[len(entry.messages)-1])["role"]) != role {
+func appendMessageBlock(entry *sessionEntry, role string, block map[string]any, identity ...string) {
+	messageID := ""
+	if len(identity) > 0 {
+		messageID = identity[0]
+	}
+	differentMessage := false
+	if len(entry.messages) > 0 && messageID != "" {
+		differentMessage = textValue(mapValue(entry.messages[len(entry.messages)-1])["messageId"]) != messageID
+	}
+	if len(entry.messages) == 0 || differentMessage || textValue(mapValue(entry.messages[len(entry.messages)-1])["role"]) != role {
 		if role == "user" {
 			entry.userResourceBytes = 0
 		}
-		entry.messages = append(entry.messages, map[string]any{"role": role, "content": []any{block}})
+		entry.messages = append(entry.messages, map[string]any{"role": role, "content": []any{block}, "messageId": messageID})
 		return
 	}
 	message := mapValue(entry.messages[len(entry.messages)-1])

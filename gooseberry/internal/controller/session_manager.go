@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,8 +48,11 @@ type sessionEntry struct {
 	messages           []any
 	streaming          bool
 	promptActive       bool
+	promptDone         chan struct{}
+	toolChanged        chan struct{}
 	settlement         *SessionSettlement
 	stats              SessionStats
+	messageUsage       map[string]messageUsage
 	queue              sessionQueueState
 	runID              string
 	objectiveToken     string
@@ -116,11 +120,12 @@ type SessionManager struct {
 	objectives      *Objectives
 	deletions       *SessionDeletions
 	objectiveURL    string
+	settings        *Settings
 	sessions        map[string]*sessionEntry
 	leases          map[string]*clientSessionLeases
 	lifecycle       map[string]bool
 	permissions     map[string]*pendingPermission
-	questions       map[string]*pendingQuestion
+	questions       map[questionKey]*pendingQuestion
 	creating        int
 	pendingCommands map[string]pendingCommandCatalog
 	publish         SessionPublisher
@@ -139,13 +144,15 @@ func NewSessionManager(projects *workspace.Projects, policy *workspace.PathPolic
 	if records != nil {
 		deletions = NewSessionDeletions(records.store)
 	}
-	manager := &SessionManager{projects: projects, policy: policy, records: records, queues: queues, objectives: objectives, deletions: deletions, sessions: make(map[string]*sessionEntry), permissions: make(map[string]*pendingPermission), questions: make(map[string]*pendingQuestion), publish: publish, now: time.Now}
+	manager := &SessionManager{projects: projects, policy: policy, records: records, queues: queues, objectives: objectives, deletions: deletions, sessions: make(map[string]*sessionEntry), permissions: make(map[string]*pendingPermission), questions: make(map[questionKey]*pendingQuestion), publish: publish, now: time.Now}
 	manager.history = newHistoryIndex(manager)
 	return manager
 }
 
-func (m *SessionManager) SetClient(client *GooseClient) { m.client = client }
-func (m *SessionManager) SetObjectiveURL(url string)    { m.objectiveURL = url }
+func (m *SessionManager) SetClient(client *GooseClient)  { m.client = client }
+func (m *SessionManager) SetSettings(settings *Settings) { m.settings = settings }
+
+func (m *SessionManager) SetObjectiveURL(url string) { m.objectiveURL = url }
 
 func (m *SessionManager) RecordedCWD(projectID, sessionID string) (string, error) {
 	records, err := m.records.List()
@@ -208,7 +215,11 @@ func (m *SessionManager) create(ctx context.Context, projectID, cwd string, mode
 		m.mu.Unlock()
 	}()
 	ctx = context.WithValue(ctx, connectionGenerationKey{}, generation)
-	response, err := m.client.NewSession(ctx, acp.NewSessionRequest{Cwd: admitted, McpServers: m.objectiveServers(profile, token), Meta: map[string]any{"projectId": projectID}})
+	servers, err := m.sessionServers(profile, token)
+	if err != nil {
+		return nil, nil, err
+	}
+	response, err := m.client.NewSession(ctx, acp.NewSessionRequest{Cwd: admitted, McpServers: servers, Meta: map[string]any{"projectId": projectID}})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -385,6 +396,7 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 		m.scheduleFollowUp(sessionID, entry)
 		return nil
 	}
+	m.cancelQuestions(sessionID)
 	entry.state.Lock()
 	replay := newSessionEntry(sessionID, entry.projectID, entry.cwd, entry.parentSessionID, entry.objectiveToken)
 	replay.title = entry.title
@@ -394,7 +406,12 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.replay = replay
 	entry.state.Unlock()
 	ctx = context.WithValue(ctx, connectionGenerationKey{}, generation)
-	response, err := m.client.LoadSession(ctx, acp.LoadSessionRequest{SessionId: acp.SessionId(sessionID), Cwd: entry.cwd, McpServers: m.objectiveServers(profile, entry.objectiveToken)})
+	servers, serverErr := m.sessionServers(profile, entry.objectiveToken)
+	var response acp.LoadSessionResponse
+	err = serverErr
+	if err == nil {
+		response, err = m.client.LoadSession(ctx, acp.LoadSessionRequest{SessionId: acp.SessionId(sessionID), Cwd: entry.cwd, McpServers: servers})
+	}
 	if err == nil {
 		var currentGeneration uint64
 		currentGeneration, err = m.client.Ready(ctx)
@@ -433,11 +450,13 @@ func (m *SessionManager) attachLocked(ctx context.Context, sessionID string, ent
 	entry.streaming = replay.streaming
 	entry.settlement = replay.settlement
 	entry.stats = replay.stats
+	entry.messageUsage = replay.messageUsage
 	entry.queue = replay.queue
 	entry.runID = replay.runID
 	entry.pendingEcho = replay.pendingEcho
 	entry.userResourceBytes = replay.userResourceBytes
 	entry.pendingToolOutputs = replay.pendingToolOutputs
+	entry.consumedQuestions = replay.consumedQuestions
 	entry.appAttachments = replay.appAttachments
 	entry.commands = replay.commands
 	entry.modes = replay.modes
@@ -652,7 +671,7 @@ func (m *SessionManager) reconcileModelSwitchFailure(ctx context.Context, sessio
 }
 
 func (m *SessionManager) emitSessionConfig(sessionID string, model *WireModel, options []any) {
-	m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "config", "configOptions": options, "model": model}})
+	m.emit("agent.event", map[string]any{"sessionId": sessionID, "event": map[string]any{"type": "config", "configOptions": projectConfigOptions(options), "model": model}})
 }
 
 func (m *SessionManager) restoreModelConfig(ctx context.Context, sessionID string, previous *WireModel, providerChanged bool) ([]any, error) {
@@ -1056,7 +1075,7 @@ func (m *SessionManager) summary(sessionID string, entry *sessionEntry) SessionS
 
 func (m *SessionManager) summaryLocked(sessionID string, entry *sessionEntry) SessionSummary {
 	queue := entry.queue.wire(!entry.promptActive)
-	return SessionSummary{SessionID: sessionID, ProjectID: entry.projectID, CWD: entry.cwd, ParentSessionID: entry.parentSessionID, Title: entry.title, Model: entry.model, ThinkingLevel: entry.thinkingLevel, IsStreaming: entry.streaming || entry.promptActive, MessageCount: len(entry.messages), UpdatedAt: m.now().UnixMilli(), Live: true, Archived: false, LastSettlement: entry.settlement, Queue: &queue}
+	return SessionSummary{SessionID: sessionID, ProjectID: entry.projectID, CWD: entry.cwd, ParentSessionID: entry.parentSessionID, Title: entry.title, Model: entry.model, ThinkingLevel: entry.thinkingLevel, IsStreaming: entry.streaming || entry.promptActive, MessageCount: len(entry.messages), UpdatedAt: m.now().UnixMilli(), Live: true, Archived: false, LastSettlement: entry.settlement, Queue: &queue, ConfigOptions: projectConfigOptions(entry.configOptions)}
 }
 
 func (m *SessionManager) evictLocked() {
@@ -1259,6 +1278,22 @@ func (m *SessionManager) resumeQueues(targets []queueResume) {
 	}
 }
 
+func (m *SessionManager) sessionServers(profile AgentProfile, token string) ([]acp.McpServer, error) {
+	servers := m.objectiveServers(profile, token)
+	if m.settings == nil {
+		return servers, nil
+	}
+	config, err := m.settings.Get()
+	if err != nil {
+		return nil, err
+	}
+	if config.Signet.Enabled && profile.Operations.HTTPMCP {
+		endpoint := "http://" + net.JoinHostPort(strings.Trim(config.Signet.Address, "[]"), strconv.Itoa(config.Signet.Port)) + "/mcp"
+		servers = append(servers, acp.McpServer{Http: &acp.McpServerHttpInline{Type: "http", Name: "signet", Url: endpoint, Headers: []acp.HttpHeader{}}})
+	}
+	return servers, nil
+}
+
 func (m *SessionManager) objectiveServers(profile AgentProfile, token string) []acp.McpServer {
 	if m.objectiveURL == "" || !profile.Operations.HTTPMCP {
 		return []acp.McpServer{}
@@ -1309,7 +1344,7 @@ func jsonValues[T any](values []T) []any {
 func thinkingFromOptions(options []any) string {
 	for _, value := range options {
 		option, _ := value.(map[string]any)
-		if option["id"] == "thinking_effort" {
+		if option["id"] == "thinking_effort" || option["category"] == "thought_level" {
 			if current, ok := option["currentValue"].(string); ok {
 				return current
 			}

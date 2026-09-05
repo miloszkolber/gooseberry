@@ -54,8 +54,8 @@ async function command(action: BrowserPanelAction): Promise<BrowserPanelResult |
 }
 
 async function runWithScreenshot(action: BrowserPanelAction): Promise<void> {
-	if (!(await command(action))) return;
 	setPanel({ snapshot: "", reference: "" });
+	if (!(await command(action))) return;
 	await command({ type: "screenshot" });
 }
 
@@ -108,7 +108,7 @@ function open(event: SubmitEvent): void {
 		<Button variant="ghost" size="icon-sm" aria-label="Reload" disabled={controlsDisabled} onclick={() => void runWithScreenshot({ type: "reload" })}>
 			<Icon name="refresh-cw" size={16} />
 		</Button>
-		<label class="visually-hidden" for={`browser-address-${panelId}`}>Address</label>
+		<label class="visually-hidden" for={`browser-address-${panelId}`}>Requested address</label>
 		<input
 			id={`browser-address-${panelId}`}
 			value={panel.address}
@@ -174,7 +174,7 @@ function open(event: SubmitEvent): void {
 	<div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-label="Latest browser screenshot" class="flex min-h-0 items-center justify-center overflow-auto p-md">
 			{#if panel.screenshot}
-				<img src={panel.screenshot} alt="Latest browser screenshot" class="image max-h-full max-w-full object-contain" />
+				<img src={panel.screenshot} onerror={() => setPanel({ screenshot: null, error: "The screenshot could not be loaded. Request a new screenshot." })} alt="Latest browser screenshot" class="image max-h-full max-w-full object-contain" />
 			{:else}
 				<p class="app-empty text-center">Open a URL, then use Screenshot to render the current page.</p>
 			{/if}

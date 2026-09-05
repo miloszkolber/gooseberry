@@ -23,17 +23,18 @@ type AgentProfile struct {
 }
 
 type WireModel struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Provider       string   `json:"provider"`
-	ContextWindow  *int     `json:"contextWindow,omitempty"`
-	MaxTokens      *int     `json:"maxTokens,omitempty"`
-	Reasoning      *bool    `json:"reasoning,omitempty"`
-	ThinkingLevels []string `json:"thinkingLevels,omitempty"`
-	Input          []string `json:"input,omitempty"`
-	Cost           any      `json:"cost,omitempty"`
-	Available      bool     `json:"available"`
-	Hidden         bool     `json:"hidden"`
+	MetadataComplete *bool    `json:"metadataComplete,omitempty"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Provider         string   `json:"provider"`
+	ContextWindow    *int     `json:"contextWindow,omitempty"`
+	MaxTokens        *int     `json:"maxTokens,omitempty"`
+	Reasoning        *bool    `json:"reasoning,omitempty"`
+	ThinkingLevels   []string `json:"thinkingLevels,omitempty"`
+	Input            []string `json:"input,omitempty"`
+	Cost             any      `json:"cost,omitempty"`
+	Available        bool     `json:"available"`
+	Hidden           bool     `json:"hidden"`
 }
 
 type SessionSettlement struct {
@@ -77,6 +78,7 @@ type QueueBlock struct {
 }
 
 type SessionSummary struct {
+	ConfigOptions   []any              `json:"configOptions,omitempty"`
 	SessionID       string             `json:"sessionId"`
 	ProjectID       string             `json:"projectId"`
 	CWD             string             `json:"cwd"`

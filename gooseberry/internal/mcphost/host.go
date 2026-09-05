@@ -273,7 +273,7 @@ func (s *Service) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		module.ServeHTTP(response, request)
 		return
 	}
-	if path == "/mcp" || path == StatusPath || path == "/v1/browser" || strings.HasPrefix(path, "/v1/artifacts/") || path == "/v1/app-views" || strings.HasPrefix(path, "/v1/app-views/") {
+	if path == "/mcp" || path == StatusPath || path == "/v1/browser" || path == "/v1/browser/leases" || strings.HasPrefix(path, "/v1/artifacts/") || path == "/v1/app-views" || strings.HasPrefix(path, "/v1/app-views/") {
 		if module := s.legacyBrowser(); module != nil {
 			module.ServeHTTP(response, request)
 			return

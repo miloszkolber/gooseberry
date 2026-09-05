@@ -497,6 +497,16 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 			return nil, fmt.Errorf("malformed session request")
 		}
 		return ack(h.Sessions.SetThinking(ctx, request.SessionID, request.Level))
+	case "session.setConfigOption":
+		var request struct {
+			SessionID string `json:"sessionId"`
+			ConfigID  string `json:"configId"`
+			Value     string `json:"value"`
+		}
+		if h.Sessions == nil || decodeParams(raw, &request) != nil || request.SessionID == "" || request.ConfigID == "" {
+			return nil, fmt.Errorf("malformed session configuration request")
+		}
+		return ack(h.Sessions.SetConfigOption(ctx, request.SessionID, request.ConfigID, request.Value))
 	case "session.setMode":
 		var request struct {
 			SessionID string `json:"sessionId"`
@@ -588,11 +598,6 @@ func (h CoreHandler) Handle(ctx context.Context, method string, raw json.RawMess
 			return nil, fmt.Errorf("Goose administration is not configured")
 		}
 		return h.Admin.RefreshModels(ctx)
-	case "model.default":
-		if h.Admin == nil {
-			return nil, fmt.Errorf("Goose administration is not configured")
-		}
-		return h.Admin.DefaultModel(ctx)
 	case "model.setVisibility":
 		var request struct {
 			Provider string `json:"provider"`

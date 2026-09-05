@@ -1,6 +1,5 @@
 import type {
 	AssistantMessage,
-	ExtUiRequest,
 	ImageContent,
 	McpAppAttachment,
 	SubagentActivity,
@@ -11,11 +10,6 @@ import type {
 export type ChatAttachment =
 	| { kind: "image"; name: string; content: ImageContent }
 	| { kind: "text"; name: string; content: TextResourceAttachment };
-
-export type ExtUiDialogRequest = Extract<
-	ExtUiRequest,
-	{ kind: "select" | "confirm" | "input" | "editor" }
->;
 
 export type ChatTurn =
 	| {
@@ -53,11 +47,20 @@ export interface CompactionState {
 	resuming?: boolean;
 }
 
-export type ToolStatus = "running" | "done" | "error";
+export type ToolStatus = "running" | "done" | "error" | "interrupted";
 
 export interface ToolResultState {
 	status: ToolStatus;
 	raw: unknown;
 	app?: McpAppAttachment;
 	subagentActivity?: SubagentActivity;
+}
+
+export interface ChatSubmission {
+	text: string;
+	attachments: ChatAttachment[];
+	behavior: "send" | "steer" | "queue" | "interrupt";
+	busy: boolean;
+	error?: string;
+	optimisticTurnId?: string;
 }

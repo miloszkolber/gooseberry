@@ -59,7 +59,7 @@ import type {
 	TextResourceAttachment,
 } from "./domain";
 
-export const PROTOCOL_VERSION = 82;
+export const PROTOCOL_VERSION = 83;
 
 /**
  * Maximum UTF-8 byte length for one serialized browser WebSocket request.
@@ -121,6 +121,7 @@ export const WS_METHODS = {
 	sessionSetModel: "session.setModel",
 	sessionSetThinkingLevel: "session.setThinkingLevel",
 	sessionSetMode: "session.setMode",
+	sessionSetConfigOption: "session.setConfigOption",
 	sessionGetStats: "session.getStats",
 	sessionGetCommands: "session.getCommands",
 	sessionGetAgentMentions: "session.getAgentMentions",
@@ -141,7 +142,6 @@ export const WS_METHODS = {
 	sessionAppOperationCancel: "session.appOperationCancel",
 	modelList: "model.list",
 	modelRefresh: "model.refresh",
-	modelDefault: "model.default",
 	modelClampThinking: "model.clampThinking",
 	modelSetVisibility: "model.setVisibility",
 	modelSetAllVisibility: "model.setAllVisibility",
@@ -342,6 +342,10 @@ export interface WsMethodMap {
 	"session.unarchive": { params: { projectId: string; sessionId: string }; result: Ack };
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
+	"session.setConfigOption": {
+		params: { sessionId: string; configId: string; value: string };
+		result: Ack;
+	};
 	"session.setMode": { params: { sessionId: string; modeId: string }; result: Ack };
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };
 	"session.getCommands": { params: { sessionId: string }; result: SlashCommandInfo[] };
@@ -441,10 +445,6 @@ export interface WsMethodMap {
 		result: { levels: ThinkingLevel[] };
 	};
 	"model.refresh": { params: { force?: boolean }; result: RefreshedModels };
-	"model.default": {
-		params: Record<string, never>;
-		result: { model: WireModel | null; thinkingLevel: ThinkingLevel };
-	};
 	"model.setVisibility": {
 		params: { provider: string; id: string; hidden: boolean };
 		result: WireModel[];

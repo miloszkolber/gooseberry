@@ -6,6 +6,7 @@ import type { ChatTurn, CompactionState, ToolResultState } from "./types";
 export interface ToolCallData {
 	toolCallId: string;
 	toolName: string;
+	title?: string;
 	args: Record<string, unknown>;
 	tool: ToolResultState | undefined;
 	dead: boolean;
@@ -39,6 +40,71 @@ export type ChatRow =
 			live: boolean;
 	  }
 	| { kind: "divider"; id: string; data: TurnDividerData };
+
+function sameFields(first: object, second: object): boolean {
+	const keys = Object.keys(first);
+	return (
+		keys.length === Object.keys(second).length &&
+		keys.every(
+			(key) => Object.hasOwn(second, key) && Reflect.get(first, key) === Reflect.get(second, key),
+		)
+	);
+}
+
+function sameItems<T>(
+	first: readonly T[] | undefined,
+	second: readonly T[] | undefined,
+	same: (a: T, b: T) => boolean,
+): boolean {
+	return (
+		first === second ||
+		(first !== undefined &&
+			second !== undefined &&
+			first.length === second.length &&
+			first.every((item, index) => same(item, second[index] as T)))
+	);
+}
+
+function sameRow(first: ChatRow, second: ChatRow): boolean {
+	if (first.kind !== second.kind || first.id !== second.id) return false;
+	if (first.kind === "divider" && second.kind === "divider") {
+		return (
+			first.data.toolCount === second.data.toolCount &&
+			first.data.elapsedMs === second.data.elapsedMs &&
+			sameItems(first.data.changedFiles, second.data.changedFiles, Object.is)
+		);
+	}
+	if (first.kind === "activity" && second.kind === "activity") {
+		return first.live === second.live && sameItems(first.steps, second.steps, sameFields);
+	}
+	if (first.kind === "image" && second.kind === "image")
+		return sameFields(first.image, second.image);
+	if (first.kind === "user" && second.kind === "user") {
+		return (
+			first.message === second.message &&
+			sameItems(first.imageAttachmentNames, second.imageAttachmentNames, Object.is)
+		);
+	}
+	return sameFields(first, second);
+}
+
+// The runtime is immutable, but projecting it creates fresh display objects.
+// Reuse unchanged rows so paging and streaming do not invalidate every mounted
+// component. The cache contains only the current chat's current rows.
+export function createRowDeriver(): typeof deriveRows {
+	let previous = new Map<string, ChatRow>();
+	return (turns, tools, streaming) => {
+		const next = new Map<string, ChatRow>();
+		const result = deriveRows(turns, tools, streaming).map((row) => {
+			const old = previous.get(row.id);
+			const stable = old && sameRow(old, row) ? old : row;
+			next.set(row.id, stable);
+			return stable;
+		});
+		previous = next;
+		return result;
+	};
+}
 
 export function deriveRows(
 	turns: ChatTurn[],
@@ -86,6 +152,7 @@ export function deriveRows(
 					const data: ToolCallData = {
 						toolCallId: block.id,
 						toolName,
+						...(block.title ? { title: block.title } : {}),
 						args: (typeof block.arguments === "object" && block.arguments !== null
 							? block.arguments
 							: {}) as Record<string, unknown>,

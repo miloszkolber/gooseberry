@@ -69,7 +69,7 @@ func TestGooseAdminModelsRequireUsableProviderInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"missing": false, "false": false, "unavailable": false, "refresh-error": false, "available": true}
+	want := map[string]bool{"missing": false, "false": false, "unavailable": false, "refresh-error": true, "available": true}
 	for _, model := range models {
 		if model.ID != "model" {
 			t.Fatalf("unexpected model: %#v", model)
@@ -90,11 +90,11 @@ func TestGooseAdminModelsRequireUsableProviderInventory(t *testing.T) {
 		if provider["id"] != "refresh-error" {
 			continue
 		}
-		if provider["available"] != false || provider["availableModelCount"] != 0 || provider["detail"] != "authentication failed" {
-			t.Fatalf("refresh failure reported as usable: %#v", provider)
+		if provider["available"] != true || provider["availableModelCount"] != 1 || provider["detail"] != "authentication failed" {
+			t.Fatalf("inventory failure changed runtime availability: %#v", provider)
 		}
-		if _, err := admin.SaveDefaults(ctx, "refresh-error", nil); err == nil {
-			t.Fatal("accepted a provider with a current inventory failure as the default")
+		if _, err := admin.SaveDefaults(ctx, "refresh-error", nil); err != nil {
+			t.Fatalf("discovery failure incorrectly blocked the reported available runtime: %v", err)
 		}
 		return
 	}

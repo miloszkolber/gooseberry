@@ -38,6 +38,6 @@ Gooseberry is designed for one trusted user. Goose tools run with the host user'
 
 ## Documentation
 
-[Architecture](docs/architecture.md) · [Deployment](docs/deployment.md) · [Goose and ACP](docs/acp.md) · [Development](docs/development.md) · [Security](docs/security.md) · [Roadmap](docs/roadmap.md)
+[Architecture](docs/architecture.md) · [Deployment](docs/deployment.md) · [MCP reference](docs/mcp.md) · [Goose and ACP](docs/acp.md) · [Development](docs/development.md) · [Security](docs/security.md) · [Roadmap](docs/roadmap.md)
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

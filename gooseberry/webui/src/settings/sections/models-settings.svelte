@@ -76,7 +76,7 @@ async function load(force = false): Promise<void> {
 				]).then(([catalog, providerReport]) => ({
 					models: catalog,
 					report: providerReport,
-					complete: true,
+					complete: catalog.every((model) => model.metadataComplete === true),
 				}));
 		if (
 			!mounted ||
@@ -87,7 +87,7 @@ async function load(force = false): Promise<void> {
 		}
 		models = result.models;
 		report = result.report;
-		metadataIncomplete = force && !result.complete;
+		metadataIncomplete = !result.complete;
 		failed = false;
 	} catch (error) {
 		if (!mounted || sequence !== loadSequence) return;
@@ -184,9 +184,9 @@ async function setAllVisibility(hidden: boolean): Promise<void> {
 			</div>
 			<div class="truncate text-text-muted tr-text-metadata">{model.id}</div>
 			<div class="mt-xs flex flex-wrap items-center gap-xs text-text-muted tr-text-metadata">
-				<span class="flex items-center gap-1" title="Text input">
+				{#if model.input?.includes("text")}<span class="flex items-center gap-1" title="Text input">
 					<Icon name="type" size={12} /> Text
-				</span>
+				</span>{/if}
 				{#if model.input?.includes("image")}
 					<span class="flex items-center gap-1" title="Image input">
 						<Icon name="image" size={12} /> Image
@@ -236,8 +236,8 @@ async function setAllVisibility(hidden: boolean): Promise<void> {
 {/snippet}
 
 <div data-testid="settings-models" class="flex flex-col gap-lg">
-	<div class="flex items-start justify-between gap-sm">
-		<div class="flex flex-col gap-xs">
+	<div class="flex flex-wrap items-start justify-between gap-sm">
+		<div class="flex min-w-0 flex-1 basis-64 flex-col gap-xs">
 			<h3 class="tr-title-section text-text-default">
 				Models <span class="font-normal text-text-muted">({catalog.length})</span>
 			</h3>
@@ -248,7 +248,7 @@ async function setAllVisibility(hidden: boolean): Promise<void> {
 					: ""}
 			</p>
 		</div>
-		<div class="flex shrink-0 items-center gap-xs">
+		<div class="flex flex-wrap items-center gap-xs">
 			<Button
 				variant="outline"
 				size="sm"

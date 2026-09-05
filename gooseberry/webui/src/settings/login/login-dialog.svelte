@@ -2,20 +2,23 @@
 import Button from "@/components/button.svelte";
 import Dialog from "@/components/dialog.svelte";
 import Icon from "@/components/icon.svelte";
+import { errorText } from "@/connection";
 import type { LoginState } from "./login-state";
 
 interface Props {
 	state: LoginState;
 	providerName: string;
-	onReply: (value: string) => void;
-	onCancel: () => void;
-	onClose: () => void;
+	onReply: (value: string) => void | Promise<void>;
+	onCancel: () => void | Promise<void>;
+	onClose: () => void | Promise<void>;
 }
 
 let { state: loginState, providerName, onReply, onCancel, onClose }: Props = $props();
 let prompt = $state<HTMLInputElement>();
 let openedUrl = $state<string | null>(null);
 let open = $state(true);
+let submitting = $state(false);
+let submitError = $state<string | null>(null);
 let terminal = $derived(loginState.status !== "active");
 let title = $derived(
 	loginState.status === "success"
@@ -45,15 +48,38 @@ function openUrl(url: string): void {
 	window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function submitPrompt(): void {
-	const value = prompt?.value.trim() ?? "";
-	const allowEmpty = loginState.input?.kind === "prompt" && loginState.input.allowEmpty;
-	if (value || allowEmpty) onReply(value);
+async function reply(value: string): Promise<void> {
+	if (submitting) return;
+	submitting = true;
+	submitError = null;
+	const input = loginState.input;
+	try {
+		await onReply(value);
+	} catch (cause) {
+		if (loginState.status === "active" && loginState.input === input)
+			submitError = errorText(cause);
+	} finally {
+		submitting = false;
+	}
 }
 
-function dismiss(): void {
-	if (terminal) onClose();
-	else onCancel();
+function submitPrompt(): void {
+	const value = prompt?.value ?? "";
+	const allowEmpty = loginState.input?.kind === "prompt" && loginState.input.allowEmpty;
+	if (value.trim() || allowEmpty) void reply(value);
+}
+
+async function dismiss(): Promise<void> {
+	if (submitting) return;
+	submitting = true;
+	try {
+		if (terminal) await onClose();
+		else await onCancel();
+	} catch (cause) {
+		submitError = errorText(cause);
+	} finally {
+		submitting = false;
+	}
 }
 </script>
 
@@ -64,10 +90,12 @@ function dismiss(): void {
 	testid="login-dialog"
 	class="max-h-[85vh] overflow-y-auto"
 	onOpenChange={(next) => {
-		if (!next) dismiss();
+		if (!next) void dismiss();
+		return false;
 	}}
 >
 	<div data-provider={loginState.providerId} data-status={loginState.status}>
+{#if terminal && submitError}<p role="alert" class="text-feedback-error tr-text-ui">{submitError}</p>{/if}
 		{#if loginState.status === "success"}
 			<p
 				class="flex items-center gap-sm text-feedback-success tr-text-ui"
@@ -86,6 +114,7 @@ function dismiss(): void {
 			</p>
 		{:else}
 			<div class="flex flex-col gap-md">
+				{#if submitError}<p role="alert" class="text-feedback-error tr-text-ui">{submitError} You can retry or cancel.</p>{/if}
 				{#if loginState.url}
 					<div class="flex flex-col gap-xs">
 						<Button data-testid="login-open-url" onclick={() => openUrl(loginState.url ?? "")}>
@@ -134,7 +163,8 @@ function dismiss(): void {
 								type="button"
 								data-testid="login-option"
 								data-option={option.id}
-								onclick={() => onReply(option.id)}
+								disabled={submitting}
+								onclick={() => void reply(option.id)}
 								class="btn justify-start text-left"
 								data-variant="outline"
 							>
@@ -154,15 +184,17 @@ function dismiss(): void {
 								bind:this={prompt}
 								class="text-field-input min-w-0 flex-1"
 								data-testid="login-input"
+								disabled={submitting}
+								aria-label={loginState.input.message || "Provider configuration"}
 								type={loginState.input.secret ? "password" : "text"}
 								placeholder={loginState.input.placeholder ?? ""}
 								onkeydown={(event) => {
-									if (event.key !== "Enter") return;
+									if (event.isComposing || event.keyCode === 229 || event.key !== "Enter") return;
 									event.preventDefault();
 									submitPrompt();
 								}}
 							/>
-							<Button data-testid="login-submit" onclick={submitPrompt}>Submit</Button>
+							<Button data-testid="login-submit" disabled={submitting} onclick={submitPrompt}>{submitting ? "Submitting…" : "Submit"}</Button>
 						</div>
 					</div>
 				{/if}
@@ -190,9 +222,9 @@ function dismiss(): void {
 
 	{#snippet actions()}
 		{#if terminal}
-			<Button variant="outline" data-testid="login-close" onclick={onClose}>Done</Button>
+			<Button variant="outline" data-testid="login-close" disabled={submitting} onclick={() => void dismiss()}>Done</Button>
 		{:else}
-			<Button variant="outline" data-testid="login-cancel" onclick={onCancel}>Cancel</Button>
+			<Button variant="outline" data-testid="login-cancel" disabled={submitting} onclick={() => void dismiss()}>Cancel</Button>
 		{/if}
 	{/snippet}
 </Dialog>

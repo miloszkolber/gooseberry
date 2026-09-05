@@ -583,20 +583,31 @@ func dialGoose(ctx context.Context, url, secret string, events GooseEvents, gene
 	}
 	connectionContext, cancel := context.WithCancel(context.Background())
 	webSocket.SetReadLimit(gooseReadLimit)
-	stream := &acpWebSocketStream{ctx: connectionContext, connection: webSocket}
-	sink := &gooseSink{events: events, generation: generation}
+	drained := make(chan struct{}, 1)
+	stream := &acpWebSocketStream{ctx: connectionContext, connection: webSocket, drained: drained}
+	sink := &gooseSink{events: events, generation: generation, drained: drained}
 	return &gooseConnection{client: acp.NewClientSideConnection(sink, stream, stream), stream: stream, cancel: cancel, sink: sink}, nil
 }
 
 type acpWebSocketStream struct {
-	ctx        context.Context
-	connection *websocket.Conn
-	readBuffer []byte
-	writeMu    sync.Mutex
+	ctx                 context.Context
+	connection          *websocket.Conn
+	readBuffer          []byte
+	writeMu             sync.Mutex
+	drained             chan struct{}
+	queuedNotifications int
+	waitForDrain        bool
 }
 
 func (s *acpWebSocketStream) Read(buffer []byte) (int, error) {
 	for len(s.readBuffer) == 0 {
+		if s.waitForDrain {
+			if err := s.awaitNotifications(); err != nil {
+				s.connection.CloseNow()
+				return 0, err
+			}
+			s.waitForDrain = false
+		}
 		messageType, payload, err := s.connection.Read(s.ctx)
 		if err != nil {
 			return 0, err
@@ -604,7 +615,10 @@ func (s *acpWebSocketStream) Read(buffer []byte) (int, error) {
 		if messageType != websocket.MessageText {
 			return 0, fmt.Errorf("ACP WebSocket received a non-text frame")
 		}
-		s.readBuffer = append(payload, '\n')
+		if err := s.frameIncoming(payload); err != nil {
+			s.connection.CloseNow()
+			return 0, err
+		}
 	}
 	count := copy(buffer, s.readBuffer)
 	s.readBuffer = s.readBuffer[count:]
@@ -618,7 +632,9 @@ func (s *acpWebSocketStream) Write(payload []byte) (int, error) {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := s.connection.Write(s.ctx, websocket.MessageText, frame); err != nil {
+	bounded, cancel := context.WithTimeout(s.ctx, 15*time.Second)
+	defer cancel()
+	if err := s.connection.Write(bounded, websocket.MessageText, frame); err != nil {
 		return 0, err
 	}
 	return len(payload), nil
@@ -633,9 +649,18 @@ type gooseSink struct {
 	events     GooseEvents
 	generation uint64
 	goose      atomic.Bool
+	drained    chan struct{}
 }
 
 func (s *gooseSink) HandleExtensionMethod(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if method == notificationCheckpoint {
+		select {
+		case s.drained <- struct{}{}:
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected internal notification checkpoint")
+		}
+	}
 	if strings.HasPrefix(method, "_goose/") && !s.goose.Load() {
 		return nil, acp.NewMethodNotFound(method)
 	}

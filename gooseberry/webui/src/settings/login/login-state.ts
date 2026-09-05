@@ -72,8 +72,10 @@ export function foldLoginFrame(state: LoginState, frame: LoginFrame): LoginState
 				},
 			};
 		}
-		case "progress":
-			return { ...state, progress: frame.message };
+		case "progress": {
+			const { input: _input, ...rest } = state;
+			return { ...rest, progress: frame.message };
+		}
 		case "success": {
 			const { input: _i, progress: _p, ...rest } = state;
 			return { ...rest, status: "success" };

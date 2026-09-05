@@ -2,7 +2,7 @@ import type {
 	AgentEvent,
 	AskUserQuestionResult,
 	AssistantMessage,
-	ExtUiRequest,
+	SessionConfigOption,
 	SessionGoal,
 	SessionModeState,
 	SessionPlanState,
@@ -15,10 +15,12 @@ import type {
 	WireModel,
 } from "@gooseberry/contracts";
 import { matchesSkillInvocationCommand, parseSkillInvocation, randomId, userText } from "../../lib";
-import { assistantFailureText } from "./assistant-failure";
-import type { ChatTurn, CompactionState, ExtUiDialogRequest, ToolResultState } from "./types";
+import { assistantFailureText, terminalOutcome } from "./assistant-failure";
+import { createFoldState, type FoldState } from "./fold-state";
+import type { ChatSubmission, ChatTurn, CompactionState, ToolResultState } from "./types";
 
 export interface SessionRuntime {
+	configOptions: readonly SessionConfigOption[];
 	/** The immediate Goose session parent for a forked chat, when recorded. */
 	parentSessionId?: string;
 	turns: ChatTurn[];
@@ -39,10 +41,9 @@ export interface SessionRuntime {
 	commandRevision: number;
 	configRevision: number;
 	draft: string;
-	pendingExtUi: ExtUiDialogRequest | null;
-	extUiQueue: ExtUiDialogRequest[];
-	extUiStatus: Record<string, string>;
-	extUiWidget: Record<string, string[]>;
+	disclosures: FoldState;
+	submission: ChatSubmission | null;
+	activity: string | null;
 	goal: SessionGoalRuntime;
 	goalRevision: number;
 }
@@ -64,6 +65,7 @@ export function createSessionRuntime(
 	modes: SessionModeState | null = null,
 ): SessionRuntime {
 	return {
+		configOptions: [],
 		turns: [],
 		turnIdByMessageIndex: {},
 		transcript: null,
@@ -82,10 +84,9 @@ export function createSessionRuntime(
 		commandRevision: 0,
 		configRevision: 0,
 		draft: "",
-		pendingExtUi: null,
-		extUiQueue: [],
-		extUiStatus: {},
-		extUiWidget: {},
+		disclosures: createFoldState(),
+		submission: null,
+		activity: null,
 		goal: {
 			projectAreaId: null,
 			status: "idle",
@@ -194,14 +195,26 @@ function appendAssistantText(
 function updateStreamingAssistant(
 	rt: SessionRuntime,
 	updateContent: (content: AssistantMessage["content"]) => AssistantMessage["content"],
+	messageId?: string | null,
 ): SessionRuntime {
-	const id = rt.currentAssistantId ?? randomId("turn");
+	const current = rt.turns.find((turn) => turn.id === rt.currentAssistantId);
+	const changed =
+		typeof messageId === "string" &&
+		messageId.length > 0 &&
+		current?.kind === "assistant" &&
+		current.message.messageId !== messageId;
+	const id = changed ? randomId("turn") : (rt.currentAssistantId ?? randomId("turn"));
 	const existing = rt.turns.find((turn) => turn.id === id && turn.kind === "assistant");
 	const turn: ChatTurn = {
 		kind: "assistant",
 		id,
 		message: {
 			role: "assistant",
+			...(messageId
+				? { messageId }
+				: existing?.kind === "assistant" && existing.message.messageId
+					? { messageId: existing.message.messageId }
+					: {}),
 			content: updateContent(existing?.kind === "assistant" ? existing.message.content : []),
 		},
 		streaming: true,
@@ -213,7 +226,9 @@ function updateStreamingAssistant(
 		...rt,
 		isStreaming: true,
 		currentAssistantId: id,
-		turns: existing ? rt.turns.map((item) => (item.id === id ? turn : item)) : [...rt.turns, turn],
+		turns: existing
+			? rt.turns.map((item) => (item.id === id ? turn : item))
+			: [...(changed ? clearTurnStreaming(rt.turns) : rt.turns), turn],
 	};
 }
 
@@ -240,26 +255,36 @@ function bindLatestToolResult(
 
 export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): SessionRuntime {
 	switch (event.type) {
+		case "activity":
+			return { ...rt, activity: event.text || null };
 		case "run-start":
 			return { ...rt, isStreaming: true, attemptAssistantId: null };
 		case "text":
-			return updateStreamingAssistant(rt, (content) =>
-				appendAssistantText(content, event.text ?? ""),
+			return updateStreamingAssistant(
+				rt,
+				(content) => appendAssistantText(content, event.text ?? ""),
+				event.messageId,
 			);
 		case "image": {
 			const image = event.image;
-			return image ? updateStreamingAssistant(rt, (content) => [...content, image]) : rt;
+			return image
+				? updateStreamingAssistant(rt, (content) => [...content, image], event.messageId)
+				: rt;
 		}
 		case "thinking":
-			return updateStreamingAssistant(rt, (content) => {
-				const prior = content.at(-1);
-				return prior?.type === "thinking"
-					? [
-							...content.slice(0, -1),
-							{ ...prior, thinking: `${prior.thinking}${event.text ?? ""}` },
-						]
-					: [...content, { type: "thinking", thinking: event.text ?? "" }];
-			});
+			return updateStreamingAssistant(
+				rt,
+				(content) => {
+					const prior = content.at(-1);
+					return prior?.type === "thinking"
+						? [
+								...content.slice(0, -1),
+								{ ...prior, thinking: `${prior.thinking}${event.text ?? ""}` },
+							]
+						: [...content, { type: "thinking", thinking: event.text ?? "" }];
+				},
+				event.messageId,
+			);
 		case "tool-start": {
 			const toolCallId = event.toolCallId;
 			if (!toolCallId) return rt;
@@ -316,7 +341,11 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 			};
 			return {
 				...rt,
-				turns: bindLatestToolResult(rt.turns, toolCallId, result),
+				turns: bindLatestToolResult(
+					event.toolCall ? patchToolCall(rt.turns, toolCallId, event.toolCall) : rt.turns,
+					toolCallId,
+					result,
+				),
 				toolResults: { ...rt.toolResults, [toolCallId]: result },
 			};
 		}
@@ -362,37 +391,57 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 				: rt;
 		case "config": {
 			const value = event.configOptions?.find(
-				(option) => option.id === "thinking_effort",
+				(option) => option.id === "thinking_effort" || option.category === "thought_level",
 			)?.currentValue;
-			return event.configOptions || event.model
+			return event.configOptions !== undefined || event.model !== undefined
 				? {
 						...rt,
-						model: event.model ?? rt.model,
-						thinkingLevel: typeof value === "string" ? value : rt.thinkingLevel,
+						configOptions: event.configOptions ?? rt.configOptions,
+						model: event.model !== undefined ? event.model : rt.model,
+						thinkingLevel:
+							typeof value === "string"
+								? value
+								: event.configOptions !== undefined
+									? "off"
+									: rt.thinkingLevel,
 						configRevision: rt.configRevision + 1,
 					}
 				: rt;
 		}
-		case "complete":
+		case "complete": {
+			const outcome = terminalOutcome({ stopReason: event.status ?? "unknown" });
+			const settled = settleUnfinishedTools(rt.turns, rt.toolResults);
 			return {
 				...rt,
+				toolResults: settled.toolResults,
 				isStreaming: false,
+				activity: null,
 				currentAssistantId: null,
 				turns: [
-					...clearTurnStreaming(rt.turns),
-					{ kind: "system", id: randomId("turn"), text: "✓ Done", endedAt: Date.now() },
+					...clearTurnStreaming(settled.turns),
+					{
+						kind: outcome?.failed ? "error" : "system",
+						id: randomId("turn"),
+						text: outcome?.text ?? "Run ended.",
+						endedAt: Date.now(),
+					},
 				],
 			};
-		case "error":
+		}
+		case "error": {
+			const settled = settleUnfinishedTools(rt.turns, rt.toolResults);
 			return {
 				...rt,
+				toolResults: settled.toolResults,
 				isStreaming: false,
+				activity: null,
 				currentAssistantId: null,
 				turns: [
-					...clearTurnStreaming(rt.turns),
+					...clearTurnStreaming(settled.turns),
 					{ kind: "error", id: randomId("turn"), text: event.error ?? "Agent request failed." },
 				],
 			};
+		}
 		case "session-info":
 			return rt;
 		case "agent_start":
@@ -559,6 +608,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 					closer,
 				],
 				isStreaming: false,
+				activity: null,
 				currentAssistantId: null,
 				attemptAssistantId: null,
 			};
@@ -601,6 +651,26 @@ export function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): Sessi
 	}
 }
 
+export function settleUnfinishedTools(turns: ChatTurn[], results: Record<string, ToolResultState>) {
+	const toolResults = { ...results };
+	const settledTurns = turns.map((turn): ChatTurn => {
+		if (turn.kind !== "assistant") return turn;
+		const blocks = { ...turn.toolResultsByBlock };
+		for (let index = 0; index < turn.message.content.length; index++) {
+			const block = turn.message.content[index];
+			if (block?.type !== "toolCall") continue;
+			const result = Object.hasOwn(blocks, index) ? blocks[index] : results[block.id];
+			if (!result || result.status === "running") {
+				const interrupted: ToolResultState = { ...result, status: "interrupted", raw: result?.raw };
+				blocks[index] = interrupted;
+				toolResults[block.id] = interrupted;
+			}
+		}
+		return { ...turn, toolResultsByBlock: blocks };
+	});
+	return { turns: settledTurns, toolResults };
+}
+
 function userResourceMarkerCount(message: UserMessage): number {
 	return typeof message.content === "string"
 		? 0
@@ -622,46 +692,31 @@ function sameUserResourceMarkers(left: UserMessage, right: UserMessage): boolean
 	);
 }
 
-export function reduceSessionExtUi(
-	rt: SessionRuntime,
-	request: Exclude<ExtUiRequest, { kind: "setTitle" }>,
-): SessionRuntime {
-	switch (request.kind) {
-		case "dismiss":
-			if (rt.pendingExtUi?.id === request.id) {
-				const [next, ...rest] = rt.extUiQueue;
-				return { ...rt, pendingExtUi: next ?? null, extUiQueue: rest };
-			}
-			if (rt.extUiQueue.some((q) => q.id === request.id))
-				return { ...rt, extUiQueue: rt.extUiQueue.filter((q) => q.id !== request.id) };
-			return rt;
-		case "select":
-		case "confirm":
-		case "input":
-		case "editor":
-			return rt.pendingExtUi
-				? { ...rt, extUiQueue: [...rt.extUiQueue, request] }
-				: { ...rt, pendingExtUi: request };
-		case "notify":
-			return {
-				...rt,
-				turns: [...rt.turns, { kind: "system", id: randomId("turn"), text: request.message }],
-			};
-		case "setStatus": {
-			if (request.text === null) {
-				const { [request.key]: _dropped, ...extUiStatus } = rt.extUiStatus;
-				return { ...rt, extUiStatus };
-			}
-			return { ...rt, extUiStatus: { ...rt.extUiStatus, [request.key]: request.text } };
-		}
-		case "setWidget": {
-			if (request.content === null) {
-				const { [request.key]: _dropped, ...extUiWidget } = rt.extUiWidget;
-				return { ...rt, extUiWidget };
-			}
-			return { ...rt, extUiWidget: { ...rt.extUiWidget, [request.key]: request.content } };
-		}
-		default:
-			return rt;
+function patchToolCall(
+	turns: ChatTurn[],
+	id: string,
+	call: import("@gooseberry/contracts").ToolCall,
+): ChatTurn[] {
+	for (let index = turns.length - 1; index >= 0; index--) {
+		const turn = turns[index];
+		if (
+			turn?.kind !== "assistant" ||
+			!turn.message.content.some((block) => block.type === "toolCall" && block.id === id)
+		)
+			continue;
+		return turns.map((candidate, i) =>
+			i === index
+				? {
+						...turn,
+						message: {
+							...turn.message,
+							content: turn.message.content.map((block) =>
+								block.type === "toolCall" && block.id === id ? { ...block, ...call } : block,
+							),
+						},
+					}
+				: candidate,
+		);
 	}
+	return turns;
 }

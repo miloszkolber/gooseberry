@@ -17,6 +17,9 @@ type GooseAdmin struct {
 	canonicalSlots   chan struct{}
 	canonicalMu      sync.Mutex
 	canonicalFlights map[canonicalKey]*canonicalFlight
+	providerMu       sync.Mutex
+	providerRevision uint64
+	providerFlights  map[providerInventoryKey]*providerInventoryFlight
 	sessions         *SessionManager
 	extensionMu      sync.Mutex
 	toolMu           sync.Mutex
@@ -25,7 +28,7 @@ type GooseAdmin struct {
 }
 
 func NewGooseAdmin(client *GooseClient, settings *Settings) *GooseAdmin {
-	admin := &GooseAdmin{client: client, settings: settings, canonicalSlots: make(chan struct{}, 4), canonicalFlights: make(map[canonicalKey]*canonicalFlight)}
+	admin := &GooseAdmin{client: client, settings: settings, canonicalSlots: make(chan struct{}, 4), canonicalFlights: make(map[canonicalKey]*canonicalFlight), providerFlights: make(map[providerInventoryKey]*providerInventoryFlight)}
 	admin.logins = NewProviderLogins(admin, nil)
 	return admin
 }
@@ -37,6 +40,9 @@ type gooseProvider struct {
 	Configured       *bool                    `json:"configured"`
 	Available        *bool                    `json:"available"`
 	VisibleInSetup   *bool                    `json:"visibleInSetup"`
+	Deprecated       bool                     `json:"deprecated"`
+	Replacement      string                   `json:"replacement"`
+	Configuration    string                   `json:"-"`
 	ACP              bool                     `json:"acp"`
 	LastRefreshError string                   `json:"lastRefreshError"`
 	Refreshing       bool                     `json:"refreshing"`
@@ -62,7 +68,7 @@ type gooseModel struct {
 	Modalities      []string `json:"modalities"`
 }
 
-func (a *GooseAdmin) providers(ctx context.Context, ids []string) ([]gooseProvider, error) {
+func (a *GooseAdmin) readProviders(ctx context.Context, ids []string) ([]gooseProvider, error) {
 	if ids == nil {
 		ids = []string{}
 	}
@@ -77,6 +83,7 @@ func (a *GooseAdmin) providers(ctx context.Context, ids []string) ([]gooseProvid
 			return nil, fmt.Errorf("Goose provider response is missing providerId")
 		}
 	}
+	a.resolveDefaultProviderConfiguration(ctx, response.Entries)
 	return response.Entries, nil
 }
 
@@ -143,6 +150,7 @@ func (a *GooseAdmin) enrichModels(parent context.Context, models []WireModel) bo
 			for index := range jobs {
 				model := &models[index]
 				canonical, completed := a.canonicalModel(ctx, model.Provider, model.ID)
+				model.MetadataComplete = &completed
 				if !completed {
 					completeMu.Lock()
 					complete = false
@@ -195,6 +203,9 @@ send:
 func (a *GooseAdmin) RefreshModels(ctx context.Context) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// Refreshes must not join an inventory request made before the mutation.
+	a.invalidateProviderInventory()
+	defer a.invalidateProviderInventory()
 	var refresh struct {
 		Started []string `json:"started"`
 		Skipped []struct {
@@ -205,6 +216,7 @@ func (a *GooseAdmin) RefreshModels(ctx context.Context) (map[string]any, error) 
 	if err := a.call(ctx, "_goose/unstable/providers/inventory/refresh", map[string]any{"providerIds": []string{}}, &refresh); err != nil {
 		return nil, err
 	}
+	a.invalidateProviderInventory()
 	started := make(map[string]bool, len(refresh.Started))
 	for _, providerID := range refresh.Started {
 		started[providerID] = true
@@ -241,23 +253,9 @@ func (a *GooseAdmin) RefreshModels(ctx context.Context) (map[string]any, error) 
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+	a.invalidateProviderInventory()
 	models, metadataComplete, err := a.models(ctx)
 	return map[string]any{"models": models, "complete": metadataComplete}, err
-}
-
-func (a *GooseAdmin) DefaultModel(ctx context.Context) (map[string]any, error) {
-	models, err := a.Models(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var selected *WireModel
-	for index := range models {
-		if models[index].Available && !models[index].Hidden {
-			selected = &models[index]
-			break
-		}
-	}
-	return map[string]any{"model": selected, "thinkingLevel": "off"}, nil
 }
 
 func (a *GooseAdmin) SetModelVisibility(ctx context.Context, provider, id string, hidden bool) ([]WireModel, error) {
@@ -274,20 +272,7 @@ func (a *GooseAdmin) SetModelVisibility(ctx context.Context, provider, id string
 	if !found {
 		return nil, fmt.Errorf("unknown model: %s/%s", provider, id)
 	}
-	config, err := a.settings.Get()
-	if err != nil {
-		return nil, err
-	}
-	refs := config.HiddenModels[:0]
-	for _, ref := range config.HiddenModels {
-		if ref.Provider != provider || ref.ID != id {
-			refs = append(refs, ref)
-		}
-	}
-	if hidden {
-		refs = append(refs, ModelReference{Provider: provider, ID: id})
-	}
-	if _, err := a.settings.Update(AppConfigPatch{HiddenModels: &refs}); err != nil {
+	if _, err := a.settings.SetModelVisibility(provider, id, hidden); err != nil {
 		return nil, err
 	}
 	for index := range models {
@@ -324,14 +309,12 @@ func (a *GooseAdmin) ProviderStatus(ctx context.Context) (map[string]any, error)
 	result := make([]map[string]any, 0, len(providers))
 	for _, provider := range providers {
 		configured := boolDefault(provider.Configured, false)
-		if !boolDefault(provider.VisibleInSetup, true) && !configured {
-			continue
-		}
 		available := providerRuntimeAvailable(provider)
-		canOAuth, canAPIKey := false, false
+		canOAuth, canAPIKey, canConfigure := false, false, false
 		for _, key := range provider.ConfigKeys {
 			canOAuth = canOAuth || key.OAuthFlow
-			canAPIKey = canAPIKey || (!key.OAuthFlow && (key.Primary || key.Required))
+			canAPIKey = canAPIKey || (!key.OAuthFlow && key.Secret && (key.Primary || key.Required))
+			canConfigure = canConfigure || (!key.OAuthFlow && !key.Secret && (key.Primary || key.Required))
 		}
 		kind := "other"
 		if !configured && canOAuth {
@@ -346,13 +329,16 @@ func (a *GooseAdmin) ProviderStatus(ctx context.Context) (map[string]any, error)
 		if name == "" {
 			name = provider.ProviderID
 		}
-		item := map[string]any{"id": provider.ProviderID, "name": name, "configured": configured, "available": available, "kind": kind, "canOAuth": canOAuth, "canApiKey": canAPIKey, "canLogout": configured && len(provider.ConfigKeys) > 0, "acp": provider.ACP, "modelCount": len(provider.Models), "availableModelCount": 0}
+		item := map[string]any{"id": provider.ProviderID, "name": name, "configured": configured, "kind": kind, "canOAuth": canOAuth, "canApiKey": canAPIKey, "canConfigure": canConfigure, "canLogout": configured && (canAPIKey || provider.ACP), "acp": provider.ACP, "modelCount": len(provider.Models), "availableModelCount": 0, "deprecated": provider.Deprecated || !boolDefault(provider.VisibleInSetup, true), "replacement": provider.Replacement, "configuration": provider.Configuration}
+		if provider.Available != nil {
+			item["available"] = *provider.Available
+		}
 		if configured && available {
 			item["availableModelCount"] = len(provider.Models)
 		}
 		if provider.LastRefreshError != "" {
 			item["detail"] = provider.LastRefreshError
-		} else if !available {
+		} else if provider.Available != nil && !available {
 			item["detail"] = "Provider runtime is unavailable"
 		}
 		result = append(result, item)
@@ -361,7 +347,7 @@ func (a *GooseAdmin) ProviderStatus(ctx context.Context) (map[string]any, error)
 }
 
 func providerRuntimeAvailable(provider gooseProvider) bool {
-	return boolDefault(provider.Available, true) && provider.LastRefreshError == ""
+	return boolDefault(provider.Available, false)
 }
 
 func (a *GooseAdmin) ProviderReadiness(ctx context.Context, providerID string) (map[string]any, error) {
@@ -395,6 +381,7 @@ func (a *GooseAdmin) LogoutProvider(ctx context.Context, providerID string) erro
 		return fmt.Errorf("invalid provider identifier")
 	}
 	var ignored any
+	defer a.invalidateProviderInventory()
 	return a.call(ctx, "_goose/unstable/providers/config/delete", map[string]any{"providerId": providerID}, &ignored)
 }
 

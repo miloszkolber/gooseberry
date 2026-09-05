@@ -1,4 +1,4 @@
-package mcphost
+package mcphost_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/miloszkolber/gooseberry/internal/browser"
 	"github.com/miloszkolber/gooseberry/internal/diagnostics"
+	"github.com/miloszkolber/gooseberry/internal/mcphost"
 )
 
 const hostTestToken = "mcp-host-test-token-0123456789abcdef0123456789"
@@ -27,7 +28,7 @@ func TestConfigFromEnvironmentMapsMCPSettingsToBrowserModule(t *testing.T) {
 		"GOOSEBERRY_MCP_MODULES":          "browser",
 		"GOOSEBERRY_MCP_DISABLED_MODULES": "",
 	}
-	config, err := ConfigFromEnvironment(func(key string) (string, bool) {
+	config, err := mcphost.ConfigFromEnvironment(func(key string) (string, bool) {
 		value, ok := values[key]
 		return value, ok
 	})
@@ -47,7 +48,7 @@ func TestDisabledModuleIsNeverInitializedOrPublished(t *testing.T) {
 	config.BrowserConfig.AgentBrowser = filepath.Join(t.TempDir(), "missing-agent-browser")
 	config.BrowserConfig.BrowserConfig = filepath.Join(t.TempDir(), "missing-config.json")
 	config.DisabledModules = []string{"browser"}
-	service, err := NewService(config, diagnostics.NormalizeBuild("1", "rev"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service, err := mcphost.NewService(config, diagnostics.NormalizeBuild("1", "rev"), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestDisabledModuleIsNeverInitializedOrPublished(t *testing.T) {
 	if len(catalog.Modules) != 0 || catalog.Gateway.State != "ready" {
 		t.Fatalf("disabled catalog = %#v", catalog)
 	}
-	for _, path := range []string{"/browser", "/mcp", "/status", "/v1/browser"} {
+	for _, path := range []string{"/browser", "/mcp", "/status", "/v1/browser", "/v1/browser/leases"} {
 		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte("{}")))
 		request.Host = "127.0.0.1:8787"
 		response := httptest.NewRecorder()
@@ -68,7 +69,7 @@ func TestDisabledModuleIsNeverInitializedOrPublished(t *testing.T) {
 }
 
 func TestBrowserModuleHasCanonicalAndLegacyRoutes(t *testing.T) {
-	service, err := NewService(testConfig(t), diagnostics.NormalizeBuild("1", "rev"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service, err := mcphost.NewService(testConfig(t), diagnostics.NormalizeBuild("1", "rev"), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestBrowserModuleHasCanonicalAndLegacyRoutes(t *testing.T) {
 			}
 		})
 	}
-	request := httptest.NewRequest(http.MethodGet, StatusPath, nil)
+	request := httptest.NewRequest(http.MethodGet, mcphost.StatusPath, nil)
 	request.Host = "127.0.0.1:8787"
 	response := httptest.NewRecorder()
 	service.ServeHTTP(response, request)
@@ -108,7 +109,7 @@ func TestBrowserModuleHasCanonicalAndLegacyRoutes(t *testing.T) {
 	if status["build"] == nil || status["readiness"] == nil {
 		t.Fatalf("legacy browser status = %#v", status)
 	}
-	request = httptest.NewRequest(http.MethodGet, GatewayStatusPath, nil)
+	request = httptest.NewRequest(http.MethodGet, mcphost.GatewayStatusPath, nil)
 	request.Host = "127.0.0.1:8787"
 	response = httptest.NewRecorder()
 	service.ServeHTTP(response, request)
@@ -128,12 +129,12 @@ func TestCatalogRequiresHostAuthentication(t *testing.T) {
 	config := testConfig(t)
 	config.Authentication = true
 	config.Token = hostTestToken
-	service, err := NewService(config, diagnostics.NormalizeBuild("1", "rev"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service, err := mcphost.NewService(config, diagnostics.NormalizeBuild("1", "rev"), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer service.Shutdown()
-	request := httptest.NewRequest(http.MethodGet, CatalogPath, nil)
+	request := httptest.NewRequest(http.MethodGet, mcphost.CatalogPath, nil)
 	request.Host = "127.0.0.1:8787"
 	response := httptest.NewRecorder()
 	service.ServeHTTP(response, request)
@@ -168,7 +169,7 @@ func TestConfigRejectsUnknownAndDuplicateModuleNames(t *testing.T) {
 	for _, value := range []string{"browser,browser", "future"} {
 		t.Run(value, func(t *testing.T) {
 			values := map[string]string{"GOOSEBERRY_MCP_MODULES": value}
-			_, err := ConfigFromEnvironment(func(key string) (string, bool) {
+			_, err := mcphost.ConfigFromEnvironment(func(key string) (string, bool) {
 				value, ok := values[key]
 				return value, ok
 			})
@@ -179,7 +180,7 @@ func TestConfigRejectsUnknownAndDuplicateModuleNames(t *testing.T) {
 	}
 }
 
-func testConfig(t *testing.T) Config {
+func testConfig(t *testing.T) mcphost.Config {
 	t.Helper()
 	root := t.TempDir()
 	agentBrowser, err := os.Executable()
@@ -198,12 +199,38 @@ func testConfig(t *testing.T) Config {
 	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return Config{
+	return mcphost.Config{
 		Host: "127.0.0.1", Port: 8787, Modules: []string{"browser"},
 		BrowserConfig: browser.Config{
 			Host: "127.0.0.1", Port: 8787, AgentBrowser: agentBrowser, BrowserConfig: configPath,
 			ArtifactRoot: artifactRoot, StateRoot: stateRoot, MaxArtifactBytes: 64 * 1024,
 			MaxTotalArtifactBytes: 256 * 1024, MaxStateBytes: 256 * 1024, MaxStateEntries: 100,
 		},
+	}
+}
+
+func TestBrowserLeaseRouteUsesModuleAuthentication(t *testing.T) {
+	config := testConfig(t)
+	config.Authentication, config.BrowserConfig.Authentication = true, true
+	config.Token, config.BrowserConfig.Token = hostTestToken, hostTestToken
+	service, err := mcphost.NewService(config, diagnostics.NormalizeBuild("test", "test"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Shutdown()
+	for _, token := range []string{"", hostTestToken} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/browser/leases", strings.NewReader(`{"sessions":[]}`))
+		request.Host = "127.0.0.1:8787"
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		service.ServeHTTP(response, request)
+		expected := http.StatusOK
+		if token == "" {
+			expected = http.StatusUnauthorized
+		}
+		if response.Code != expected {
+			t.Fatalf("lease route status %d: %s", response.Code, response.Body.String())
+		}
 	}
 }

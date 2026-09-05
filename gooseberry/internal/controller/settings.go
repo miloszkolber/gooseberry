@@ -112,6 +112,41 @@ func (s *Settings) getLocked() (AppConfig, error) {
 }
 
 func (s *Settings) Update(patch AppConfigPatch) (AppConfig, error) {
+	return s.mutate(func(next *AppConfig) {
+		if patch.Signet != nil {
+			if patch.Signet.Enabled != nil {
+				next.Signet.Enabled = *patch.Signet.Enabled
+			}
+			if patch.Signet.Address != nil {
+				next.Signet.Address = *patch.Signet.Address
+			}
+			if patch.Signet.Port != nil {
+				next.Signet.Port = *patch.Signet.Port
+			}
+		}
+		if patch.HiddenModels != nil {
+			next.HiddenModels = append([]ModelReference(nil), (*patch.HiddenModels)...)
+		}
+	})
+}
+
+// SetModelVisibility applies a single change against the latest persisted list.
+func (s *Settings) SetModelVisibility(provider, id string, hidden bool) (AppConfig, error) {
+	return s.mutate(func(next *AppConfig) {
+		refs := make([]ModelReference, 0, len(next.HiddenModels)+1)
+		for _, ref := range next.HiddenModels {
+			if ref.Provider != provider || ref.ID != id {
+				refs = append(refs, ref)
+			}
+		}
+		if hidden {
+			refs = append(refs, ModelReference{Provider: provider, ID: id})
+		}
+		next.HiddenModels = refs
+	})
+}
+
+func (s *Settings) mutate(update func(*AppConfig)) (AppConfig, error) {
 	s.mu.Lock()
 	current, err := s.getLocked()
 	if err != nil {
@@ -119,20 +154,7 @@ func (s *Settings) Update(patch AppConfigPatch) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	next := current
-	if patch.Signet != nil {
-		if patch.Signet.Enabled != nil {
-			next.Signet.Enabled = *patch.Signet.Enabled
-		}
-		if patch.Signet.Address != nil {
-			next.Signet.Address = *patch.Signet.Address
-		}
-		if patch.Signet.Port != nil {
-			next.Signet.Port = *patch.Signet.Port
-		}
-	}
-	if patch.HiddenModels != nil {
-		next.HiddenModels = append([]ModelReference(nil), (*patch.HiddenModels)...)
-	}
+	update(&next)
 	next = normalizeConfig(next)
 	if err := persist.Write(s.store, "config.json", next, nil); err != nil {
 		s.mu.Unlock()

@@ -38,10 +38,11 @@ func reject(message string, hints ...string) error {
 }
 
 type browserRequest struct {
-	Session     string
-	Command     string
-	Args        []string
-	Positionals []positional
+	panelLease, expireLease bool
+	Session                 string
+	Command                 string
+	Args                    []string
+	Positionals             []positional
 }
 
 type positional struct {

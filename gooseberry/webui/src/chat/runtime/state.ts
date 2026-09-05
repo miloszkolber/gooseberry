@@ -1,7 +1,6 @@
 import type {
 	AgentEvent,
 	AskUserQuestionResult,
-	ExtUiRequest,
 	ImageContent,
 	PermissionRequest,
 	SessionGoal,
@@ -14,22 +13,16 @@ import type {
 	ThinkingLevel,
 	WireModel,
 } from "@gooseberry/contracts";
-import type { ChatAttachment, ChatTurn } from "@/chat/runtime/types";
+import type { ChatAttachment, ChatSubmission, ChatTurn } from "@/chat/runtime/types";
 import { randomId } from "@/lib";
 import type { AppState } from "@/store/app-store";
 import type { StateCreator } from "@/store/external-store";
 import { omitKey } from "@/store/record";
-import type { ChatTab } from "../../workspace/store/model";
 import {
 	type HydratedRuntime,
 	prependTranscriptPage as prependHydratedTranscriptPage,
 } from "./hydrate";
-import {
-	clearTurnStreaming,
-	reduceSessionEvent,
-	reduceSessionExtUi,
-	type SessionRuntime,
-} from "./session-runtime";
+import { clearTurnStreaming, reduceSessionEvent, type SessionRuntime } from "./session-runtime";
 
 export interface ChatState {
 	sessions: Record<string, SessionRuntime>;
@@ -37,6 +30,7 @@ export interface ChatState {
 	setPendingPermission: (request: PermissionRequest) => void;
 	clearPendingPermission: (sessionId: string, id: string) => void;
 	appendUserMessage: (sessionId: string, text: string, attachments?: ChatAttachment[]) => void;
+	setSubmission: (sessionId: string, submission: ChatSubmission | null) => void;
 	appendErrorTurn: (sessionId: string, text: string) => void;
 	handleAgentEvent: (event: AgentEvent, sessionId: string) => void;
 	setAskAnswer: (sessionId: string, toolCallId: string, result: AskUserQuestionResult) => void;
@@ -57,8 +51,6 @@ export interface ChatState {
 	setSessionGoalSaving: (sessionId: string, projectAreaId: string) => void;
 	setSessionGoal: (sessionId: string, value: SessionGoal, expectedRevision?: number) => void;
 	setSessionGoalError: (sessionId: string, projectAreaId: string, error: string) => void;
-	clearPendingExtUi: (sessionId: string, id: string) => void;
-	applyExtUi: (request: ExtUiRequest) => void;
 }
 
 function withRuntime(
@@ -141,7 +133,7 @@ function unmatchedOptimisticTurns(
 	});
 }
 
-export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) => ({
+export const createChatState: StateCreator<AppState, [], [], ChatState> = (set, get) => ({
 	sessions: {},
 	pendingPermissions: {},
 	setPendingPermission: (request) =>
@@ -200,6 +192,23 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 				],
 			})),
 		),
+	setSubmission: (sessionId, submission) =>
+		set((s) =>
+			withRuntime(s, sessionId, (rt) => ({
+				...rt,
+				submission,
+				turns:
+					submission?.error && submission.optimisticTurnId
+						? rt.turns.filter(
+								(turn) =>
+									turn.id !== submission.optimisticTurnId ||
+									turn.kind !== "user" ||
+									!turn.optimistic,
+							)
+						: rt.turns,
+			})),
+		),
+
 	appendErrorTurn: (sessionId, text) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => ({
@@ -210,8 +219,30 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 				turns: [...clearTurnStreaming(rt.turns), { kind: "error", id: randomId("turn"), text }],
 			})),
 		),
-	handleAgentEvent: (event, sessionId) =>
-		set((s) => withRuntime(s, sessionId, (rt) => reduceSessionEvent(rt, event))),
+	handleAgentEvent: (event, sessionId) => {
+		if (event.type === "session-info" && event.title) {
+			const state = get();
+			for (const projectId of new Set([
+				...Object.keys(state.tabsByProjectArea),
+				...Object.keys(state.closedChatsByProjectArea),
+			])) {
+				if (
+					state.tabsByProjectArea[projectId]?.some(
+						(tab) => tab.kind === "chat" && tab.sessionId === sessionId,
+					) ||
+					state.closedChatsByProjectArea[projectId]?.some((chat) => chat.sessionId === sessionId)
+				) {
+					state.applySessionLifecycle({
+						projectId,
+						sessionId,
+						operation: "renamed",
+						title: event.title,
+					});
+				}
+			}
+		}
+		set((s) => withRuntime(s, sessionId, (rt) => reduceSessionEvent(rt, event)));
+	},
 	setCurrentModel: (sessionId, model, expectedRevision) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) =>
@@ -265,6 +296,7 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 					isStreaming: summary.isStreaming,
 					model: summary.model,
 					thinkingLevel: summary.thinkingLevel,
+					configOptions: summary.configOptions ?? [],
 					configRevision: rt.configRevision + 1,
 					modes,
 					planState,
@@ -315,47 +347,6 @@ export const createChatState: StateCreator<AppState, [], [], ChatState> = (set) 
 				goal: { ...rt.goal, projectAreaId, status: "error", error },
 			})),
 		),
-	clearPendingExtUi: (sessionId, id) =>
-		set((s) =>
-			withRuntime(s, sessionId, (rt) => {
-				if (rt.pendingExtUi?.id !== id) return rt;
-				const [next, ...rest] = rt.extUiQueue;
-				return { ...rt, pendingExtUi: next ?? null, extUiQueue: rest };
-			}),
-		),
-	applyExtUi: (request) =>
-		set((s): Partial<AppState> => {
-			if (request.kind === "setTitle") {
-				for (const [wsId, tabs] of Object.entries(s.tabsByProjectArea)) {
-					const chat = tabs.find(
-						(tab): tab is ChatTab => tab.kind === "chat" && tab.sessionId === request.sessionId,
-					);
-					if (!chat) continue;
-					if (chat.name === request.title) continue;
-					return {
-						tabsByProjectArea: {
-							...s.tabsByProjectArea,
-							[wsId]: tabs.map((tab) =>
-								tab.id === chat.id ? { ...chat, name: request.title } : tab,
-							),
-						},
-					};
-				}
-				for (const [wsId, chats] of Object.entries(s.closedChatsByProjectArea)) {
-					if (!chats.some((chat) => chat.sessionId === request.sessionId)) continue;
-					return {
-						closedChatsByProjectArea: {
-							...s.closedChatsByProjectArea,
-							[wsId]: chats.map((chat) =>
-								chat.sessionId === request.sessionId ? { ...chat, title: request.title } : chat,
-							),
-						},
-					};
-				}
-				return {};
-			}
-			return withRuntime(s, request.sessionId, (rt) => reduceSessionExtUi(rt, request));
-		}),
 	setAskAnswer: (sessionId, toolCallId, result) =>
 		set((state) => {
 			const runtime = state.sessions[sessionId];

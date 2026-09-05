@@ -3,6 +3,7 @@ package persist
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,13 +18,21 @@ type Store struct {
 }
 
 func Read[T any](s Store, name string, dst *T, validate func(T) error) (bool, error) {
+	var failures []error
 	for _, path := range []string{filepath.Join(s.Dir, name), filepath.Join(s.Dir, name) + ".bak"} {
 		raw, _, err := ReadFile(path)
-		if err == nil && Decode(raw, dst, validate) == nil {
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err == nil {
+			err = Decode(raw, dst, validate)
+		}
+		if err == nil {
 			return true, nil
 		}
+		failures = append(failures, fmt.Errorf("read %s: %w", filepath.Base(path), err))
 	}
-	return false, nil
+	return false, errors.Join(failures...)
 }
 
 func ReadFile(path string) ([]byte, os.FileMode, error) {

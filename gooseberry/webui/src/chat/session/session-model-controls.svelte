@@ -23,6 +23,8 @@ let catalog = $state<WireModel[]>([]);
 let providers = $state<ProviderStatus[]>([]);
 let reportedThinkingLevels = $state<ThinkingLevel[]>([]);
 let loading = $state(true);
+let loadError = $state<string | null>(null);
+let refresh = $state(0);
 let busy = $state<"model" | "thinking" | null>(null);
 let loadSequence = 0;
 const componentId = $props.id();
@@ -60,25 +62,23 @@ $effect(() => {
 	const id = sessionId;
 	void providerVersion;
 	void visibilityRevision;
+	void refresh;
 	const sequence = ++loadSequence;
 	loading = true;
-	void Promise.all([
+	void Promise.allSettled([
 		getTransport().request("model.list", {}),
 		getTransport().request("provider.status", {}),
 		getTransport().request("model.thinkingLevels", { sessionId: id }),
 	])
 		.then(([nextModels, report, thinking]) => {
 			if (sequence !== loadSequence) return;
-			catalog = nextModels;
-			providers = report.providers;
-			reportedThinkingLevels = thinking.levels;
-		})
-		.catch((cause) => {
-			if (sequence !== loadSequence) return;
-			catalog = [];
-			providers = [];
-			reportedThinkingLevels = [];
-			notifyError(cause, "Couldn't load session model controls");
+			if (nextModels.status === "fulfilled") catalog = nextModels.value;
+			if (report.status === "fulfilled") providers = report.value.providers;
+			if (thinking.status === "fulfilled") reportedThinkingLevels = thinking.value.levels;
+			const failures = [nextModels, report, thinking].filter(
+				(result) => result.status === "rejected",
+			);
+			loadError = failures.length ? "Some model controls could not be refreshed." : null;
 		})
 		.finally(() => {
 			if (sequence === loadSequence) loading = false;
@@ -162,6 +162,7 @@ async function changeThinking(level: ThinkingLevel): Promise<void> {
 	aria-busy={loading || busy !== null}
 	class="flex min-w-0 flex-wrap items-center gap-xs"
 >
+	{#if loadError}<button type="button" class="text-feedback-warning tr-text-metadata" title={loadError} onclick={() => refresh += 1}>Retry model controls</button>{/if}
 	<label class="flex min-w-0 items-center gap-2xs">
 		<span id={providerLabelId} class="sr-only">Provider</span>
 		<select
@@ -178,7 +179,7 @@ async function changeThinking(level: ThinkingLevel): Promise<void> {
 			{#if selectedModel && !currentProviderSelectable}
 				<option value={selectedModel.provider} disabled>{providerNames.get(selectedModel.provider) ?? selectedModel.provider} (current)</option>
 			{/if}
-			<option value="" disabled>{loading ? "Loading providers…" : "No providers"}</option>
+			<option value="" disabled>{loading ? "Loading providers…" : providerIds.length ? "Choose provider" : "No providers"}</option>
 			{#each providerIds as providerId (providerId)}
 				<option value={providerId}>{providerNames.get(providerId) ?? providerId}</option>
 			{/each}
@@ -200,7 +201,7 @@ async function changeThinking(level: ThinkingLevel): Promise<void> {
 			{#if selectedModel && !currentModelSelectable}
 				<option value={modelKey(selectedModel)} disabled>{selectedModel.name || selectedModel.id} (current)</option>
 			{/if}
-			<option value="" disabled>{loading ? "Loading models…" : "No available models"}</option>
+			<option value="" disabled>{loading ? "Loading models…" : models.length ? "Choose model" : "No available models"}</option>
 			{#each providerModels as candidate (modelKey(candidate))}
 				<option value={modelKey(candidate)}>{candidate.name || candidate.id}</option>
 			{/each}

@@ -2,8 +2,10 @@
 import { untrack } from "svelte";
 import Icon from "../../components/icon.svelte";
 import type { SkillInvocation } from "../../lib";
-import { readFold, toggleFold } from "../runtime/fold-state";
+import { useFoldState } from "../runtime/fold-state";
 import Markdown from "./markdown.svelte";
+
+const { readFold, toggleFold } = useFoldState();
 
 interface Props {
 	foldId: string;

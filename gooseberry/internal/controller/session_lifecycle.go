@@ -163,6 +163,7 @@ func (m *SessionManager) Archive(ctx context.Context, projectID, sessionID, cwd 
 		return err
 	}
 	m.cancelPermissions(sessionID)
+	m.cancelQuestions(sessionID)
 	m.mu.Lock()
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()
@@ -265,6 +266,7 @@ func (m *SessionManager) Delete(ctx context.Context, projectID, sessionID, cwd s
 		confirmErr = fmt.Errorf("confirm session deletion: %w", confirmErr)
 	}
 	m.cancelPermissions(sessionID)
+	m.cancelQuestions(sessionID)
 	m.mu.Lock()
 	delete(m.sessions, sessionID)
 	m.mu.Unlock()

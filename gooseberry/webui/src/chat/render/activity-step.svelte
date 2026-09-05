@@ -1,11 +1,14 @@
 <script lang="ts">
 import { untrack } from "svelte";
 import Icon, { type IconName } from "../../components/icon.svelte";
-import { readFold, toggleFold } from "../runtime/fold-state";
+import { useFoldState } from "../runtime/fold-state";
+import DefaultToolRenderer from "./default-tool-renderer.svelte";
 import type { ActivityStep } from "../runtime/rows";
 import McpAppView from "../tools/apps/mcp-app-view.svelte";
 import { activityToolRenderProps, formatActivityChars } from "./activity-group";
 import { getToolRenderer, getToolSummary } from "./tool-registry";
+
+const { readFold, toggleFold } = useFoldState();
 
 interface Props {
 	step: ActivityStep;
@@ -23,7 +26,7 @@ let iconName = $derived.by<IconName>(() => {
 	if (step.kind === "thinking") return step.streaming && isCurrent ? "loader-circle" : "brain";
 	return renderProps?.status === "running"
 		? "loader-circle"
-		: renderProps?.status === "error"
+		: renderProps?.status === "error" || renderProps?.status === "interrupted"
 			? "x"
 			: "check";
 });
@@ -33,12 +36,14 @@ let iconSpins = $derived(
 let iconClass = $derived(
 	`${iconSpins ? "animate-spin motion-reduce:animate-none" : ""} ${renderProps?.status === "error" ? "text-feedback-error" : renderProps?.status === "done" ? "text-feedback-success" : ""}`,
 );
-let name = $derived(step.kind === "thinking" ? "thinking" : step.toolName);
+let name = $derived(step.kind === "thinking" ? "thinking" : step.title || step.toolName);
 let summary = $derived(
 	step.kind === "thinking"
 		? `${formatActivityChars(step.text.length)} chars`
 		: renderProps
-			? getToolSummary(step.toolName, renderProps)
+			? renderProps.status === "interrupted"
+				? "Interrupted · final result not reported"
+				: getToolSummary(step.toolName, renderProps)
 			: "",
 );
 
@@ -63,7 +68,7 @@ function toggle(): void {
 		class="flex w-full cursor-pointer select-none items-center gap-xs rounded-[var(--radius-sm)] px-xs py-sm text-left outline-none hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary sm:py-0.5"
 	>
 		<Icon name={iconName} size={12} class={`shrink-0 ${iconClass}`} />
-		<span class="shrink-0 text-text-default">{name}</span>
+		<span class="min-w-0 break-words text-text-default">{name}</span>
 		{#if summary}<span class="min-w-0 flex-1 truncate" title={summary}>{summary}</span>{/if}
 		<Icon name="chevron-right" size={12} class={`shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
 	</button>
@@ -72,7 +77,7 @@ function toggle(): void {
 			<div class="whitespace-pre-wrap break-words px-sm pb-xs pl-lg">{step.text}</div>
 		{:else if Renderer && renderProps}
 			<div class={`flex flex-col items-start gap-sm px-sm pb-xs pl-lg ${renderProps.status === "error" ? "text-feedback-error" : ""}`}>
-				<Renderer {...renderProps} />
+				{#if renderProps.status === "interrupted"}<DefaultToolRenderer {...renderProps} />{:else}<Renderer {...renderProps} />{/if}
 				<McpAppView {...renderProps} />
 			</div>
 		{/if}

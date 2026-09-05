@@ -66,7 +66,7 @@ func (h ObjectiveHandler) ServeHTTP(response http.ResponseWriter, request *http.
 		name := textValue(rpc.Params["name"])
 		arguments := mapValue(rpc.Params["arguments"])
 		if name == "ask_user_question" {
-			result, err := h.Sessions.AskQuestion(sessionID, arguments)
+			result, err := h.Sessions.AskQuestion(request.Context(), sessionID, arguments)
 			if err != nil {
 				writeRPCError(response, rpc.ID, err.Error())
 				return

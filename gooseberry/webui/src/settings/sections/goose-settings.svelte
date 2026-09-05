@@ -36,6 +36,10 @@ let agents = $state<GooseAgentCatalogEntry[]>([]);
 let draft = $state<AgentDraft>(emptyAgent());
 let editing = $state<GooseAgentCatalogEntry | null>(null);
 let loading = $state(true);
+let preferencesReady = $state(false);
+let defaultsReady = $state(false);
+let loadError = $state<string | null>(null);
+let actionError = $state<string | null>(null);
 let busy = $state(false);
 let deleteTarget = $state<GooseAgentCatalogEntry | null>(null);
 let sequence = 0;
@@ -58,7 +62,7 @@ let currentUnavailableProvider = $derived(
 let defaultSuggestions = $derived(defaultModelSuggestions(models, defaults.providerId));
 
 function notifyError(error: unknown, title: string): void {
-	appStoreApi.getState().pushToast({ variant: "error", message: errorText(error), title });
+	actionError = `${title}: ${errorText(error)}`;
 }
 
 function applyPreferences(next: GoosePreferences): void {
@@ -66,31 +70,43 @@ function applyPreferences(next: GoosePreferences): void {
 	thresholdPercent = autoCompactThresholdPercent(next);
 }
 
-async function load(projectId = catalogProjectId, root = catalogRoot): Promise<void> {
+async function load(
+	projectId = catalogProjectId,
+	root = catalogRoot,
+	catalogOnly = false,
+): Promise<void> {
 	const current = ++sequence;
 	loading = true;
-	try {
-		const [nextPreferences, nextDefaults, nextModels, nextProviderStatus, nextAgents] =
-			await Promise.all([
-				getTransport().request("goose.preferencesRead", {}),
-				getTransport().request("goose.defaultsRead", {}),
-				getTransport().request("model.list", {}),
-				getTransport().request("provider.status", {}),
-				projectId && !root
-					? Promise.resolve([] as GooseAgentCatalogEntry[])
-					: getTransport().request("goose.agentList", projectId ? { projectId, root } : {}),
-			]);
-		if (!mounted || current !== sequence) return;
-		applyPreferences(nextPreferences);
-		defaults = nextDefaults;
-		models = nextModels;
-		providers = nextProviderStatus.providers;
-		agents = nextAgents;
-	} catch (error) {
-		if (mounted && current === sequence) notifyError(error, "Couldn't load Goose settings");
-	} finally {
-		if (mounted && current === sequence) loading = false;
+	loadError = null;
+	const catalogRequest =
+		projectId && !root
+			? Promise.resolve([] as GooseAgentCatalogEntry[])
+			: getTransport().request("goose.agentList", projectId ? { projectId, root } : {});
+	const results = await Promise.allSettled([
+		catalogOnly ? Promise.resolve(null) : getTransport().request("goose.preferencesRead", {}),
+		catalogOnly ? Promise.resolve(null) : getTransport().request("goose.defaultsRead", {}),
+		catalogOnly ? Promise.resolve(null) : getTransport().request("model.list", {}),
+		catalogOnly ? Promise.resolve(null) : getTransport().request("provider.status", {}),
+		catalogRequest,
+	]);
+	if (!mounted || current !== sequence) return;
+	const [prefs, savedDefaults, nextModels, nextProviders, nextAgents] = results;
+	if (prefs.status === "fulfilled" && prefs.value) {
+		applyPreferences(prefs.value);
+		preferencesReady = true;
 	}
+	if (savedDefaults.status === "fulfilled" && savedDefaults.value) {
+		defaults = savedDefaults.value;
+		defaultsReady = true;
+	}
+	if (nextModels.status === "fulfilled" && nextModels.value) models = nextModels.value;
+	if (nextProviders.status === "fulfilled" && nextProviders.value)
+		providers = nextProviders.value.providers;
+	if (nextAgents.status === "fulfilled") agents = nextAgents.value;
+	if (results.some((result) => result.status === "rejected"))
+		loadError =
+			"Some Goose settings could not be loaded. Successfully loaded data and drafts are retained.";
+	loading = false;
 }
 
 onMount(() => {
@@ -108,10 +124,12 @@ $effect(() => {
 	const nextKey = catalogKey;
 	if (!mounted || observedCatalogKey === null || observedCatalogKey === nextKey) return;
 	observedCatalogKey = nextKey;
-	void load(catalogProjectId, catalogRoot);
+	void load(catalogProjectId, catalogRoot, true);
 });
 
 async function savePreferences(): Promise<void> {
+	if (!preferencesReady || busy) return;
+	actionError = null;
 	const threshold = parseAutoCompactThreshold(thresholdPercent);
 	if (!threshold.valid) {
 		appStoreApi.getState().pushToast({
@@ -153,6 +171,8 @@ async function resetPreference(key: "autoCompactThreshold" | "gooseThinkingEffor
 }
 
 async function saveDefaults(): Promise<void> {
+	if (!defaultsReady || busy) return;
+	actionError = null;
 	if (!defaults.providerId || !selectedDefaultProviderAvailable) {
 		appStoreApi.getState().pushToast({
 			variant: "error",
@@ -247,7 +267,7 @@ async function saveAgent(): Promise<void> {
 			editing = null;
 			draft = emptyAgent();
 		}
-		await load(catalogProjectId, catalogRoot);
+		await load(catalogProjectId, catalogRoot, true);
 	} catch (error) {
 		notifyError(
 			error,
@@ -272,9 +292,7 @@ async function removeAgent(agent: GooseAgentCatalogEntry): Promise<void> {
 			editing = null;
 			draft = emptyAgent();
 		}
-		await load(catalogProjectId, catalogRoot);
-	} catch (error) {
-		notifyError(error, "Couldn't remove Goose agent");
+		await load(catalogProjectId, catalogRoot, true);
 	} finally {
 		busy = false;
 	}
@@ -283,8 +301,6 @@ async function removeAgent(agent: GooseAgentCatalogEntry): Promise<void> {
 function changeProjectScope(projectId: string): void {
 	sequence += 1;
 	catalogProjectId = projectId;
-	editing = null;
-	draft = emptyAgent();
 }
 
 function changeDraftProject(projectId: string): void {
@@ -297,6 +313,8 @@ function changeDraftProject(projectId: string): void {
 </script>
 
 <div data-testid="settings-goose" class="flex flex-col gap-xl">
+ {#if loadError}<p role="alert" class="text-feedback-warning tr-text-ui">{loadError} Close and reopen settings to retry the initial load.</p>{/if}
+ {#if actionError}<p role="alert" class="text-feedback-error tr-text-ui">{actionError}</p>{/if}
 	<section class="flex flex-col gap-sm">
 		<div>
 			<h3 class="tr-title-section">Goose preferences</h3>
@@ -347,7 +365,7 @@ function changeDraftProject(projectId: string): void {
 			</select>
 		</label>
 		<div class="flex flex-wrap gap-xs">
-			<Button size="sm" disabled={busy || loading} onclick={() => void savePreferences()}>
+			<Button size="sm" disabled={busy || loading || !preferencesReady} onclick={() => void savePreferences()}>
 				<Icon name="save" size={14} />
 				Save preferences
 			</Button>
@@ -423,7 +441,7 @@ function changeDraftProject(projectId: string): void {
 		<div class="flex gap-xs">
 			<Button
 				size="sm"
-				disabled={busy || loading || !selectedDefaultProviderAvailable}
+				disabled={busy || loading || !defaultsReady || !selectedDefaultProviderAvailable}
 				onclick={() => void saveDefaults()}
 			>
 				Save defaults
@@ -630,8 +648,8 @@ function changeDraftProject(projectId: string): void {
 			onOpenChange={(open) => {
 				if (!open) deleteTarget = null;
 			}}
-			onConfirm={() => {
-				if (deleteTarget) void removeAgent(deleteTarget);
+			onConfirm={async () => {
+				if (deleteTarget) await removeAgent(deleteTarget);
 			}}
 		/>
 	</section>

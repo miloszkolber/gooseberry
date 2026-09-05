@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,7 +10,9 @@ import (
 
 const questionTimeout = 30 * time.Minute
 
-func (m *SessionManager) AskQuestion(sessionID string, value any) (map[string]any, error) {
+type questionKey struct{ sessionID, toolCallID string }
+
+func (m *SessionManager) AskQuestion(ctx context.Context, sessionID string, value any) (map[string]any, error) {
 	args, err := validateQuestionArgs(value)
 	if err != nil {
 		return nil, err
@@ -20,17 +23,31 @@ func (m *SessionManager) AskQuestion(sessionID string, value any) (map[string]an
 	}
 	defer m.releaseEntry(entry)
 	var toolCallID string
-	for attempt := 0; attempt < 40; attempt++ {
+	var promptDone <-chan struct{}
+	registration, stop := context.WithTimeout(ctx, time.Second)
+	defer stop()
+	for {
 		entry.state.Lock()
 		toolCallID = latestQuestionToolCall(entry, args)
+		if entry.promptActive {
+			promptDone = entry.promptDone
+		}
 		if toolCallID != "" {
 			entry.consumedQuestions[toolCallID] = true
 		}
+		if entry.toolChanged == nil {
+			entry.toolChanged = make(chan struct{})
+		}
+		changed := entry.toolChanged
 		entry.state.Unlock()
 		if toolCallID != "" {
 			break
 		}
-		time.Sleep(25 * time.Millisecond)
+		select {
+		case <-registration.Done():
+			return nil, fmt.Errorf("no matching active question: %w", registration.Err())
+		case <-changed:
+		}
 	}
 	if toolCallID == "" {
 		return nil, fmt.Errorf("no matching ask_user_question tool call is active")
@@ -41,19 +58,24 @@ func (m *SessionManager) AskQuestion(sessionID string, value any) (map[string]an
 		m.mu.Unlock()
 		return map[string]any{"answers": []any{}, "cancelled": true}, nil
 	}
-	m.questions[toolCallID] = pending
+	key := questionKey{sessionID, toolCallID}
+	m.questions[key] = pending
 	m.mu.Unlock()
 	timer := time.NewTimer(questionTimeout)
 	defer timer.Stop()
 	var result map[string]any
 	select {
 	case result = <-pending.result:
+	case <-promptDone:
+		result = map[string]any{"answers": []any{}, "cancelled": true}
+	case <-ctx.Done():
+		result = map[string]any{"answers": []any{}, "cancelled": true}
 	case <-timer.C:
 		result = map[string]any{"answers": []any{}, "cancelled": true}
 	}
 	m.mu.Lock()
-	if m.questions[toolCallID] == pending {
-		delete(m.questions, toolCallID)
+	if m.questions[key] == pending {
+		delete(m.questions, key)
 	}
 	m.mu.Unlock()
 	return result, nil
@@ -62,7 +84,8 @@ func (m *SessionManager) AskQuestion(sessionID string, value any) (map[string]an
 func (m *SessionManager) ResolveQuestion(sessionID, toolCallID string, result map[string]any) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pending := m.questions[toolCallID]
+	key := questionKey{sessionID, toolCallID}
+	pending := m.questions[key]
 	if pending == nil || pending.sessionID != sessionID {
 		return fmt.Errorf("question is no longer awaiting input")
 	}
@@ -71,7 +94,7 @@ func (m *SessionManager) ResolveQuestion(sessionID, toolCallID string, result ma
 	}
 	select {
 	case pending.result <- result:
-		delete(m.questions, toolCallID)
+		delete(m.questions, key)
 		return nil
 	default:
 		return fmt.Errorf("question is no longer awaiting input")
@@ -94,11 +117,14 @@ func validateQuestionArgs(value any) (map[string]any, error) {
 		if prompt == "" || utf16Length(prompt) > 2_000 || header == "" || utf16Length(header) > 200 || len(options) < 1 || len(options) > 12 {
 			return nil, fmt.Errorf("question text, header, or options are invalid")
 		}
+		labels := make(map[string]bool)
 		for _, rawOption := range options {
 			option := mapValue(rawOption)
-			if strings.TrimSpace(textValue(option["label"])) == "" {
+			label := strings.TrimSpace(textValue(option["label"]))
+			if label == "" || labels[label] {
 				return nil, fmt.Errorf("question options are invalid")
 			}
+			labels[label] = true
 			if _, ok := option["description"].(string); !ok {
 				return nil, fmt.Errorf("question options are invalid")
 			}
@@ -111,6 +137,9 @@ func latestQuestionToolCall(entry *sessionEntry, args map[string]any) string {
 	wanted := stableJSON(args)
 	for messageIndex := len(entry.messages) - 1; messageIndex >= 0; messageIndex-- {
 		message := mapValue(entry.messages[messageIndex])
+		if message["role"] == "user" {
+			break
+		}
 		if message["role"] != "assistant" {
 			continue
 		}
@@ -118,7 +147,7 @@ func latestQuestionToolCall(entry *sessionEntry, args map[string]any) string {
 		for blockIndex := len(content) - 1; blockIndex >= 0; blockIndex-- {
 			block := mapValue(content[blockIndex])
 			id := textValue(block["id"])
-			if block["type"] == "toolCall" && block["name"] == "ask_user_question" && !entry.consumedQuestions[id] && stableJSON(block["arguments"]) == wanted {
+			if _, active := entry.pendingToolOutputs[id]; active && block["type"] == "toolCall" && block["name"] == "ask_user_question" && !entry.consumedQuestions[id] && stableJSON(block["arguments"]) == wanted {
 				return id
 			}
 		}
@@ -130,7 +159,7 @@ func validateQuestionResult(result, args map[string]any) error {
 	answers, answersOK := result["answers"].([]any)
 	_, cancelledOK := result["cancelled"].(bool)
 	questions := arrayValue(args["questions"])
-	if !answersOK || !cancelledOK || len(answers) > len(questions) {
+	if !answersOK || !cancelledOK || len(answers) > len(questions) || (result["cancelled"] == false && len(answers) != len(questions)) {
 		return fmt.Errorf("malformed question response")
 	}
 	seen := make(map[int]bool)
@@ -189,15 +218,20 @@ func validateQuestionResult(result, args map[string]any) error {
 			return fmt.Errorf("malformed question response")
 		}
 		if kind == "multi" {
+			if question["multiSelect"] != true {
+				return fmt.Errorf("question does not allow multiple selections")
+			}
 			selected, ok := answer["selected"].([]any)
 			if !ok || len(selected) > 12 {
 				return fmt.Errorf("malformed question response")
 			}
+			selectedLabels := make(map[string]bool)
 			for _, label := range selected {
 				text, ok := label.(string)
-				if !ok || labels[text] == nil {
+				if !ok || labels[text] == nil || selectedLabels[text] {
 					return fmt.Errorf("malformed question response")
 				}
+				selectedLabels[text] = true
 			}
 		}
 		seen[index] = true
@@ -209,4 +243,18 @@ func stableJSON(value any) string {
 	// encoding/json sorts string map keys, including nested objects.
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+func (m *SessionManager) cancelQuestions(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, pending := range m.questions {
+		if sessionID == "" || key.sessionID == sessionID {
+			select {
+			case pending.result <- map[string]any{"answers": []any{}, "cancelled": true}:
+			default:
+			}
+			delete(m.questions, key)
+		}
+	}
 }

@@ -35,11 +35,14 @@ const (
 )
 
 type fixtureAgent struct {
-	release     chan struct{}
-	releaseOnce sync.Once
-	modeMu      sync.Mutex
-	mode        string
-	root        string
+	release         chan struct{}
+	releaseOnce     sync.Once
+	modeMu          sync.Mutex
+	mode            string
+	quality         string
+	root            string
+	historyRounds   int
+	historyInterval time.Duration
 }
 
 type rpcWriter struct {
@@ -76,7 +79,21 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	agent := &fixtureAgent{release: make(chan struct{}), mode: "ask", root: root}
+	agent := &fixtureAgent{release: make(chan struct{}), mode: "ask", quality: "balanced", root: root}
+	if configured := os.Getenv("GOOSEBERRY_UI_HISTORY_ROUNDS"); configured != "" {
+		count, err := strconv.Atoi(configured)
+		if err != nil || count < 1 || count > 5000 {
+			return fmt.Errorf("GOOSEBERRY_UI_HISTORY_ROUNDS must be between 1 and 5000")
+		}
+		agent.historyRounds = count
+		if configured := os.Getenv("GOOSEBERRY_UI_HISTORY_INTERVAL_MS"); configured != "" {
+			interval, err := strconv.Atoi(configured)
+			if err != nil || interval < 0 || interval > 100 {
+				return fmt.Errorf("GOOSEBERRY_UI_HISTORY_INTERVAL_MS must be between 0 and 100")
+			}
+			agent.historyInterval = time.Duration(interval) * time.Millisecond
+		}
+	}
 	agentServer, agentURL, err := agent.start()
 	if err != nil {
 		return err
@@ -279,12 +296,35 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 		}
 		result := any(map[string]any{})
 		switch rpc.Method {
+		case "_goose/unstable/providers/list":
+			result = map[string]any{"entries": fixtureProviders()}
+		case "_goose/unstable/providers/canonical-model-info":
+			result = map[string]any{"modelInfo": nil}
+		case "_goose/unstable/providers/config/read":
+			result = map[string]any{"fields": []any{}}
+		case "_goose/unstable/providers/config/save":
+			time.Sleep(2 * time.Second)
+		case "_goose/unstable/providers/inventory/refresh":
+			result = map[string]any{"started": []any{}, "skipped": []any{}}
+		case "_goose/unstable/preferences/read":
+			result = map[string]any{"values": []any{map[string]any{"key": "autoCompactThreshold", "value": 0.7}, map[string]any{"key": "gooseThinkingEffort", "value": "medium"}}}
+		case "_goose/unstable/defaults/read":
+			result = map[string]any{"providerId": "anthropic", "modelId": "claude-sonnet-4-5"}
+		case "_goose/unstable/config/extensions/list":
+			result = map[string]any{"extensions": []any{}, "warnings": []any{}}
+		case "_goose/unstable/session/extensions/list":
+			result = map[string]any{"extensions": []any{}}
+		case "_goose/unstable/sources/list", "_goose/unstable/recipes/list", "_goose/unstable/schedules/list":
+			result = map[string]any{"entries": []any{}, "recipes": []any{}, "schedules": []any{}}
+		case "_goose/unstable/session/info":
+			result = map[string]any{"sessionId": sessionID, "title": "Fixture chat"}
+
 		case "initialize":
 			result = map[string]any{
 				"protocolVersion": 1,
-				"agentInfo":       map[string]any{"name": "fixture-agent", "version": "1.0.0"},
+				"agentInfo":       fixtureIdentity(),
 				"agentCapabilities": map[string]any{
-					"loadSession":         true,
+					"loadSession": true, "mcpCapabilities": map[string]any{"http": true}, "_meta": map[string]any{"goose": map[string]any{}},
 					"promptCapabilities":  map[string]any{"image": true},
 					"sessionCapabilities": map[string]any{"list": map[string]any{}},
 				},
@@ -298,11 +338,28 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 				"updatedAt": "2026-01-02T00:00:00Z",
 			}}}
 		case "session/new":
-			result = map[string]any{"sessionId": "new-fixture", "modes": a.sessionModes()}
+			result = map[string]any{"sessionId": "new-fixture", "modes": a.sessionModes(), "configOptions": a.configOptions()}
 		case "session/load":
 			id, _ := rpc.Params["sessionId"].(string)
 			if id == "" {
 				id = sessionID
+			}
+			for round := range a.historyRounds {
+				if a.historyInterval > 0 {
+					select {
+					case <-time.After(a.historyInterval):
+					case <-request.Context().Done():
+						return
+					}
+				}
+				for _, update := range []map[string]any{
+					{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": fmt.Sprintf("History prompt %05d", round)}},
+					{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": fmt.Sprintf("History answer %05d\n\nA **formatted** reply with a [reference](https://example.com), inline `code` and several paragraphs.\n\n- Inspect the workspace\n- Preserve the conversation\n- Verify the result\n\n```typescript\nconst round = %d;\n```", round, round)}},
+				} {
+					if writer.write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": id, "update": update}}) != nil {
+						return
+					}
+				}
 			}
 			for _, update := range []map[string]any{
 				{"sessionUpdate": "plan", "entries": []any{
@@ -317,7 +374,7 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 					return
 				}
 			}
-			result = map[string]any{"modes": a.sessionModes()}
+			result = map[string]any{"modes": a.sessionModes(), "configOptions": a.configOptions()}
 		case "session/prompt":
 			id, _ := rpc.Params["sessionId"].(string)
 			if id == "" {
@@ -339,6 +396,13 @@ func (a *fixtureAgent) serveHTTP(response http.ResponseWriter, request *http.Req
 				_ = writer.write(map[string]any{"jsonrpc": "2.0", "id": responseID, "result": map[string]any{"stopReason": "end_turn"}})
 			}()
 			continue
+		case "session/set_config_option":
+			if rpc.Params["configId"] == "response-style-17" && (rpc.Params["value"] == "balanced" || rpc.Params["value"] == "concise") {
+				a.modeMu.Lock()
+				a.quality = rpc.Params["value"].(string)
+				a.modeMu.Unlock()
+			}
+			result = map[string]any{"configOptions": a.configOptions()}
 		case "session/set_mode":
 			id, _ := rpc.Params["sessionId"].(string)
 			modeID, _ := rpc.Params["modeId"].(string)
@@ -407,4 +471,40 @@ func (w *rpcWriter) write(value any) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.connection.Write(context.Background(), websocket.MessageText, payload)
+}
+
+func fixtureProviders() []any {
+	model := func(id string) any {
+		return map[string]any{"id": id, "name": id, "contextLimit": 200000, "reasoning": true}
+	}
+	entry := func(id, name string, visible bool, models []any) map[string]any {
+		if id == "anthropic" {
+			return map[string]any{"providerId": id, "providerName": name, "configured": true, "available": true, "visibleInSetup": visible, "models": models, "configKeys": []any{map[string]any{"name": "ANTHROPIC_API_KEY", "required": true, "primary": true, "secret": true}}}
+		}
+		return map[string]any{"providerId": id, "providerName": name, "configured": true, "available": true, "visibleInSetup": visible, "acp": false, "models": models, "configKeys": []any{map[string]any{"name": "COMMAND", "required": true, "primary": true, "secret": false, "default": "command"}}}
+	}
+	return []any{
+		entry("claude-code", "Claude Code CLI", false, []any{model("sonnet")}),
+		entry("cursor-agent", "Cursor Agent", true, []any{model("auto")}),
+		entry("gemini-cli", "Gemini CLI", false, []any{model("gemini-2.5-pro")}),
+		entry("atomic_chat", "Atomic Chat", true, []any{}),
+		entry("anthropic", "Anthropic", true, []any{model("claude-sonnet-4-5"), model("claude-opus-long-model-name-with-extra-identifiers-for-responsive-layout-review")}),
+		map[string]any{"providerId": "openai", "providerName": "OpenAI", "configured": false, "available": false, "visibleInSetup": true, "models": []any{model("gpt-5")}, "configKeys": []any{map[string]any{"name": "OPENAI_API_KEY", "required": true, "primary": true, "secret": true}}},
+	}
+}
+
+func fixtureIdentity() map[string]any {
+	if os.Getenv("GOOSEBERRY_UI_FIXTURE_GOOSE") == "1" {
+		return map[string]any{"name": "goose", "version": "1.49.0"}
+	}
+	return map[string]any{"name": "fixture-agent", "version": "1.0.0"}
+}
+
+func (a *fixtureAgent) configOptions() []any {
+	if os.Getenv("GOOSEBERRY_UI_FIXTURE_GOOSE") == "1" {
+		return []any{}
+	}
+	a.modeMu.Lock()
+	defer a.modeMu.Unlock()
+	return []any{map[string]any{"id": "response-style-17", "name": "Response style", "type": "select", "category": "_style", "currentValue": a.quality, "options": []any{map[string]any{"value": "balanced", "name": "Balanced"}, map[string]any{"value": "concise", "name": "Concise"}}}}
 }

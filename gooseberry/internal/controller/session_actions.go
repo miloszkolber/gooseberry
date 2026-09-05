@@ -421,20 +421,38 @@ func (m *SessionManager) Steer(ctx context.Context, sessionID, text string, imag
 }
 
 func (m *SessionManager) Abort(ctx context.Context, sessionID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	entry, err := m.entry(sessionID)
 	if err != nil {
 		return err
 	}
 	defer m.releaseEntry(entry)
-	if err := m.lockEntry(sessionID, entry); err != nil {
+	if err := m.lockEntryContext(ctx, sessionID, entry); err != nil {
 		return err
 	}
-	defer entry.op.Unlock()
 	if err := m.attachLocked(ctx, sessionID, entry); err != nil {
+		entry.op.Unlock()
 		return err
 	}
+	entry.state.Lock()
+	done := entry.promptDone
+	entry.state.Unlock()
 	m.cancelPermissions(sessionID)
-	return m.client.Cancel(entry.context(ctx), sessionID)
+	m.cancelQuestions(sessionID)
+	err = m.client.Cancel(entry.context(ctx), sessionID)
+	entry.op.Unlock()
+	if err != nil || done == nil {
+		return err
+	}
+	// Cancellation is a notification. Its acknowledgement is prompt settlement,
+	// which must acquire the operation lock we just released.
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry, text string, images []ImageContent, resources []TextResourceAttachment, queueID string) error {
@@ -501,6 +519,8 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 	entry.stats.TotalMessages = len(entry.messages)
 	entry.streaming = true
 	entry.promptActive = true
+	entry.promptDone = make(chan struct{})
+	done := entry.promptDone
 	entry.promptGeneration++
 	generation := entry.promptGeneration
 	if queueID != "" {
@@ -513,6 +533,7 @@ func (m *SessionManager) startPromptLocked(sessionID string, entry *sessionEntry
 	entry.state.Unlock()
 	promptContext := entry.context(context.Background())
 	go func() {
+		defer close(done)
 		defer m.releaseWork(entry)
 		response, promptErr := m.client.Prompt(promptContext, acp.PromptRequest{SessionId: acp.SessionId(sessionID), Prompt: prompt})
 		if err := m.lockEntry(sessionID, entry); err != nil {

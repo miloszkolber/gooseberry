@@ -1,6 +1,20 @@
 import { expect, test } from "bun:test";
 import { foldLoginFrame, newLoginState } from "@/settings/login/login-state";
 
+test("only an authoritative login frame consumes the previous challenge", () => {
+	const challenge = foldLoginFrame(newLoginState("login", "provider"), {
+		kind: "prompt",
+		message: "API key",
+		secret: true,
+	});
+	expect(challenge.input?.kind).toBe("prompt");
+	const progress = foldLoginFrame(challenge, { kind: "progress", message: "Saving" });
+	expect(progress.input).toBeUndefined();
+	const next = foldLoginFrame(progress, { kind: "prompt", message: "Next field" });
+	expect(next.input?.message).toBe("Next field");
+	expect(next.progress).toBeUndefined();
+});
+
 test("login auth and device URLs retain only normalized credential-free HTTP(S) URLs", () => {
 	const auth = foldLoginFrame(newLoginState("login", "provider"), {
 		kind: "authUrl",

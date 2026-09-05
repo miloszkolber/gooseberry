@@ -1,11 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import {
-	readFold,
-	readSelection,
-	selectValue,
-	toggleFold,
-	writeFold,
-} from "@/chat/runtime/fold-state";
+import { createFoldState } from "@/chat/runtime/fold-state";
+
+const { readFold, writeFold, toggleFold, readSelection, selectValue } = createFoldState();
 
 describe("persistent chat disclosure state", () => {
 	test("retains explicit fold choices independently", () => {
@@ -22,4 +18,11 @@ describe("persistent chat disclosure state", () => {
 		expect(readSelection("selection-a")).toBe("tool-1");
 		expect(selectValue("selection-a", "tool-1", "tool-1")).toBeNull();
 	});
+});
+
+test("identical tool IDs in different sessions keep independent disclosure choices", () => {
+	const first = createFoldState();
+	const second = createFoldState();
+	first.writeFold("tool", true);
+	expect(second.readFold("tool")).toBe(false);
 });

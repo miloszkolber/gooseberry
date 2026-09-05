@@ -11,8 +11,6 @@ let { status }: Props = $props();
 <div
 	data-testid="stream-indicator"
 	data-phase={status.phase}
-	role="status"
-	aria-live="polite"
 	class="flex items-center gap-sm py-xs text-text-muted tr-text-metadata"
 >
 	<span class="flex items-center gap-0.5" aria-hidden="true">

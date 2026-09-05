@@ -415,12 +415,16 @@ export interface ProviderStatus {
 	id: string;
 	name: string;
 	configured: boolean;
-	/** Whether Goose reports the runtime available without a current inventory failure. */
+	/** Upstream inventory availability; not an authentication/readiness check. */
 	available?: boolean;
+	configuration?: "reported" | "explicit" | "defaults" | "unknown";
+	deprecated?: boolean;
+	replacement?: string;
 	kind?: ProviderAuthKind;
 	detail?: string;
 	canOAuth?: boolean;
 	canApiKey?: boolean;
+	canConfigure?: boolean;
 	canLogout?: boolean;
 	modelCount: number;
 	availableModelCount: number;

@@ -202,6 +202,11 @@ RUN --mount=type=cache,id=ui-acceptance-apt,target=/var/cache/apt,sharing=locked
 COPY --from=ui-test-build /out/gooseberry-ui-fixture /app/gooseberry-ui-fixture
 COPY --from=web-build /work/webui/dist /app/web
 COPY gooseberry/tests/ui/run.sh /app/run-ui-acceptance
+COPY gooseberry/tests/ui/goose.sh /app/run-goose-acceptance
+COPY gooseberry/tests/ui/faults.js /app/ui-faults.js
+COPY gooseberry/tests/ui/history.sh /app/run-history-measurement
+COPY gooseberry/tests/ui/history.js /app/ui-history.js
+COPY gooseberry/tests/ui/history-interactions.js /app/ui-history-interactions.js
 RUN chmod 0755 /app/run-ui-acceptance \
     && test -x /app/gooseberry-ui-fixture \
     && test -f /app/web/index.html \

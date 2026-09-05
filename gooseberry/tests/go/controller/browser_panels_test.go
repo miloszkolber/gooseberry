@@ -292,3 +292,34 @@ func TestBrowserPanelOpenFailureDoesNotConsumeCapacity(t *testing.T) {
 type roundTripper func(*http.Request) (*http.Response, error)
 
 func (f roundTripper) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func TestBrowserPanelCleanupRetriesWithoutAnotherClientRequest(t *testing.T) {
+	var attempts atomic.Int32
+	recovered := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"outcome":"completed","command":"close","code":0}`))
+		select {
+		case recovered <- struct{}{}:
+		default:
+		}
+	}))
+	defer server.Close()
+	panels := controller.NewBrowserPanels(controller.AuthConfig{BrowserEnabled: true, BrowserToken: browserPanelToken, BrowserURL: server.URL}, server.Client())
+	defer panels.CloseAll(context.Background())
+	panel, err := panels.Open("client", "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := panels.Close(context.Background(), "client", panel); err == nil {
+		t.Fatal("failed cleanup reported success")
+	}
+	select {
+	case <-recovered:
+	case <-time.After(4 * time.Second):
+		t.Fatal("cleanup had no retry owner")
+	}
+}

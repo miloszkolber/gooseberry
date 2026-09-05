@@ -108,17 +108,8 @@ func (p *Projects) CoordinateLegacyMigration(migrate func([]ProjectRootMigration
 
 func (p *Projects) readNormalized() ([]Project, []ProjectRootMigration, bool, error) {
 	var persisted []persistedProject
-	for _, name := range []string{"projects.json", "projects.json.bak"} {
-		raw, _, err := persist.ReadFile(filepath.Join(p.store.Dir, name))
-		if err != nil {
-			continue
-		}
-		var decoded []persistedProject
-		if persist.Decode(raw, &decoded, validateProjects) != nil {
-			continue
-		}
-		persisted = decoded
-		break
+	if _, err := persist.Read(p.store, "projects.json", &persisted, validateProjects); err != nil {
+		return nil, nil, false, err
 	}
 	projects := make([]Project, 0, len(persisted))
 	mappings := make([]ProjectRootMigration, 0)

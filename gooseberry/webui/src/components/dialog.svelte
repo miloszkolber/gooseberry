@@ -70,8 +70,8 @@ $effect(() => {
 	}}
 >
 	<div class="dialog-content">
-		<header class="dialog-header">
-			<div>
+		<header class="dialog-header flex items-start justify-between gap-sm">
+			<div class="min-w-0 flex-1">
 				<h2 id={titleId} class="dialog-title">{title}</h2>
 				{#if description}<p id={descriptionId} class="dialog-description">{description}</p>{/if}
 			</div>

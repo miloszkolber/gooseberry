@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type connectionGenerationKey struct{}
@@ -69,7 +70,9 @@ func (entry *sessionEntry) context(ctx context.Context) context.Context {
 
 // Waiting for an operation does not grant authority over a replaced projection.
 func (m *SessionManager) lockEntry(sessionID string, entry *sessionEntry) error {
-	return m.lockEntryContext(context.Background(), sessionID, entry)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return m.lockEntryContext(ctx, sessionID, entry)
 }
 
 func (m *SessionManager) lockEntryContext(ctx context.Context, sessionID string, entry *sessionEntry) error {

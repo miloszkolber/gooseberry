@@ -76,5 +76,5 @@ test("closed settings retain the native dialog lifecycle without retaining secti
 	const openGuard = source.indexOf("{#if $appStore.settingsOpen}", dialogStart);
 	expect(dialogStart).toBeGreaterThanOrEqual(0);
 	expect(openGuard).toBeGreaterThan(dialogStart);
-	expect(source.indexOf("<ProvidersSettings />", openGuard)).toBeGreaterThan(openGuard);
+	expect(source.indexOf("<Section />", openGuard)).toBeGreaterThan(openGuard);
 });

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/miloszkolber/gooseberry/internal/identifier"
+	"github.com/miloszkolber/gooseberry/internal/persist"
 )
 
 const (
@@ -36,23 +38,32 @@ var (
 type browserPanel struct {
 	id, clientKey, projectID string
 	closing                  bool
+	retry                    *time.Timer
+	retryDelay               time.Duration
+	orphan                   bool
 }
 
 // BrowserPanels keeps random browser session identifiers on the application
 // side. Browser remains authoritative for session serialization and quotas.
 type BrowserPanels struct {
-	auth     AuthConfig
-	client   *http.Client
-	mu       sync.Mutex
-	panels   map[string]browserPanel
-	draining bool
+	auth          AuthConfig
+	client        *http.Client
+	mu            sync.Mutex
+	panels        map[string]browserPanel
+	draining      bool
+	cleanupCtx    context.Context
+	cleanupCancel context.CancelFunc
+	store         *persist.Store
+	journalName   string
+	leaseOnce     sync.Once
 }
 
 func NewBrowserPanels(auth AuthConfig, client *http.Client) *BrowserPanels {
 	if client == nil {
 		client = &http.Client{Timeout: browserPanelTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &BrowserPanels{auth: auth, client: client, panels: make(map[string]browserPanel)}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &BrowserPanels{auth: auth, client: client, panels: make(map[string]browserPanel), cleanupCtx: ctx, cleanupCancel: cancel}
 }
 
 func (p *BrowserPanels) Open(clientKey, projectID string) (string, error) {
@@ -75,6 +86,10 @@ func (p *BrowserPanels) Open(clientKey, projectID string) (string, error) {
 	}
 	panel := browserPanel{id: panelID, clientKey: clientKey, projectID: projectID}
 	p.panels[panel.id] = panel
+	if err := p.saveOwnership(); err != nil {
+		delete(p.panels, panel.id)
+		return "", err
+	}
 	return panel.id, nil
 }
 
@@ -106,8 +121,7 @@ func (p *BrowserPanels) Close(ctx context.Context, clientKey, panelID string) er
 		return nil
 	}
 	_, err = p.call(ctx, panel.id, "close", nil)
-	p.finishClose(panel.id, err == nil)
-	return err
+	return errors.Join(err, p.finishClose(panel.id, err == nil))
 }
 
 // ReleaseClient is called after the controller's reconnect grace period.
@@ -121,6 +135,14 @@ func (p *BrowserPanels) ReleaseClient(clientKey string) {
 func (p *BrowserPanels) CloseAll(ctx context.Context) {
 	p.mu.Lock()
 	p.draining = true
+	p.cleanupCancel()
+	for id, panel := range p.panels {
+		if panel.retry != nil {
+			panel.retry.Stop()
+			panel.retry = nil
+			p.panels[id] = panel
+		}
+	}
 	p.mu.Unlock()
 	p.closeMatching(ctx, func(browserPanel) bool { return true })
 }
@@ -180,7 +202,7 @@ func (p *BrowserPanels) owned(clientKey, panelID string) (browserPanel, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	panel, ok := p.panels[panelID]
-	return panel, ok && panel.clientKey == clientKey && !panel.closing
+	return panel, ok && !p.draining && !panel.orphan && panel.clientKey == clientKey && !panel.closing && panel.retry == nil
 }
 
 func (p *BrowserPanels) beginClose(clientKey, panelID string) (browserPanel, bool, error) {
@@ -193,27 +215,60 @@ func (p *BrowserPanels) beginClose(clientKey, panelID string) (browserPanel, boo
 	if !ok {
 		return browserPanel{}, false, nil
 	}
-	if panel.clientKey != clientKey || panel.closing {
+	if panel.orphan || panel.clientKey != clientKey || panel.closing {
 		return browserPanel{}, false, fmt.Errorf("browser panel is unavailable")
+	}
+	if panel.retry != nil {
+		panel.retry.Stop()
+		panel.retry = nil
 	}
 	panel.closing = true
 	p.panels[panelID] = panel
 	return panel, true, nil
 }
 
-func (p *BrowserPanels) finishClose(panelID string, closed bool) {
+func (p *BrowserPanels) finishClose(panelID string, closed bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	panel, ok := p.panels[panelID]
 	if !ok {
-		return
+		return nil
 	}
+	var persistErr error
 	if closed {
 		delete(p.panels, panelID)
-		return
+		persistErr = p.saveOwnership()
+		if persistErr == nil {
+			return nil
+		}
+		// Retain ownership until both remote close and the local acknowledgement
+		// are durable. Closing an already absent session is idempotent.
 	}
 	panel.closing = false
+	if !p.draining {
+		if panel.retry != nil {
+			panel.retry.Stop()
+		}
+		panel.retryDelay = min(30*time.Second, max(time.Second, panel.retryDelay*2))
+		panel.retry = time.AfterFunc(panel.retryDelay, func() { p.retryClose(panelID) })
+	}
 	p.panels[panelID] = panel
+	return persistErr
+}
+
+func (p *BrowserPanels) retryClose(panelID string) {
+	p.mu.Lock()
+	panel, ok := p.panels[panelID]
+	if !ok || p.draining || panel.closing {
+		p.mu.Unlock()
+		return
+	}
+	panel.closing = true
+	panel.retry = nil
+	p.panels[panelID] = panel
+	p.mu.Unlock()
+	_, err := p.call(p.cleanupCtx, panelID, "close", nil)
+	p.finishClose(panelID, err == nil)
 }
 
 type browserPanelResult struct {
@@ -279,6 +334,7 @@ func (p *BrowserPanels) call(ctx context.Context, session, command string, args 
 		return browserPanelResult{}, fmt.Errorf("create browser command: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Gooseberry-Panel-Lease", "1")
 	if browserAuth, browserToken := p.auth.BrowserServiceAuth(); browserAuth {
 		if !strongToken(browserToken) {
 			return browserPanelResult{}, fmt.Errorf("browser panel is unavailable")

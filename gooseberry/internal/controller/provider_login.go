@@ -93,39 +93,15 @@ func (p *ProviderLogins) Start(ctx context.Context, clientKey, providerID, kind 
 		}
 		after = func() { go p.authenticate(login) }
 	} else {
-		var current struct {
-			Fields []struct {
-				Key   string `json:"key"`
-				IsSet bool   `json:"isSet"`
-			} `json:"fields"`
-		}
-		if err := p.admin.call(ctx, "_goose/unstable/providers/config/read", map[string]any{"providerId": providerID}, &current); err != nil {
-			return fail(err)
-		}
-		configured := make(map[string]bool)
-		for _, field := range current.Fields {
-			if field.IsSet {
-				configured[field.Key] = true
-			}
-		}
-		manual := false
 		for _, field := range provider.ConfigKeys {
 			if !field.OAuthFlow && (field.Primary || field.Required) {
-				manual = true
-				if !configured[field.Name] {
-					login.fields = append(login.fields, field)
-				}
+				login.fields = append(login.fields, field)
 			}
 		}
-		if !manual {
+		if len(login.fields) == 0 {
 			return fail(fmt.Errorf("provider does not accept configuration fields"))
 		}
-		if len(login.fields) == 0 {
-			frame["message"] = "Checking provider configuration…"
-			after = func() { go p.save(login) }
-		} else {
-			frame = providerFieldFrame(login.fields[0])
-		}
+		frame = providerFieldFrame(login.fields[0])
 	}
 	p.mu.Lock()
 	if p.pending[login.id] != login || login.cancelled {
@@ -185,6 +161,7 @@ func (p *ProviderLogins) save(login *providerLogin) {
 	p.mu.Unlock()
 	p.frame(login, map[string]any{"kind": "progress", "message": "Saving provider configuration…"})
 	_, err := p.admin.client.CallGooseUntilDone(login.ctx, "_goose/unstable/providers/config/save", map[string]any{"providerId": login.providerID, "fields": values})
+	p.admin.invalidateProviderInventory()
 	p.finish(login, err)
 }
 
@@ -197,6 +174,7 @@ func (p *ProviderLogins) authenticate(login *providerLogin) {
 	}
 	p.mu.Unlock()
 	_, err := p.admin.client.CallGooseUntilDone(login.ctx, "_goose/unstable/providers/config/authenticate", map[string]any{"providerId": login.providerID})
+	p.admin.invalidateProviderInventory()
 	p.finish(login, err)
 }
 

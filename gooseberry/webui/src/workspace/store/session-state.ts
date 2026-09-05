@@ -328,10 +328,10 @@ export const createSessionWorkspaceState: StateCreator<AppState, [], [], Session
 				runtime !== undefined &&
 				!hasAnotherTab &&
 				!runtime.isStreaming &&
+				runtime.submission == null &&
+				!runtime.draft.trim() &&
 				runtime.queue.steering.length === 0 &&
 				runtime.queue.followUp.length === 0 &&
-				runtime.pendingExtUi === null &&
-				runtime.extUiQueue.length === 0 &&
 				runtime.goal.status !== "loading" &&
 				runtime.goal.status !== "saving" &&
 				Object.keys(state.pendingPermissions[sessionId] ?? {}).length === 0;
@@ -568,6 +568,7 @@ export const createSessionWorkspaceState: StateCreator<AppState, [], [], Session
 				...createSessionRuntime(summary.model, summary.thinkingLevel, modes),
 				planState,
 				...(summary.parentSessionId ? { parentSessionId: summary.parentSessionId } : {}),
+				configOptions: summary.configOptions ?? [],
 				turns: hydrated.turns,
 				toolResults: hydrated.toolResults,
 				askAnswers: hydrated.askAnswers,

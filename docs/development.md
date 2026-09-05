@@ -19,7 +19,7 @@ go vet ./...
 
 All tests live under `gooseberry/tests`. Add small regression tests for observable contracts and realistic failure modes at persistence, concurrency, authorization, protocol, filesystem, performance and fragile UI boundaries. Do not test copied types, constants or implementation details.
 
-The MCP host is covered by `go test ./internal/mcphost`, the controller MCP gateway tests under `tests/go/controller`, and the default Compose assertions in `tests/deployment/compose.test.sh`. Its cross-compiled executable is built with `GOOS=linux GOARCH=amd64 go build ./cmd/gooseberry-mcp` when the host platform cannot run the Linux service image.
+The MCP host is covered by `go test ./tests/go/mcphost`, the controller MCP gateway tests under `tests/go/controller`, and the default Compose assertions in `tests/deployment/compose.test.sh`. Its cross-compiled executable is built with `GOOS=linux GOARCH=amd64 go build ./cmd/gooseberry-mcp` when the host platform cannot run the Linux service image. See the [module checklist](mcp.md#add-a-module) when extending the host.
 
 The frontend is Svelte 5 compiled directly by Bun. `bun run dev:web` builds the same application entry used in production, validates each staged artifact before publication and serves it with the same-origin Go UI fixture; this supported development path runs on Linux. Source and contract changes trigger rebuilds and browser reloads. Bun owns module compilation, splitting and reload publication, while the fixture owns the same-origin HTTP and WebSocket path.
 
@@ -36,7 +36,19 @@ docker build -f gooseberry/Dockerfile --target ui-acceptance -t gooseberry-ui-ac
 docker run --rm --network none --shm-size 256m gooseberry-ui-acceptance
 ```
 
-The gate covers commit selection, source and image previews, streaming tab recovery, reconnects, dialog focus and narrow-screen overflow. Mount `/artifacts` to retain screenshots.
+The gate covers commit selection, source and image previews, streaming tab recovery, reconnects, arbitrary ACP selector IDs, dialog focus and narrow-screen overflow. A second Goose-shaped fixture checks provider configuration semantics, settings drafts, failed credential/prompt/permission replies, attachment retention, IME Enter, and inner-panel geometry at 320, 390, 768, 1024 and 1440 pixels in both themes. Mount `/artifacts` to retain screenshots.
+
+The Browser Go suite checks controller-panel lease expiry, renewal, rejected adoption, command/cleanup races, restart recovery and failed-close retries. For an isolated real Chromium check, compile its test binary in the Linux build environment and run it inside the Browser automation image:
+
+```bash
+go test -c -o /out/browser-tests ./tests/go/browser
+# Inside the disposable Browser runtime, with the binary mounted at /checks:
+GOOSEBERRY_TEST_AGENT_BROWSER=/usr/local/bin/agent-browser \
+GOOSEBERRY_TEST_BROWSER_CONFIG=/app/config.json \
+  /checks/browser-tests -test.run '^TestRealBrowserPanelLeaseLifecycle$' -test.v
+```
+
+This opt-in test uses temporary state, a synthetic local page and a shortened lease. It verifies actual navigation, screenshot delivery, leased-panel cleanup and an unrelated browser session remaining usable. It skips when the executable environment variable is absent. It does not use Goose state or provider credentials.
 
 ## Goose compatibility
 
@@ -62,7 +74,7 @@ Check both architectures after packaging changes. Exercise state and environment
 
 ## Performance
 
-The initial JavaScript budget is **500,000 raw bytes**, including eager imports. Every production build measures and enforces the current output. Every Web UI build gives JavaScript and CSS larger than 1 KiB a verified gzip companion, so development and production use one artifact-integrity contract; the Go static handler negotiates those files without adding a proxy or runtime package. Keep heavy grammars and optional interactive App support out of the initial path, and preserve bounded transcript rendering.
+The initial JavaScript budget is **500,000 raw bytes**, including eager imports. Every production build measures and enforces the current output. Every Web UI build gives JavaScript and CSS larger than 1 KiB a verified gzip companion, so development and production use one artifact-integrity contract; the Go static handler negotiates those files without adding a proxy or runtime package. Keep heavy grammars and optional interactive App support out of the initial path, and retain paged transcript loading. `content-visibility` skips offscreen layout/paint; it is not DOM virtualization or a cap on active transcript memory.
 
 The controller target is a median round-p95 no more than **5% above the reference workload**. Prepare a fixture once, mount it read-only into two isolated applications and compare exact builds:
 
@@ -79,3 +91,23 @@ go run ./tests/performance \
 Set the candidate and reference tokens in the private environment. The probe alternates five rounds and validates project lists, one-MiB files, images and eight-client throughput outside the timers. Keep authentication, limits, storage and browser load identical. Deployment-host enforcement, long-history acceptance and native x86-64 browser checks remain [deferred](roadmap.md#deferred).
 
 `GOGC=200` reduces collection frequency in the application image. Measure latency and memory before changing it.
+
+Measure projection CPU separately from browser rendering with:
+
+```bash
+bun --tsconfig-override tests/tsconfig.json tests/performance/transcript.ts
+```
+
+This opt-in synthetic probe reports hydration, incremental text plus row derivation, and heap allocation at 100, 1,000 and 10,000 messages. It does not measure browser paint, native keyboard behavior or deployment RSS. Keep those distinctions when recording performance results.
+
+The `ui-acceptance` image also contains an opt-in Chromium history probe:
+
+```bash
+docker build -f gooseberry/Dockerfile --target ui-acceptance -t gooseberry-ui:local .
+docker run --rm -e GOOSEBERRY_UI_HISTORY_ROUNDS=1000 \
+  -v "$PWD/history-artifacts:/artifacts" gooseberry-ui:local sh /app/run-history-measurement
+```
+
+Each round contains a prompt and a formatted answer; the fixture adds its regular final round. After initial fonts, Markdown and visible code settle, the probe loads every older page through the UI, records retained rows/elements and Chromium heap estimates, requires anchor drift within 2 pixels, and traverses the transcript while observing frame intervals and long tasks. It also checks native find, code selection across scrolling, historical link focus, jump-control focus and final-message visibility, transcript announcement policy and retained row identity. Set `GOOSEBERRY_UI_HISTORY_ROUNDS` from 1 to 5,000 and optionally `HISTORY_VIEWPORT_WIDTH`/`HISTORY_VIEWPORT_HEIGHT`. Reduced motion is the default; set `HISTORY_REDUCED_MOTION=false` to check normal scrolling, and retain the measured preference from the result. Results and a screenshot are written to `/artifacts`. These are synthetic paging/frame measurements and coarse heap estimates, not chunk-to-paint traces, peak memory, native-device acceptance or deployment-host performance limits.
+
+History replay is unpaced by default so the browser probe also exercises burst replay through the bounded ACP adapter. `GOOSEBERRY_UI_HISTORY_INTERVAL_MS` optionally adds 0–100 ms per round for controlled load comparisons. The Go race suite separately verifies 10,000 mixed notifications, ordered completion, request-handler callbacks, pretty-printed WebSocket JSON and cancellation while notification processing is stalled.

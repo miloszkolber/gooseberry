@@ -52,7 +52,7 @@ Set these values:
 | `GOOSEBERRY_MCP_TOKEN` | Strong token shared by the MCP host, application and private Goose extension environment. |
 | `GOOSEBERRY_AUTH_ENABLED`, `GOOSEBERRY_TOKEN` | Optional Web UI login. Authentication is required for remote binding. |
 | `GOOSEBERRY_MCP_URL` | MCP host origin; defaults to `http://127.0.0.1:8787`. |
-| `GOOSEBERRY_IMAGE`, `GOOSEBERRY_MCP_IMAGE` | Optional immutable `sha-<revision>` or release image references. |
+| `GOOSEBERRY_IMAGE`, `GOOSEBERRY_MCP_IMAGE` | Optional image references; digest-pinned pairs provide immutable deployments. |
 | `GOOSEBERRY_MCP_HOST`, `GOOSEBERRY_MCP_PORT`, `GOOSEBERRY_MCP_PUBLIC_ORIGIN` | MCP bind and exact public origin; defaults to authenticated loopback on `127.0.0.1:8787`. The public origin must differ from the application origin. Match `GOOSEBERRY_MCP_URL` to any bind-port change. |
 | `GOOSEBERRY_MCP_MODULES`, `GOOSEBERRY_MCP_DISABLED_MODULES` | Optional publication ceiling and environment-level disable list. Unknown or duplicate module IDs fail closed. |
 | `GOOSEBERRY_MEMORY_LIMIT`, `GOOSEBERRY_CPU_LIMIT`, `GOOSEBERRY_PIDS_LIMIT` | Optional application ceilings; defaults are 1 GiB, 2 CPUs and 256 processes. |
@@ -85,7 +85,7 @@ Start the application and MCP host together:
 docker compose --env-file .gooseberry up -d --build
 ```
 
-To use published images instead, set `GOOSEBERRY_IMAGE` and `GOOSEBERRY_MCP_IMAGE` to a release or `sha-<revision>` tag, run `docker compose --env-file .gooseberry pull`, then start with `--no-build`. The default `latest` tags are a convenience, not an immutable deployment reference.
+To use published images instead, set `GOOSEBERRY_IMAGE` and `GOOSEBERRY_MCP_IMAGE` to a release or `sha-<revision>` tag, run `docker compose --env-file .gooseberry pull`, then start with `--no-build`. Each successful publishing run uploads a `deployment-manifest` artifact containing the application and MCP image digests for the same source revision. Use its two `reference` values as `GOOSEBERRY_IMAGE` and `GOOSEBERRY_MCP_IMAGE` for an immutable pair. Both builds must succeed before promotion starts. Registry tags are updated sequentially, so `latest` does not provide an atomic paired deployment.
 
 ## MCP host and Browser module
 
@@ -120,12 +120,18 @@ Open <http://127.0.0.1:7312>, configure a provider and create a project.
 | `http://127.0.0.1:7312/livez` | Application process is alive. |
 | `http://127.0.0.1:7312/readyz` | State, UI files, ACP connection and required session capabilities are ready. |
 | `http://127.0.0.1:8787/health` | MCP host is alive without starting Chromium. |
-| `http://127.0.0.1:8787/readyz` | Authenticated MCP catalog and embedded Browser module are ready. |
+| `http://127.0.0.1:8787/readyz` | Authenticated readiness of published modules; returns `503` when degraded. |
 | `http://127.0.0.1:8787/v1/mcp/modules` | Authenticated MCP host catalog. |
 | `http://127.0.0.1:8787/v1/mcp/status` | Authenticated MCP host build and module diagnostics. |
 
-`docker compose --env-file .gooseberry ps` shows container health. Logs are bounded to three 10 MiB files per service, and both containers have configurable memory, CPU and process ceilings. A Goose outage makes application readiness fail without stopping the Web UI process.
+`docker compose --env-file .gooseberry ps` shows container health. MCP container health means liveness, not successful Chromium operation; use the [authenticated checks and troubleshooting](mcp.md#check-the-service) for readiness and browsing verification. Logs are bounded to three 10 MiB files per service, and both containers have configurable memory, CPU and process ceilings. A Goose outage makes application readiness fail without stopping the Web UI process.
 
 Host networking is required for the loopback Goose and MCP URLs; loopback inside a bridged container points back to that container. For remote use, configure Web UI authentication, HTTPS and separate exact application/MCP origins. An SSH tunnel is the simplest way to keep the service on loopback.
 
 Back up Goose configuration and state, `GOOSEBERRY_DATA_PATH` and the private environment files after active work settles. Restore them from the same backup point. Goose and Gooseberry update independently; preserve the state paths and check [compatibility](acp.md) before changing Goose.
+
+## Optional Signet memory
+
+Run the Signet daemon on a host address reachable by both Goose and the application, then set its address/port and enable it in Settings → Signet. The default endpoint is `http://127.0.0.1:3850/mcp`, as documented by [Signet](https://docs.signetai.sh/mcp/). New or reattached ACP sessions receive this HTTP MCP server when the agent advertises HTTP MCP support. Existing attached chats need a reconnect or a new session to change membership.
+
+The health button checks the daemon only. Verify memory separately by asking a new test chat to store and recall a synthetic fact through Signet tools. Disabling the setting stops injection into subsequent attachments; it does not delete Signet data or change a separately configured global Goose extension. Signet session-start/end hooks are configured separately in Signet; this setting supplies on-demand memory tools.

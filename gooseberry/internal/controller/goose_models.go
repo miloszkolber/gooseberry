@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 type canonicalModelInfo struct {
@@ -33,7 +34,8 @@ type canonicalFlight struct {
 }
 
 // A projection can stop waiting without releasing an upstream concurrency slot.
-// Only queued work with no remaining consumers is cancelled; completed metadata
+// Queued work with no remaining consumers is cancelled. Every shared flight has
+// a finite deadline, independent of UI patience; completed metadata
 // is never cached, so a later inventory request queries Goose again.
 func (a *GooseAdmin) canonicalModel(ctx context.Context, provider, model string) (*canonicalModelInfo, bool) {
 	generation, err := a.client.Ready(ctx)
@@ -44,7 +46,7 @@ func (a *GooseAdmin) canonicalModel(ctx context.Context, provider, model string)
 	a.canonicalMu.Lock()
 	flight := a.canonicalFlights[key]
 	if flight == nil {
-		waiting, cancel := context.WithCancel(context.Background())
+		waiting, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		flight = &canonicalFlight{done: make(chan struct{}), cancel: cancel}
 		a.canonicalFlights[key] = flight
 		go a.lookupCanonical(waiting, key, flight)
@@ -96,6 +98,7 @@ func (a *GooseAdmin) lookupCanonical(ctx context.Context, key canonicalKey, flig
 	if generation, err := a.client.Ready(ctx); err != nil || generation != key.generation {
 		return
 	}
+	ctx = context.WithValue(ctx, connectionGenerationKey{}, key.generation)
 	raw, err := a.client.CallGooseUntilDone(ctx, "_goose/unstable/providers/canonical-model-info", map[string]any{"provider": key.provider, "model": key.model})
 	if err != nil {
 		return

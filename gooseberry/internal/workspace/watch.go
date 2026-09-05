@@ -41,6 +41,7 @@ type projectWatch struct {
 	native     *fsnotify.Watcher
 	dirs       map[string]bool
 	stop, done chan struct{}
+	ready      chan struct{}
 	truncated  bool
 }
 
@@ -56,40 +57,45 @@ func (w *ProjectWatches) Reconcile(projectID string) error {
 
 func (w *ProjectWatches) ensure(projectID string, onlyActive bool) (bool, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	current := w.active[projectID]
-	if onlyActive && current == nil {
-		return false, nil
+	state, created, err := func() (*projectWatch, bool, error) {
+		defer w.mu.Unlock()
+		current := w.active[projectID]
+		if onlyActive && current == nil {
+			return nil, false, nil
+		}
+		project, err := w.projects.Get(projectID)
+		if err != nil {
+			return nil, false, err
+		}
+		root, err := project.Root()
+		if err != nil {
+			return nil, false, err
+		}
+		if current != nil && current.root == root {
+			return current, false, nil
+		}
+		if current != nil {
+			current.close()
+			delete(w.active, projectID)
+		}
+		native, err := fsnotify.NewBufferedWatcher(1024)
+		if err != nil {
+			return nil, false, fmt.Errorf("could not start project filesystem notifications")
+		}
+		state := &projectWatch{owner: w, id: projectID, root: root, native: native, dirs: make(map[string]bool), stop: make(chan struct{}), done: make(chan struct{}), ready: make(chan struct{})}
+		if err := native.Add(root); err != nil {
+			native.Close()
+			return nil, false, fmt.Errorf("could not watch the admitted project root")
+		}
+		state.dirs[root] = true
+		w.active[projectID] = state
+		go state.run()
+		return state, true, nil
+	}()
+	if state != nil {
+		<-state.ready
 	}
-	project, err := w.projects.Get(projectID)
-	if err != nil {
-		return false, err
-	}
-	root, err := project.Root()
-	if err != nil {
-		return false, err
-	}
-	if current != nil && current.root == root {
-		return false, nil
-	}
-	if current != nil {
-		current.close()
-		delete(w.active, projectID)
-	}
-	native, err := fsnotify.NewBufferedWatcher(1024)
-	if err != nil {
-		return false, fmt.Errorf("could not start project filesystem notifications")
-	}
-	state := &projectWatch{owner: w, id: projectID, root: root, native: native, dirs: make(map[string]bool), stop: make(chan struct{}), done: make(chan struct{})}
-	if err := native.Add(root); err != nil {
-		native.Close()
-		return false, fmt.Errorf("could not watch the admitted project root")
-	}
-	state.dirs[root] = true
-	state.addTree(root)
-	w.active[projectID] = state
-	go state.run()
-	return true, nil
+	return created, err
 }
 
 func (w *ProjectWatches) Stop(projectID string) {
@@ -180,6 +186,11 @@ func (s *projectWatch) addTree(start string) {
 
 func (s *projectWatch) run() {
 	defer close(s.done)
+	// Admission holds only the cheap root watch; traversal belongs to this worker.
+	s.addTree(s.root)
+	close(s.ready)
+	// Refresh files that may have changed while descendant watches were armed.
+	s.truncated = true
 	changes := make(map[ProjectFsChange]bool)
 	var timer *time.Timer
 	var tick <-chan time.Time

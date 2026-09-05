@@ -4,11 +4,54 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/miloszkolber/gooseberry/internal/controller"
 	"github.com/miloszkolber/gooseberry/internal/persist"
 )
+
+func TestCorruptSettingsCannotBeReplacedWithDefaults(t *testing.T) {
+	store := persist.Store{Dir: t.TempDir()}
+	for _, name := range []string{"config.json", "config.json.bak"} {
+		if err := os.WriteFile(filepath.Join(store.Dir, name), []byte("broken"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings := controller.NewSettings(store, nil)
+	if _, err := settings.Get(); err == nil {
+		t.Fatal("corruption was treated as first run")
+	}
+	if _, err := settings.SetModelVisibility("provider", "model", true); err == nil {
+		t.Fatal("mutation overwrote damaged state")
+	}
+	for _, name := range []string{"config.json", "config.json.bak"} {
+		data, err := os.ReadFile(filepath.Join(store.Dir, name))
+		if err != nil || string(data) != "broken" {
+			t.Fatalf("damaged file was changed: %s, %v", name, err)
+		}
+	}
+}
+
+func TestIndependentModelVisibilityChangesSurviveConcurrentClients(t *testing.T) {
+	store := persist.Store{Dir: t.TempDir()}
+	settings := controller.NewSettings(store, nil)
+	var group sync.WaitGroup
+	for _, model := range []string{"one", "two", "three", "four"} {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if _, err := settings.SetModelVisibility("provider", model, true); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	group.Wait()
+	recovered, err := controller.NewSettings(store, nil).Get()
+	if err != nil || len(recovered.HiddenModels) != 4 {
+		t.Fatalf("independent updates lost: %#v, %v", recovered, err)
+	}
+}
 
 func TestDurableSessionStateRecoversSafeDataAcrossRestart(t *testing.T) {
 	store := persist.Store{Dir: t.TempDir()}

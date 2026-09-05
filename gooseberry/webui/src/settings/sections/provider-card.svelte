@@ -77,18 +77,20 @@ async function checkReadiness(): Promise<void> {
 	>
 		<Icon name={availability.usable ? "check" : "boxes"} size={16} />
 	</span>
-	<div class="min-w-0 flex-1">
-		<div class="truncate text-text-default tr-text-ui">{provider.name}</div>
-		<div class="truncate text-text-muted tr-text-metadata">
+	<div class="min-w-0 flex-1 basis-48">
+		<div class="break-words text-text-default tr-text-ui">{provider.name}</div>
+		<div class="break-words text-text-muted tr-text-metadata">
 			{provider.id} · {modelSummary(provider)}
 		</div>
+		{#if provider.deprecated}<p class="text-text-muted tr-text-metadata">Legacy provider{provider.replacement ? ` · Replacement: ${provider.replacement}` : ""}</p>{/if}
+		{#if provider.configuration === "defaults" || provider.configuration === "unknown"}<p class="text-text-muted tr-text-metadata">{provider.configuration === "defaults" ? "Default connection only · configure through Goose to use" : "Configuration could not be verified"}</p>{/if}
 		{#if provider.configured}
-			<div class="truncate text-text-muted tr-text-metadata">
+			<div class="break-words text-text-muted tr-text-metadata">
 				Goose reports {configuredLabel}{provider.available === false
 					? " · runtime unavailable"
 					: provider.acp
 						? ` · ${availability.qualifier}`
-						: " · runtime available"}{provider.detail ? ` · ${provider.detail}` : ""}
+						: " · readiness not checked"}{provider.detail ? ` · ${provider.detail}` : ""}
 			</div>
 		{/if}
 	</div>
@@ -124,7 +126,7 @@ async function checkReadiness(): Promise<void> {
 				Sign out
 			</Button>
 		{/if}
-		{#if !provider.configured && provider.canApiKey}
+		{#if provider.canApiKey || provider.canConfigure}
 			<Button
 				variant={provider.canOAuth ? "outline" : "default"}
 				size="sm"
@@ -134,10 +136,10 @@ async function checkReadiness(): Promise<void> {
 				onclick={() => onSignIn("api_key")}
 			>
 				<Icon name="key-round" size={14} />
-				API key
+				{provider.canApiKey ? (provider.configured ? "Change key" : "API key") : "Configure"}
 			</Button>
 		{/if}
-		{#if !provider.configured && provider.canOAuth}
+		{#if provider.canOAuth}
 			<Button
 				size="sm"
 				data-testid="provider-signin"
@@ -146,10 +148,10 @@ async function checkReadiness(): Promise<void> {
 				onclick={() => onSignIn("oauth")}
 			>
 				<Icon name="log-in" size={14} />
-				Sign in
+				{provider.configured ? "Reconnect" : "Sign in"}
 			</Button>
 		{/if}
-		{#if (provider.configured && !provider.canLogout) || (!provider.configured && !provider.canApiKey && !provider.canOAuth)}
+		{#if (provider.configured && !provider.canLogout) || (!provider.configured && !provider.canApiKey && !provider.canOAuth && !provider.canConfigure)}
 			<span
 				class="flex shrink-0 items-center gap-xs text-text-muted tr-text-metadata"
 				title="Configured through Goose or its environment"

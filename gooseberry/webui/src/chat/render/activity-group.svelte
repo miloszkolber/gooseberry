@@ -1,11 +1,13 @@
 <script lang="ts">
 import { untrack } from "svelte";
 import Icon from "../../components/icon.svelte";
-import { readFold, toggleFold } from "../runtime/fold-state";
+import { useFoldState } from "../runtime/fold-state";
 import type { ActivityStep } from "../runtime/rows";
 import { activityToolRenderProps, summarizeSteps } from "./activity-group";
 import ActivityStepRow from "./activity-step.svelte";
 import { getToolSummary } from "./tool-registry";
+
+const { readFold, toggleFold } = useFoldState();
 
 interface Props {
 	id: string;

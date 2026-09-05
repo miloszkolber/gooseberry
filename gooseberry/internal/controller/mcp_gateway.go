@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,9 +23,11 @@ const (
 // host. It owns discovery and endpoint construction; the browser never sees
 // the host token or raw Goose extension configuration.
 type MCPGateway struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL     string
+	token       string
+	client      *http.Client
+	mu          sync.Mutex
+	lastModules []mcpGatewayWireModule
 }
 
 type mcpGatewayWire struct {
@@ -74,7 +77,7 @@ func (g *MCPGateway) Catalog(ctx context.Context, admin *GooseAdmin) (map[string
 	wire := g.fetch(ctx)
 	configured := []gooseExtension(nil)
 	configurationDetail := ""
-	if wire.Gateway.State == "ready" || wire.Gateway.State == "degraded" {
+	if g != nil && g.baseURL != "" {
 		if admin == nil {
 			configurationDetail = "Goose administration is unavailable."
 		} else {
@@ -162,6 +165,30 @@ func (g *MCPGateway) SetGooseEnabled(ctx context.Context, admin *GooseAdmin, mod
 }
 
 func (g *MCPGateway) fetch(ctx context.Context) mcpGatewayWire {
+	wire := g.fetchLive(ctx)
+	if g == nil || g.baseURL == "" {
+		return wire
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if wire.Gateway.State == "ready" || wire.Gateway.State == "degraded" {
+		g.lastModules = append([]mcpGatewayWireModule(nil), wire.Modules...)
+	} else {
+		wire.Modules = append([]mcpGatewayWireModule(nil), g.lastModules...)
+		if len(wire.Modules) == 0 {
+			if browser, ok := gatewayModuleIdentity("browser"); ok {
+				wire.Modules = []mcpGatewayWireModule{browser}
+			}
+		}
+		for index := range wire.Modules {
+			wire.Modules[index].State = "unavailable"
+			wire.Modules[index].Detail = "Publication and readiness are unknown while the host is unavailable. Global Goose configuration can still be disabled."
+		}
+	}
+	return wire
+}
+
+func (g *MCPGateway) fetchLive(ctx context.Context) mcpGatewayWire {
 	if g == nil || g.baseURL == "" {
 		return mcpGatewayWire{SchemaVersion: 1, Gateway: mcpGatewayWireState{State: "not-configured", Detail: "MCP host is not configured."}, Modules: []mcpGatewayWireModule{}}
 	}

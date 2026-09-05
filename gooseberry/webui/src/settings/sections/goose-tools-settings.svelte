@@ -62,34 +62,35 @@ async function load(): Promise<void> {
 	loading = true;
 	error = null;
 	loadedSessionTarget = null;
-	try {
-		const [nextCatalog, nextGatewayCatalog] = await Promise.all([
-			getTransport().request("goose.extensionList", {}),
-			getTransport().request("mcpGateway.catalog", {}),
-		]);
-		if (!mounted || sequence !== loadSequence || target !== activeTarget) return;
-		catalog = nextCatalog;
-		gatewayCatalog = nextGatewayCatalog;
-		if (projectId && sessionId) {
-			const [nextExtensions, nextTools] = await Promise.all([
-				getTransport().request("session.extensionList", { projectId, sessionId }),
-				getTransport().request("session.toolList", { projectId, sessionId }),
-			]);
-			if (!mounted || sequence !== loadSequence || target !== activeTarget) return;
-			extensions = nextExtensions;
-			tools = nextTools;
-			loadedSessionTarget = target;
-		} else {
-			extensions = [];
-			tools = [];
-			loadedSessionTarget = null;
-		}
-	} catch (cause) {
-		if (!mounted || sequence !== loadSequence || target !== activeTarget) return;
-		error = errorText(cause);
-	} finally {
-		if (mounted && sequence === loadSequence && target === activeTarget) loading = false;
-	}
+	const [nextCatalog, nextGatewayCatalog, nextExtensions, nextTools] = await Promise.allSettled([
+		getTransport().request("goose.extensionList", {}),
+		getTransport().request("mcpGateway.catalog", {}),
+		projectId && sessionId
+			? getTransport().request("session.extensionList", { projectId, sessionId })
+			: Promise.resolve([]),
+		projectId && sessionId
+			? getTransport().request("session.toolList", { projectId, sessionId })
+			: Promise.resolve([]),
+	]);
+	if (!mounted || sequence !== loadSequence || target !== activeTarget) return;
+	if (nextCatalog.status === "fulfilled") catalog = nextCatalog.value;
+	if (nextGatewayCatalog.status === "fulfilled") gatewayCatalog = nextGatewayCatalog.value;
+	if (nextExtensions.status === "fulfilled") extensions = nextExtensions.value;
+	if (nextTools.status === "fulfilled") tools = nextTools.value;
+	if (
+		projectId &&
+		sessionId &&
+		nextExtensions.status === "fulfilled" &&
+		nextTools.status === "fulfilled"
+	)
+		loadedSessionTarget = target;
+	const failures = [nextCatalog, nextGatewayCatalog, nextExtensions, nextTools].filter(
+		(result) => result.status === "rejected",
+	);
+	error = failures.length
+		? "Some tool settings could not be refreshed. Successful results are retained; retry to refresh the rest."
+		: null;
+	loading = false;
 }
 
 $effect(() => {
@@ -238,7 +239,8 @@ function setGatewayEnabled(module: McpGatewayModule, enabled: boolean): void {
 			<p role="status" class="text-text-muted tr-text-metadata">
 				{gatewayCatalog.gateway.detail ?? "Gooseberry MCP is unavailable."}
 			</p>
-		{:else if gatewayCatalog?.modules.length === 0}
+		{/if}
+		{#if gatewayCatalog?.modules.length === 0 && gatewayCatalog.gateway.state === "ready"}
 			<p class="text-text-muted tr-text-metadata">No MCP modules are published.</p>
 		{:else}
 			{#each gatewayCatalog?.modules ?? [] as module (module.id)}
@@ -249,8 +251,13 @@ function setGatewayEnabled(module: McpGatewayModule, enabled: boolean): void {
 						description: module.description,
 						type: "mcp",
 					})}
-					<div class="flex items-center gap-xs">
-						<span class="text-text-muted tr-text-metadata">{gatewayModuleLabel(module)}</span>
+					<div class="flex min-w-0 flex-wrap items-center gap-xs">
+						<div class="min-w-0 tr-text-metadata text-text-muted">
+<span>{gatewayModuleLabel(module)}</span>
+<p>{module.detail ?? `Host module: ${module.state}`}</p>
+{#if module.bindingDetail}<p>{module.bindingDetail}</p>{/if}
+<p>{sessionInventoryCurrent ? sessionNames.has(module.extensionName) ? "Present in the current session" : "Not in the current session" : "Current-session membership not checked"}</p>
+</div>
 						<Button
 							size="sm"
 							variant="outline"

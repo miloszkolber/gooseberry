@@ -19,12 +19,13 @@ let scheduleCron = $state<Record<string, string>>({});
 let recentSessions = $state<Record<string, GooseAutomationSession[]>>({});
 let inspections = $state<Record<string, GooseAutomationJobInspection>>({});
 let busy = $state(false);
+let errorMessage = $state<string | null>(null);
 let loadSequence = 0;
 let busyInFlight = false;
 let mounted = false;
 
 function notifyError(error: unknown, title: string): void {
-	appStoreApi.getState().pushToast({ variant: "error", message: errorText(error), title });
+	errorMessage = `${title}: ${errorText(error)}`;
 }
 
 function notifySuccess(message: string): void {
@@ -33,25 +34,34 @@ function notifySuccess(message: string): void {
 
 async function load(): Promise<void> {
 	const sequence = ++loadSequence;
-	try {
-		const [nextRecipes, nextSchedules] = await Promise.all([
-			getTransport().request("goose.recipeList", {}),
-			getTransport().request("goose.scheduleList", {}),
-		]);
-		if (!mounted || sequence !== loadSequence) return;
-		recipes = nextRecipes;
-		schedules = nextSchedules;
+	const [nextRecipes, nextSchedules] = await Promise.allSettled([
+		getTransport().request("goose.recipeList", {}),
+		getTransport().request("goose.scheduleList", {}),
+	]);
+	if (!mounted || sequence !== loadSequence) return;
+	if (nextRecipes.status === "fulfilled") recipes = nextRecipes.value;
+	if (nextSchedules.status === "fulfilled") {
+		const previous = new Map(schedules.map((schedule) => [schedule.id, schedule.cron]));
 		scheduleCron = Object.fromEntries(
-			nextSchedules.map((schedule) => [schedule.id, schedule.cron]),
+			nextSchedules.value.map((schedule) => [
+				schedule.id,
+				scheduleCron[schedule.id] !== undefined &&
+				scheduleCron[schedule.id] !== previous.get(schedule.id)
+					? (scheduleCron[schedule.id] ?? schedule.cron)
+					: schedule.cron,
+			]),
 		);
-	} catch (error) {
-		if (!mounted || sequence !== loadSequence) return;
-		notifyError(error, "Goose automation is unavailable");
+		schedules = nextSchedules.value;
 	}
+	const failures = [nextRecipes, nextSchedules].filter((result) => result.status === "rejected");
+	if (failures.length)
+		errorMessage =
+			"Some automation data could not be refreshed. Existing results and drafts are retained.";
 }
 
 async function runBusy(operation: () => Promise<void>, failureTitle: string): Promise<void> {
 	if (busyInFlight) return;
+	errorMessage = null;
 	busyInFlight = true;
 	busy = true;
 	try {
@@ -161,6 +171,7 @@ function deleteSchedule(scheduleId: string): Promise<void> {
 </script>
 
 <div data-testid="settings-goose-automation" class="flex flex-col gap-lg">
+{#if errorMessage}<p role="alert" class="text-feedback-error tr-text-ui">{errorMessage}</p>{/if}
 	<div>
 		<h3 class="tr-title-section text-text-default">Goose automation</h3>
 		<p class="text-text-muted tr-text-metadata">Recipes and schedules are stored and run by Goose.</p>

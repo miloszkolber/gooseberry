@@ -40,8 +40,9 @@ import {
 	messagesToRuntime,
 	prependTranscriptPage as prependHydratedTranscriptPage,
 } from "./runtime/hydrate";
-import { deriveRows } from "./runtime/rows";
-import type { ChatAttachment } from "./runtime/types";
+import { setFoldStateContext } from "./runtime/fold-state";
+import { createRowDeriver } from "./runtime/rows";
+import type { ChatAttachment, ChatSubmission } from "./runtime/types";
 import { setChatActionsContext } from "./session/chat-actions";
 import ChatHeader from "./session/chat-header.svelte";
 import QueueStrip from "./session/queue-strip.svelte";
@@ -49,6 +50,7 @@ import { createSessionCommandSync } from "./session/session-command-sync";
 import SessionGoalControl from "./session/session-goal-control.svelte";
 import { unsupportedLifecycleReason } from "./session/session-lifecycle";
 import SessionLineageControl from "./session/session-lineage-control.svelte";
+import SessionConfigControls from "./session/session-config-controls.svelte";
 import SessionModeControl from "./session/session-mode-control.svelte";
 import SessionModelControls from "./session/session-model-controls.svelte";
 import SessionPlanControl from "./session/session-plan-control.svelte";
@@ -135,9 +137,9 @@ let parentDeleted = $derived(
 	runtime.parentSessionId !== undefined &&
 		$appStore.deletedSessionsByProjectArea[projectAreaId]?.[runtime.parentSessionId] === true,
 );
+const deriveRows = createRowDeriver();
 let rows = $derived(deriveRows(runtime.turns, runtime.toolResults, runtime.isStreaming));
 let recentPrompts = $derived(uniqueRecentPrompts(runtime.turns));
-let headerStatusEntries = $derived(Object.entries(runtime.extUiStatus));
 let projectionId = $derived(runtime.transcript?.projectionId ?? null);
 let transcriptStart = $derived(runtime.transcript?.start ?? 0);
 let conversationKey = $derived(projectionId ?? `live:${sessionId}`);
@@ -174,6 +176,7 @@ let historyState = $state<HistorySearchState>(history.getState());
 const unsubscribeHistory = history.subscribe((next) => (historyState = next));
 const commandSync = createSessionCommandSync(untrack(() => ({ sessionId, projectAreaId })));
 
+setFoldStateContext(() => runtime.disclosures);
 setAskStatesContext({ stateFor: (toolCallId) => askStates[toolCallId], focusScope });
 setChatActionsContext({
 	answerQuestion: async (toolCallId: string, result: AskUserQuestionResult) => {
@@ -423,40 +426,39 @@ function loadEarlierMessages(): Promise<TranscriptLoadOutcome> {
 	return flight.promise;
 }
 
-function respondToPermission(optionId?: string): void {
+let permissionBusy = $state(false);
+let permissionError = $state<{ id: string; text: string } | null>(null);
+
+async function respondToPermission(optionId?: string): Promise<void> {
 	const request = permission;
-	if (!request) return;
-	void getTransport()
-		.request("session.permissionReply", {
-			sessionId,
+	const requestedSession = sessionId;
+	if (!request || permissionBusy) return;
+	permissionBusy = true;
+	permissionError = null;
+	try {
+		await getTransport().request("session.permissionReply", {
+			sessionId: requestedSession,
 			permissionId: request.id,
 			...(optionId === undefined ? {} : { optionId }),
-		})
-		.then(() => appStoreApi.getState().clearPendingPermission(sessionId, request.id))
-		.catch((cause) => {
-			toast.error(errorText(cause), "Couldn't send permission decision");
-			appStoreApi.getState().clearPendingPermission(sessionId, request.id);
 		});
+		appStoreApi.getState().clearPendingPermission(requestedSession, request.id);
+	} catch (cause) {
+		permissionError = { id: request.id, text: errorText(cause) };
+	} finally {
+		permissionBusy = false;
+	}
 }
 
-function restoreTextToDraft(text: string): void {
-	if (!text.trim()) return;
-	const current = appStoreApi.getState().sessions[sessionId]?.draft ?? "";
-	appStoreApi
-		.getState()
-		.setChatDraft(sessionId, [text, current].filter((part) => part.trim()).join("\n\n"));
-	composer?.refocus();
-}
-
-function performSend(
+async function performSend(
+	targetSession: string,
 	text: string,
 	attachments: ChatAttachment[],
 	behavior: Exclude<SubmitBehavior, "interrupt">,
-): boolean {
+): Promise<boolean> {
 	const { effectiveBehavior, heldByQueue } = resolveSendBehavior(
 		behavior,
 		canSteer,
-		runtime.queue.followUp.length > 0,
+		(appStoreApi.getState().sessions[targetSession]?.queue.followUp.length ?? 0) > 0,
 	);
 	const images = attachments.flatMap((attachment) =>
 		attachment.kind === "image" ? [attachment.content] : [],
@@ -487,10 +489,16 @@ function performSend(
 	}
 	if (heldByQueue) toast.info("Queued behind the existing follow-ups.", "Message queued");
 	if (effectiveBehavior === "send" && (text || attachments.length > 0)) {
-		appStoreApi.getState().appendUserMessage(sessionId, text, attachments);
+		appStoreApi.getState().appendUserMessage(targetSession, text, attachments);
+		const current = appStoreApi.getState().sessions[targetSession];
+		if (current?.submission)
+			appStoreApi.getState().setSubmission(targetSession, {
+				...current.submission,
+				optimisticTurnId: current.turns.at(-1)?.id ?? "",
+			});
 	}
 	const params = {
-		sessionId,
+		sessionId: targetSession,
 		text,
 		...(images.length > 0 ? { images } : {}),
 		...(resources.length > 0 ? { resources } : {}),
@@ -501,25 +509,58 @@ function performSend(
 			: effectiveBehavior === "queue"
 				? "session.queueAdd"
 				: "session.prompt";
-	void getTransport()
-		.request(method, params)
-		.catch((cause) => {
-			appStoreApi.getState().appendErrorTurn(sessionId, errorText(cause));
-			if (effectiveBehavior !== "send") restoreTextToDraft(text);
-		});
+	await getTransport().request(method, params);
 	return true;
 }
 
 function submit(text: string, attachments: ChatAttachment[], behavior: SubmitBehavior): boolean {
-	if (behavior !== "interrupt") return performSend(text, attachments, behavior);
-	void getTransport()
-		.request("session.abort", { sessionId })
-		.then(() => performSend(text, attachments, "send"))
-		.catch((cause) => {
-			appStoreApi.getState().appendErrorTurn(sessionId, errorText(cause));
-			restoreTextToDraft(text);
-		});
+	const targetSession = sessionId;
+	if (appStoreApi.getState().sessions[targetSession]?.submission) return false;
+	const submission: ChatSubmission = { text, attachments, behavior, busy: true };
+	appStoreApi.getState().setSubmission(targetSession, submission);
+	void (async () => {
+		try {
+			if (behavior === "interrupt")
+				await getTransport().request("session.abort", { sessionId: targetSession });
+			const accepted = await performSend(
+				targetSession,
+				text,
+				attachments,
+				behavior === "interrupt" ? "send" : behavior,
+			);
+			if (!accepted)
+				throw new Error("Message was not sent. Its text and attachments are retained below.");
+			appStoreApi.getState().setSubmission(targetSession, null);
+		} catch (cause) {
+			const current = appStoreApi.getState().sessions[targetSession]?.submission ?? submission;
+			appStoreApi
+				.getState()
+				.setSubmission(targetSession, { ...current, busy: false, error: errorText(cause) });
+		}
+	})();
 	return true;
+}
+
+function retrySubmission(): void {
+	const pending = runtime.submission;
+	if (!pending || pending.busy) return;
+	appStoreApi.getState().setSubmission(sessionId, null);
+	submit(pending.text, pending.attachments, pending.behavior);
+}
+
+let stopError = $state<string | null>(null);
+let stopping = $state(false);
+async function stop(): Promise<void> {
+	if (stopping) return;
+	stopping = true;
+	stopError = null;
+	try {
+		await getTransport().request("session.abort", { sessionId });
+	} catch (cause) {
+		stopError = errorText(cause);
+	} finally {
+		stopping = false;
+	}
 }
 
 function editQueuedMessage(lane: QueueLane, index: number): void {
@@ -716,7 +757,12 @@ function openChanges(path: string): void {
 			agentName={agentProfile?.name}
 		/>
 		<SessionPlanControl planState={runtime.planState} />
-		<SessionModeControl {sessionId} modes={runtime.modes} />
+  {#if !gooseAgent && runtime.configOptions.length}
+   <SessionConfigControls {sessionId} options={runtime.configOptions} />
+  {/if}
+  {#if gooseAgent || !runtime.configOptions.some(option => option.category === "mode")}
+   <SessionModeControl {sessionId} modes={runtime.modes} />
+  {/if}
 	</div>
 {/snippet}
 
@@ -729,16 +775,20 @@ function openChanges(path: string): void {
 			role="alertdialog"
 			testid="tool-permission-dialog"
 			onOpenChange={(open) => {
-				if (!open) respondToPermission();
+				if (!open) void respondToPermission();
+				return false;
 			}}
 		>
+			{#if permission.tool}<details class="mb-sm"><summary class="tr-text-ui">Tool request details</summary><pre class="max-h-60 overflow-auto whitespace-pre-wrap break-words tr-code-text">{JSON.stringify(permission.tool, null, 2)}</pre></details>{/if}
+			{#if permissionError?.id === permission.id}<p role="alert" class="mb-sm text-feedback-error tr-text-ui">{permissionError.text} You can retry.</p>{/if}
 			<div class="flex flex-wrap gap-xs">
 				{#each permission.options as option (option.optionId)}
 					<Button
 						variant="outline"
-						onclick={() => respondToPermission(option.optionId)}
+						disabled={permissionBusy}
+						onclick={() => void respondToPermission(option.optionId)}
 					>
-						{option.name} ({option.kind})
+						{option.name}
 					</Button>
 				{/each}
 			</div>
@@ -774,6 +824,7 @@ function openChanges(path: string): void {
 				void deleteHistoryChat(targetProjectAreaId, targetSessionId)}
 			{deleteUnavailableReason}
 		/>
+		{#if runtime.activity}<p role="status" class="px-md py-xs text-text-muted tr-text-ui">{runtime.activity}</p>{/if}
 		<QueueStrip
 			queue={runtime.queue}
 			onEdit={editQueuedMessage}
@@ -821,6 +872,22 @@ function openChanges(path: string): void {
 				{/if}
 			</Dialog>
 		{/if}
+  {#if stopError}<p role="alert" class="px-md py-xs text-feedback-error tr-text-ui">Couldn't stop the response: {stopError}</p>{/if}
+  {#if runtime.submission}
+   {@const pending = runtime.submission}
+   <div class="mx-sm my-xs max-h-[min(40dvh,20rem)] overflow-y-auto rounded border border-border-default p-sm tr-text-ui" role="status">
+    {#if pending.busy}<p>Sending message…</p>{:else}
+     <p class="text-feedback-error">{pending.error}</p>
+     <p class="text-text-muted">Check the transcript before retrying: a lost connection can leave delivery uncertain.</p>
+     <textarea aria-label="Retained message" class="input mt-xs w-full" value={pending.text} oninput={(event) => appStoreApi.getState().setSubmission(sessionId, { ...pending, text: event.currentTarget.value })}></textarea>
+     {#if pending.attachments.length}<p class="break-words">Attachments: {pending.attachments.map((attachment) => attachment.name).join(", ")}</p>{/if}
+     <div class="mt-xs flex flex-wrap gap-xs">
+      <Button onclick={retrySubmission}>Retry message</Button>
+      <Button variant="ghost" onclick={() => appStoreApi.getState().setSubmission(sessionId, null)}>Discard retained message</Button>
+     </div>
+    {/if}
+   </div>
+  {/if}
 		<Composer
 			bind:this={composer}
 			value={runtime.draft}
@@ -831,12 +898,12 @@ function openChanges(path: string): void {
 			{recentPrompts}
 			onMentionQuery={(query) => (mentionQuery = query)}
 			onSubmit={submit}
-			onAbort={() => void getTransport().request("session.abort", { sessionId }).catch(() => {})}
+			onAbort={() => void stop()}
 			onHistoryOpen={() => history.openOverlay(runtime.draft)}
 			supportsImages={canPromptImage}
 			supportsTextResources={canPromptEmbeddedContext}
 			supportsSteer={canSteer}
 		/>
-		<ChatHeader stats={runtime.stats} statusEntries={headerStatusEntries} left={HeaderLeft} />
+		<ChatHeader stats={runtime.stats} left={HeaderLeft} />
 	</div>
 </div>

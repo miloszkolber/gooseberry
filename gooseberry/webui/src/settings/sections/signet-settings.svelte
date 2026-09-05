@@ -49,12 +49,12 @@ async function save(): Promise<void> {
 <div class="mx-auto flex w-full max-w-[36rem] flex-col gap-lg">
 	<div>
 		<h2 class="tr-title-entity text-text-default">Signet memory</h2>
-		<p class="mt-xs tr-text-ui text-text-muted">Optional durable memory for agent sessions.</p>
+		<p class="mt-xs tr-text-ui text-text-muted">Memory tools from your Signet daemon are attached to new and reconnected sessions when the agent supports HTTP MCP. Existing running sessions keep their current tools.</p>
 	</div>
 	<label
 		class="switch-item-block rounded-[var(--radius-sm)] border border-border-default p-md"
 	>
-		<span class="tr-text-ui text-text-default">Enable Signet</span>
+		<span class="tr-text-ui text-text-default">Attach Signet memory tools</span>
 		<input class="switch" type="checkbox" bind:checked={enabled} />
 	</label>
 	<div class="grid min-w-0 grid-cols-1 gap-sm sm:grid-cols-[minmax(0,1fr)_8rem]">
@@ -78,16 +78,18 @@ async function save(): Promise<void> {
 		<span
 			class={`tr-text-metadata ${status?.reachable ? "text-feedback-success" : "text-text-muted"}`}
 		>
-			{!status?.enabled
-				? "Disabled"
+			{!status
+				? "Status not checked"
+				: !status.enabled ? "Disabled"
 				: status.reachable
-					? `Connected to ${status.endpoint}`
+					? `Health endpoint reachable at ${status.endpoint}`
 					: `Unavailable at ${status.endpoint}`}
 		</span>
 		<Button onclick={() => void save()} disabled={saving || !address.trim()}>
 			{saving ? "Saving…" : "Save"}
 		</Button>
 	</div>
+	<p class="tr-text-metadata text-text-muted">Health does not verify memory operations. Session tools provide on-demand memory; automatic recall and lifecycle hooks require separate Signet harness integration.</p>
 	{#if error}
 		<p role="alert" class="tr-text-metadata text-feedback-error">{error}</p>
 	{/if}

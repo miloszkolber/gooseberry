@@ -1,5 +1,6 @@
 <script lang="ts">
 import { tick } from "svelte";
+import { observeMarkdown } from "./markdown-visibility";
 
 type MarkdownDocumentModule = typeof import("./markdown-document");
 type ParsedMarkdown = { source: string; html: string };
@@ -15,6 +16,8 @@ let parsed = $state<ParsedMarkdown | null>(null);
 let html = $derived(parsed?.source === text ? parsed.html : null);
 let parseGeneration = 0;
 let enhancementGeneration = 0;
+let nearViewport = $state(false);
+const highlightedBlocks = new Map<HTMLElement, HTMLElement>();
 let markdownDocumentPromise: Promise<MarkdownDocumentModule> | null = null;
 
 function loadMarkdownDocument(): Promise<MarkdownDocumentModule> {
@@ -22,7 +25,7 @@ function loadMarkdownDocument(): Promise<MarkdownDocumentModule> {
 	return markdownDocumentPromise;
 }
 
-async function enhance(current: number, node: HTMLElement): Promise<void> {
+function prepareMarkup(node: HTMLElement): void {
 	for (const anchor of node.querySelectorAll<HTMLAnchorElement>("a[href]")) {
 		anchor.target = "_blank";
 		anchor.rel = "noopener noreferrer";
@@ -34,6 +37,19 @@ async function enhance(current: number, node: HTMLElement): Promise<void> {
 		table.replaceWith(wrapper);
 		wrapper.append(table);
 	}
+}
+
+function restoreCode(): void {
+	// Replacing highlighted spans during a native selection would collapse it.
+	if (document.getSelection()?.isCollapsed === false) return;
+	for (const [highlighted, plain] of highlightedBlocks) {
+		if (highlighted.isConnected) highlighted.replaceWith(plain);
+	}
+	highlightedBlocks.clear();
+}
+
+async function enhance(current: number, node: HTMLElement): Promise<void> {
+	if (document.getSelection()?.isCollapsed === false) return;
 	const codeBlocks = Array.from(
 		node.querySelectorAll<HTMLElement>("pre > code[class*='language-']"),
 	);
@@ -42,7 +58,12 @@ async function enhance(current: number, node: HTMLElement): Promise<void> {
 		import("../../lib/highlighter"),
 		loadMarkdownDocument(),
 	]);
-	if (current !== enhancementGeneration || !node.isConnected) return;
+	if (
+		current !== enhancementGeneration ||
+		!node.isConnected ||
+		document.getSelection()?.isCollapsed === false
+	)
+		return;
 	await Promise.all(
 		codeBlocks.map(async (code) => {
 			const language = codeLanguage(code.className);
@@ -52,10 +73,17 @@ async function enhance(current: number, node: HTMLElement): Promise<void> {
 				(code.textContent ?? "").replace(/\n$/, ""),
 				language,
 			);
-			if (!highlighted || current !== enhancementGeneration || !pre.isConnected) return;
+			if (
+				!highlighted ||
+				current !== enhancementGeneration ||
+				!pre.isConnected ||
+				document.getSelection()?.isCollapsed === false
+			)
+				return;
 			const wrapper = document.createElement("div");
 			wrapper.className = "chat-markdown-code";
 			wrapper.innerHTML = highlighted;
+			highlightedBlocks.set(wrapper, pre);
 			pre.replaceWith(wrapper);
 		}),
 	);
@@ -78,13 +106,31 @@ $effect(() => {
 });
 
 $effect(() => {
+	const node = root;
+	if (node)
+		return observeMarkdown(node, (near) => {
+			nearViewport = near;
+		});
+});
+
+$effect(() => {
 	const rendered = html;
 	const node = root;
+	for (const [highlighted] of highlightedBlocks) {
+		if (!highlighted.isConnected) highlightedBlocks.delete(highlighted);
+	}
 	if (rendered === null || !node) return;
+	prepareMarkup(node);
+	const near = nearViewport;
 	const current = ++enhancementGeneration;
-	void tick().then(() => enhance(current, node));
+	if (near) void tick().then(() => enhance(current, node));
+	else restoreCode();
 	return () => {
 		if (enhancementGeneration === current) enhancementGeneration += 1;
+		// Discard detached old-source blocks while keeping a live selection intact.
+		for (const [highlighted] of highlightedBlocks) {
+			if (!highlighted.isConnected) highlightedBlocks.delete(highlighted);
+		}
 	};
 });
 </script>

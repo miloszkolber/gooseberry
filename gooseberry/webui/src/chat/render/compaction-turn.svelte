@@ -1,9 +1,11 @@
 <script lang="ts">
 import { untrack } from "svelte";
 import Icon from "../../components/icon.svelte";
-import { readFold, toggleFold } from "../runtime/fold-state";
+import { useFoldState } from "../runtime/fold-state";
 import { formatTokens } from "../session/session-stats";
 import Markdown from "./markdown.svelte";
+
+const { readFold, toggleFold } = useFoldState();
 
 interface Props {
 	id: string;

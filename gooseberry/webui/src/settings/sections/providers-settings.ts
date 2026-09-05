@@ -49,8 +49,7 @@ export function providerAvailability(
 	readiness: ProviderReadinessState | null,
 ) {
 	const readinessConfirmed = readiness === "ready" || readiness === "issue";
-	const usable =
-		provider.configured && provider.available !== false && (!provider.acp || readinessConfirmed);
+	const usable = provider.configured && provider.available !== false && readinessConfirmed;
 	const qualifier = readinessConfirmed
 		? "readiness confirmed"
 		: readiness === "not-ready"

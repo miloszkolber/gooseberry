@@ -29,6 +29,9 @@ export interface ToolCall {
 	/** Legacy display/renderer name. Prefer toolName when available. */
 	name: string;
 	arguments: unknown;
+	title?: string;
+	kind?: string;
+	locations?: unknown;
 }
 
 /** Trusted MCP Apps metadata projected from Goose for one completed tool call. */
@@ -101,12 +104,14 @@ export interface SubagentActivity {
 export type StopReason = string;
 
 export interface UserMessage {
+	messageId?: string;
 	role: "user";
 	content: string | (TextContent | ImageContent | TextResourceAttachmentMarker)[];
 	timestamp?: number;
 }
 
 export interface AssistantMessage {
+	messageId?: string;
 	role: "assistant";
 	content: (TextContent | ImageContent | ThinkingContent | ToolCall)[];
 	thinking?: string;
@@ -132,6 +137,7 @@ export interface PendingToolPreview {
 	subagentActivity?: SubagentActivity;
 }
 export interface PermissionRequest {
+	tool?: Record<string, unknown>;
 	id: string;
 	sessionId: string;
 	toolCallId: string;
@@ -155,6 +161,8 @@ export interface WireModelCost extends WireModelCostRates {
 export type WireModelCostTier = WireModelCostRates & { inputTokensAbove: number };
 
 export interface WireModel {
+	/** Whether the optional metadata lookup completed, including an authoritative no-match. */
+	metadataComplete?: boolean;
 	id: string;
 	name: string;
 	provider: string;
@@ -207,7 +215,17 @@ export interface SessionPlanState {
 	truncated?: boolean;
 }
 
+export interface SessionConfigOption {
+	id: string;
+	name?: string;
+	type?: string;
+	category?: string;
+	currentValue?: string | boolean;
+	options?: readonly { value: string; name: string }[];
+}
+
 export interface SessionSummary {
+	configOptions?: SessionConfigOption[];
 	sessionId: string;
 	projectId: string;
 	cwd: string;
@@ -249,6 +267,7 @@ export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
 export type AgentEvent =
 	| {
 			type:
+				| "activity"
 				| "run-start"
 				| "text"
 				| "image"
@@ -262,7 +281,7 @@ export type AgentEvent =
 				| "complete"
 				| "error"
 				| "session-info";
-			messageId?: string;
+			messageId?: string | null;
 			text?: string;
 			image?: ImageContent;
 			toolCallId?: string;
@@ -272,11 +291,12 @@ export type AgentEvent =
 			reported?: SessionStats["reported"];
 			costCurrency?: string;
 			contextUsage?: ContextUsage;
-			configOptions?: readonly { id: string; currentValue?: string | boolean }[];
-			model?: WireModel;
+			configOptions?: readonly SessionConfigOption[];
+			model?: WireModel | null;
 			title?: string;
 			error?: string;
 			tool?: unknown;
+			toolCall?: ToolCall;
 			app?: McpAppAttachment;
 			subagentActivity?: SubagentActivity;
 	  }
@@ -342,28 +362,6 @@ export interface SessionQueueState {
 	blocked?: { lane: QueueLane; index: number; reason: "delivery-uncertain" };
 }
 
-export type ExtUiRequest =
-	| { id: string; sessionId: string; kind: "select"; title: string; options: string[] }
-	| { id: string; sessionId: string; kind: "confirm"; title: string; message: string }
-	| {
-			id: string;
-			sessionId: string;
-			kind: "input" | "editor";
-			title: string;
-			placeholder?: string;
-			prefill?: string;
-	  }
-	| {
-			id: string;
-			sessionId: string;
-			kind: "notify";
-			message: string;
-			level: "info" | "warning" | "error";
-	  }
-	| { id: string; sessionId: string; kind: "setStatus"; key: string; text: string | null }
-	| { id: string; sessionId: string; kind: "setWidget"; key: string; content: string[] | null }
-	| { id: string; sessionId: string; kind: "setTitle"; title: string }
-	| { id: string; sessionId: string; kind: "dismiss" };
 export interface AskUserQuestionResult {
 	answers: AskUserQuestionAnswer[];
 	cancelled: boolean;

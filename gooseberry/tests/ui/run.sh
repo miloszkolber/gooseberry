@@ -62,6 +62,11 @@ browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?
 browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'session-plan-trigger'" >/dev/null
 assert_eval "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'ask'"
 
+# An arbitrary agent selector works without Goose IDs or known categories.
+browser wait --fn 'document.querySelector("[data-config-id=response-style-17]") !== null' >/dev/null
+browser select '[data-config-id=response-style-17]' concise >/dev/null
+browser wait --fn 'document.querySelector("[data-config-id=response-style-17]")?.value === "concise" && document.querySelector("[data-config-id=response-style-17]")?.disabled === false' >/dev/null
+
 # Commit selection, keyboard activity switching, source and image previews.
 echo "UI acceptance: workspace"
 browser find testid tab-changes click >/dev/null
@@ -102,10 +107,14 @@ browser wait --fn "document.querySelector('[data-testid=chat-input]')?.value ===
 browser wait --text "Continue" >/dev/null
 browser wait --text "Partial reply" >/dev/null
 assert_eval "document.querySelector('[data-testid=stream-indicator]') !== null"
+assert_eval "document.querySelector('[data-testid=chat-announcement]')?.textContent === 'Writing…' && document.querySelector('[data-testid=chat-announcement]')?.closest('[data-testid=chat-scroll]') === null && document.querySelector('[data-testid=chat-scroll]')?.getAttribute('aria-live') === 'off'"
 browser select '[data-testid="session-mode-trigger"]' code >/dev/null
 browser wait --fn "document.querySelector('[data-testid=session-mode-trigger]')?.value === 'code' && document.querySelector('[data-testid=session-mode-trigger]')?.disabled === false" >/dev/null
 assert_eval "document.querySelector('[data-testid=stream-indicator]') !== null"
 echo "UI acceptance: close and reopen streaming chat"
+browser find testid session-plan-trigger click >/dev/null
+browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.matches(':popover-open') === true" >/dev/null
+browser eval "window.detachedPlanTrigger = document.querySelector('[data-testid=session-plan-trigger]'); window.detachedPlan = document.querySelector('[data-testid=session-plan-content]').closest('[popover]'); true" >/dev/null
 browser click '[data-testid="content-tab"][data-kind="chat"] [data-testid="content-tab-close"]' >/dev/null
 browser wait --fn "document.querySelector('[data-testid=content-tab][data-kind=chat]') === null" >/dev/null
 browser click '[data-testid="chat-history"]' >/dev/null
@@ -115,9 +124,19 @@ assert_eval "document.activeElement?.getAttribute('data-testid') === 'closed-cha
 browser press Enter >/dev/null
 browser wait --fn "document.querySelector('[data-testid=content-tab][data-kind=chat]') !== null" >/dev/null
 browser wait --text "Partial reply" >/dev/null
+browser eval "({oldTriggerDetached: !window.detachedPlanTrigger.isConnected, oldPopoverDetached: !window.detachedPlan.isConnected, oldPopoverClosed: !window.detachedPlan.matches(':popover-open')})" > /artifacts/mewa-lifecycle.json
+assert_eval "!window.detachedPlanTrigger.isConnected && !window.detachedPlan.isConnected && !window.detachedPlan.matches(':popover-open')"
+for cycle in 1 2 3; do
+ browser find testid session-plan-trigger click >/dev/null
+ browser wait --fn "document.querySelector('[data-testid=session-plan-content]')?.closest('[popover]')?.matches(':popover-open') === true" >/dev/null
+ assert_eval "document.querySelectorAll(':popover-open').length === 1 && document.querySelector('[data-testid=session-plan-trigger]')?.popoverTargetElement?.matches(':popover-open') === true"
+ browser press Escape >/dev/null
+ browser wait --fn "document.querySelector('[data-testid=session-plan-trigger]')?.popoverTargetElement?.matches(':popover-open') === false" >/dev/null
+done
 echo "UI acceptance: finish stream"
 kill -USR1 "$fixture_pid"
 browser wait --text "Partial reply complete." >/dev/null
+assert_eval "document.querySelector('[data-testid=chat-announcement]')?.textContent === ''"
 assert_eval "Array.from(document.querySelectorAll('[data-testid=chat-message][data-role=assistant]')).filter((node) => node.textContent?.includes('Partial reply complete.')).length === 1"
 browser set offline on >/dev/null
 browser open about:blank >/dev/null
@@ -168,4 +187,10 @@ browser wait --fn "document.activeElement?.getAttribute('data-testid') === 'open
 assert_eval "document.documentElement.scrollWidth === document.documentElement.clientWidth"
 browser screenshot /artifacts/narrow-workspace.png >/dev/null
 
+# Repeat against Goose-shaped administration using the same production assets.
+browser close >/dev/null
+kill -TERM "$fixture_pid"
+wait "$fixture_pid" || true
+fixture_pid=
+sh /app/run-goose-acceptance
 echo "UI acceptance passed"

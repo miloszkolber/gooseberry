@@ -5,8 +5,8 @@ import type {
 	TranscriptPage,
 } from "@gooseberry/contracts";
 import { randomId } from "@/lib";
-import { assistantFailureText } from "./assistant-failure";
-import type { SessionRuntime } from "./session-runtime";
+import { terminalOutcome } from "./assistant-failure";
+import { type SessionRuntime, settleUnfinishedTools } from "./session-runtime";
 import type { ChatTurn, ToolResultState } from "./types";
 
 export interface HydratedRuntime {
@@ -100,12 +100,15 @@ export function messagesToRuntime(
 		}
 	}
 
-	const failure = assistantFailureText(lastSettlement);
-	if (failure) {
+	const outcome = includesTail && !isStreaming ? terminalOutcome(lastSettlement) : null;
+	if (outcome) {
+		const settled = settleUnfinishedTools(turns, toolResults);
+		turns.splice(0, turns.length, ...settled.turns);
+		Object.assign(toolResults, settled.toolResults);
 		turns.push({
-			kind: "error",
+			kind: outcome.failed ? "error" : "system",
 			id: page ? `settlement:${page.projectionId}:${page.total}` : randomId("settlement"),
-			text: failure,
+			text: outcome.text,
 		});
 	}
 	return {

@@ -10,9 +10,11 @@ import ProviderCard from "./provider-card.svelte";
 
 let report = $state<ProviderStatusReport | null>(null);
 let failed = $state(false);
+let actionError = $state<string | null>(null);
 let refreshing = $state(false);
 let busyProvider = $state<string | null>(null);
 let query = $state("");
+let showLegacy = $state(false);
 let readinessRevision = $state(0);
 let loadSequence = 0;
 let loginStartSequence = 0;
@@ -24,7 +26,10 @@ let providerVersion = $derived($appStore.providerVersion);
 let providers = $derived(report?.providers ?? []);
 let filtered = $derived.by(() => {
 	const normalized = query.trim().toLocaleLowerCase();
-	if (!normalized) return providers;
+	if (!normalized)
+		return providers.filter(
+			(provider) => showLegacy || provider.configured || !provider.deprecated,
+		);
 	return providers.filter(
 		(provider) =>
 			provider.name.toLocaleLowerCase().includes(normalized) ||
@@ -40,7 +45,7 @@ let loginProviderName = $derived(
 );
 
 function notifyError(error: unknown, title: string): void {
-	appStoreApi.getState().pushToast({ variant: "error", message: errorText(error), title });
+	actionError = `${title}: ${errorText(error)}`;
 }
 
 function invalidateReadiness(): void {
@@ -134,34 +139,34 @@ async function logout(providerId: string): Promise<void> {
 	await load();
 }
 
-function replyToLogin(value: string): void {
+async function replyToLogin(value: string): Promise<void> {
 	if (!activeLogin) return;
-	getTransport()
-		.request("provider.loginReply", { loginId: activeLogin.loginId, value })
-		.catch((error) => notifyError(error, "Couldn't submit"));
-	appStoreApi.getState().clearLoginInput();
+	const loginId = activeLogin.loginId;
+	const input = activeLogin.input;
+	await getTransport().request("provider.loginReply", { loginId, value });
+	// A new challenge can arrive before the reply acknowledgement.
+	const current = appStoreApi.getState().activeLogin;
+	if (current?.loginId === loginId && current.input === input) {
+		appStoreApi.getState().clearLoginInput();
+	}
 }
 
-function cancelLogin(): void {
-	if (!activeLogin) return;
-	void getTransport()
-		.request("provider.loginCancel", { loginId: activeLogin.loginId })
-		.catch(() => {});
-	appStoreApi.getState().clearLogin();
+async function cancelLogin(): Promise<void> {
+	const loginId = activeLogin?.loginId;
+	if (!loginId) return;
+	await getTransport().request("provider.loginCancel", { loginId });
+	if (appStoreApi.getState().activeLogin?.loginId === loginId) appStoreApi.getState().clearLogin();
 }
 
-function closeLogin(): void {
-	if (!activeLogin) return;
-	void getTransport()
-		.request("provider.loginCancel", { loginId: activeLogin.loginId })
-		.catch(() => {});
-	appStoreApi.getState().clearLogin();
+async function closeLogin(): Promise<void> {
+	await cancelLogin();
 	appStoreApi.getState().noteProviderChanged();
-	void load();
+	await load();
 }
 </script>
 
 <div data-testid="settings-providers" class="flex flex-col gap-lg">
+{#if actionError}<p role="alert" class="text-feedback-error tr-text-ui">{actionError}</p>{/if}
 	<div class="flex items-start justify-between gap-sm">
 		<div class="flex flex-col gap-xs">
 			<h3 class="text-text-default tr-title-section">Providers</h3>
@@ -193,6 +198,7 @@ function closeLogin(): void {
 		/>
 	</label>
 
+	<label class="flex items-center gap-xs tr-text-ui"><input type="checkbox" bind:checked={showLegacy} />Show legacy providers</label>
 	{#if report === null && !failed}
 		<p class="text-text-muted tr-text-ui">Loading providers…</p>
 	{:else if failed}

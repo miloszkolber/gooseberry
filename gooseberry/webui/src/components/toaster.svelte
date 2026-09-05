@@ -130,3 +130,7 @@ onDestroy(() => {
 		</div>
 	{/each}
 </div>
+
+<style>
+ .toast-container { top: var(--space-400); bottom: auto; max-height: 40dvh; overflow-y: auto; }
+</style>

@@ -1,7 +1,7 @@
 <script lang="ts">
 import ConfirmDialog from "../../components/confirm-dialog.svelte";
-import { errorText, getTransport } from "../../connection";
-import { appStoreApi, toast } from "../../store";
+import { getTransport } from "../../connection";
+import { appStoreApi } from "../../store";
 import type { SessionLifecycleTarget } from "./session-lifecycle";
 
 interface Props {
@@ -11,17 +11,17 @@ interface Props {
 }
 let { target, open = $bindable(false), onOpenChange }: Props = $props();
 
-function archive(): void {
-	void getTransport()
-		.request("session.archive", { projectId: target.projectId, sessionId: target.sessionId })
-		.then(() =>
-			appStoreApi.getState().applySessionLifecycle({
-				projectId: target.projectId,
-				sessionId: target.sessionId,
-				operation: "archived",
-			}),
-		)
-		.catch((cause) => toast.error(errorText(cause), "Couldn't archive the chat"));
+async function archive(): Promise<void> {
+	const requested = target;
+	await getTransport().request("session.archive", {
+		projectId: requested.projectId,
+		sessionId: requested.sessionId,
+	});
+	appStoreApi.getState().applySessionLifecycle({
+		projectId: requested.projectId,
+		sessionId: requested.sessionId,
+		operation: "archived",
+	});
 }
 </script>
 

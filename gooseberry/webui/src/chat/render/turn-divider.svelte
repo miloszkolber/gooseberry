@@ -2,9 +2,11 @@
 import { untrack } from "svelte";
 import Icon from "../../components/icon.svelte";
 import { projectRelativePath } from "../../lib";
-import { readSelection, selectValue } from "../runtime/fold-state";
+import { useFoldState } from "../runtime/fold-state";
 import type { TurnDividerData } from "../runtime/rows";
 import { formatElapsed } from "./turns";
+
+const { readSelection, selectValue } = useFoldState();
 
 interface Props {
 	id: string;

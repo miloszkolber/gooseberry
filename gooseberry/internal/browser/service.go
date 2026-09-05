@@ -57,7 +57,7 @@ type Config struct {
 	Host, Token, PublicOrigin, ArtifactRoot, StateRoot, AgentBrowser, BrowserConfig string
 	Port                                                                            int
 	Authentication                                                                  bool
-	CommandTimeout, RequestTimeout                                                  time.Duration
+	CommandTimeout, RequestTimeout, PanelLeaseTimeout                               time.Duration
 	MaxArtifactBytes, MaxTotalArtifactBytes, MaxStateBytes                          int64
 	MaxSessions, MaxStateEntries                                                    int
 }
@@ -145,6 +145,8 @@ type app struct {
 	nextActiveID   uint64
 	shuttingDown   bool
 	mcpHandler     http.Handler
+	leaseCancel    context.CancelFunc
+	leaseDone      chan struct{}
 }
 
 func newAppWithRuntime(config Config, build diagnostics.BuildInfo, logger *slog.Logger) (*app, error) {
@@ -168,6 +170,12 @@ func newAppWithRuntime(config Config, build diagnostics.BuildInfo, logger *slog.
 	if _, err := os.Stat(config.BrowserConfig); err != nil {
 		return nil, fmt.Errorf("check browser config: %w", err)
 	}
+	if config.PanelLeaseTimeout == 0 {
+		config.PanelLeaseTimeout = 5 * time.Minute
+	}
+	if config.PanelLeaseTimeout < 0 {
+		return nil, fmt.Errorf("panel lease timeout must be positive")
+	}
 	build = diagnostics.NormalizeBuild(build.Version, build.Revision)
 	if logger == nil {
 		logger = diagnostics.NewLogger("browser", build)
@@ -177,6 +185,7 @@ func newAppWithRuntime(config Config, build diagnostics.BuildInfo, logger *slog.
 		return nil, err
 	}
 	app.mcpHandler = app.newMCPHandler()
+	app.startPanelLeases()
 	return app, nil
 }
 
@@ -426,9 +435,22 @@ func (a *app) updateArtifactUsage(session string, bytes int64) {
 	a.artifactUsage[session] = bytes
 }
 
-func (a *app) prepareSession(session string) (string, string, error) {
+func (a *app) prepareSession(session string, closing, leased bool) (string, string, error) {
 	a.accounting.Lock()
 	defer a.accounting.Unlock()
+	artifactDir, stateDir := filepath.Join(a.config.ArtifactRoot, session), filepath.Join(a.config.StateRoot, session)
+	if closing {
+		if _, err := os.Lstat(stateDir); errors.Is(err, fs.ErrNotExist) {
+			// A retried close must not create a session or require a free slot.
+			// No runtime can be addressed without its per-session state directory.
+			if err := a.removeSessionStorage(session, stateDir, artifactDir); err != nil {
+				return "", "", err
+			}
+			return "", "", nil
+		} else if err != nil {
+			return "", "", err
+		}
+	}
 	sessions, err := listDirectoryNames(a.config.StateRoot)
 	if err != nil {
 		return "", "", err
@@ -436,7 +458,11 @@ func (a *app) prepareSession(session string) (string, string, error) {
 	if !sessions[session] && len(sessions) >= a.config.MaxSessions {
 		return "", "", serviceFailure("session_limit", "browser session limit has been reached", "close an existing browser session before starting another", http.StatusTooManyRequests, nil)
 	}
-	artifactDir, stateDir := filepath.Join(a.config.ArtifactRoot, session), filepath.Join(a.config.StateRoot, session)
+	if leased && !closing && sessions[session] {
+		if _, err := panelLeaseTime(stateDir); err != nil {
+			return "", "", serviceFailure("session_conflict", "browser session is not a leased panel", "open a new browser panel", http.StatusConflict, nil)
+		}
+	}
 	if err := ensureDirectory(artifactDir, a.config.ArtifactRoot); err != nil {
 		return "", "", err
 	}
@@ -445,6 +471,11 @@ func (a *app) prepareSession(session string) (string, string, error) {
 	}
 	for _, path := range []string{filepath.Join(stateDir, "home"), filepath.Join(stateDir, "tmp"), filepath.Join(stateDir, "run")} {
 		if err := ensureDirectory(path, stateDir); err != nil {
+			return "", "", err
+		}
+	}
+	if leased && !closing && !sessions[session] {
+		if err := os.WriteFile(filepath.Join(stateDir, panelLeaseFile), []byte("1"), 0600); err != nil {
 			return "", "", err
 		}
 	}
@@ -622,13 +653,25 @@ func (a *app) closeSession(session, stateDir, artifactDir string) bool {
 	}
 	a.accounting.Lock()
 	defer a.accounting.Unlock()
-	_ = os.RemoveAll(stateDir)
 	if succeeded {
-		_ = os.RemoveAll(artifactDir)
-		a.totalArtifacts -= a.artifactUsage[session]
-		delete(a.artifactUsage, session)
+		return a.removeSessionStorage(session, stateDir, artifactDir) == nil
 	}
-	return succeeded
+	// Keep the daemon's socket location and ownership when cleanup fails, so a
+	// subsequent close can still reach it instead of leaving an orphan process.
+	return false
+}
+
+// Caller holds a.accounting. Only discard runtime addressing after close succeeds.
+func (a *app) removeSessionStorage(session, stateDir, artifactDir string) error {
+	if err := os.RemoveAll(artifactDir); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(stateDir); err != nil {
+		return err
+	}
+	a.totalArtifacts -= a.artifactUsage[session]
+	delete(a.artifactUsage, session)
+	return nil
 }
 
 type outputCollector struct {
@@ -703,15 +746,31 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (result ma
 		cancel()
 	}()
 
-	artifactDir, stateDir, err := a.prepareSession(request.Session)
+	artifactDir, stateDir, err := a.prepareSession(request.Session, request.Command == "close", request.panelLease)
 	if err != nil {
 		return nil, err
+	}
+	if stateDir == "" {
+		return map[string]any{"outcome": "completed", "command": "close", "code": 0, "stdout": "", "stderr": ""}, nil
 	}
 	releaseLock, err := acquireLock(stateDir)
 	if err != nil {
 		return nil, err
 	}
 	defer releaseLock()
+	if request.expireLease {
+		modified, err := panelLeaseTime(stateDir)
+		if err != nil || time.Since(modified) < a.config.PanelLeaseTimeout {
+			return map[string]any{"outcome": "completed", "command": "close", "code": 0}, nil
+		}
+	}
+	if request.Command != "close" {
+		// Active commands hold the same lock as expiry. Renew on completion too.
+		if err := touchPanelLease(stateDir); err != nil {
+			return nil, err
+		}
+		defer func() { _ = touchPanelLease(stateDir) }()
+	}
 
 	var temporaryPath, finalPath string
 	var reservation *artifactReservation
@@ -940,11 +999,11 @@ func (a *app) runBrowser(ctx context.Context, request browserRequest) (result ma
 	}
 	if closing {
 		a.accounting.Lock()
-		_ = os.RemoveAll(stateDir)
-		_ = os.RemoveAll(artifactDir)
-		a.totalArtifacts -= a.artifactUsage[request.Session]
-		delete(a.artifactUsage, request.Session)
+		err := a.removeSessionStorage(request.Session, stateDir, artifactDir)
 		a.accounting.Unlock()
+		if err != nil {
+			return nil, err
+		}
 	}
 	result = map[string]any{"outcome": "completed", "command": request.Command, "code": 0, "stdout": stdoutText, "stderr": stderrText}
 	if artifact != nil {
@@ -1193,6 +1252,10 @@ func (a *app) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		writeJSON(response, http.StatusOK, a.status(), nil)
 		return
 	}
+	if path == "/v1/browser/leases" && parsed.RawQuery == "" {
+		a.renewPanelLeases(response, request)
+		return
+	}
 	if path == "/v1/browser" && request.Method != http.MethodPost {
 		rejectMethod(response, request, http.MethodPost)
 		return
@@ -1233,6 +1296,13 @@ func (a *app) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 		respondError(response, err)
 		return
 	}
+	if lease := request.Header.Get(panelLeaseHeader); lease != "" {
+		if lease != "1" || !panelSessionPattern.MatchString(browserRequest.Session) {
+			respondError(response, reject("invalid browser panel lease"))
+			return
+		}
+		browserRequest.panelLease = true
+	}
 	result, err := a.runBrowser(request.Context(), browserRequest)
 	if err != nil {
 		respondError(response, err)
@@ -1249,8 +1319,10 @@ func (a *app) shutdown() {
 		cancels = append(cancels, cancel)
 	}
 	a.activeMu.Unlock()
+	a.leaseCancel()
 	a.appViews.close()
 	for _, cancel := range cancels {
 		cancel()
 	}
+	<-a.leaseDone
 }

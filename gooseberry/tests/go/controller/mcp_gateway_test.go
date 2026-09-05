@@ -196,3 +196,41 @@ func gatewayACP(t *testing.T) (*httptest.Server, *gatewayACPState) {
 	}))
 	return server, state
 }
+
+func TestMCPGatewayOutageRetainsGlobalDisableAndUnknownReadiness(t *testing.T) {
+	moduleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"schemaVersion":1,"revision":"rev-1","gateway":{"state":"ready"},"modules":[{"id":"browser","extensionName":"gooseberry-browser","displayName":"Browser","path":"/browser","transport":"streamable_http","state":"ready"}]}`))
+	}))
+	defer moduleServer.Close()
+	acpServer, _ := gatewayACP(t)
+	defer acpServer.Close()
+	client := controller.NewGooseClient("ws"+strings.TrimPrefix(acpServer.URL, "http"), "", "test", nil)
+	defer client.Close()
+	admin := controller.NewGooseAdmin(client, controller.NewSettings(persist.Store{Dir: t.TempDir()}, nil))
+	gateway := controller.NewMCPGateway(controller.AuthConfig{MCPURL: moduleServer.URL, MCPToken: gatewayTestToken})
+	defer gateway.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := gateway.SetGooseEnabled(ctx, admin, "browser", true, "rev-1"); err != nil {
+		t.Fatal(err)
+	}
+	moduleServer.Close()
+	catalog, err := gateway.Catalog(ctx, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modules := catalog["modules"].([]map[string]any)
+	if len(modules) != 1 || modules[0]["binding"] != "enabled" || modules[0]["state"] != "unavailable" {
+		t.Fatalf("outage lost binding or fabricated readiness: %#v", catalog)
+	}
+	if _, err := gateway.SetGooseEnabled(ctx, admin, "browser", true, "rev-1"); err == nil {
+		t.Fatal("outage allowed enable")
+	}
+	catalog, err = gateway.SetGooseEnabled(ctx, admin, "browser", false, "rev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog["modules"].([]map[string]any)[0]["binding"] != "disabled" {
+		t.Fatalf("outage blocked disable: %#v", catalog)
+	}
+}

@@ -80,6 +80,10 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 		}
 	}
 	store := persist.Store{Dir: config.DataDir}
+	browserPanels, err := NewPersistentBrowserPanels(authConfig, nil, store)
+	if err != nil {
+		return nil, err
+	}
 	projects := workspace.NewProjects(store, config.Policy)
 	files := workspace.NewFiles(projects, config.Policy)
 	records := NewSessionRecords(store)
@@ -101,6 +105,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	client := NewGooseClient(config.GooseURL, strings.TrimSpace(config.Getenv("GOOSEBERRY_GOOSE_SECRET_KEY")), config.AppVersion, sessions)
 	client.profileChanged = func(profile AgentProfile) { publish("agent.profileChanged", profile) }
 	sessions.SetClient(client)
+	sessions.SetSettings(settings)
 	sessions.SetObjectiveURL("http://127.0.0.1:" + strconv.Itoa(config.Port) + "/mcp/objective")
 	admin := NewGooseAdmin(client, settings)
 	admin.sessions = sessions
@@ -115,7 +120,6 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	watches := workspace.NewProjectWatches(projects, git, publish)
 	apps := NewAppViews(sessions, authConfig, config.Port)
 	requests := &diagnostics.RequestCounter{}
-	browserPanels := NewBrowserPanels(authConfig, nil)
 	mcpGateway := NewMCPGateway(authConfig)
 	statusProvider := newRuntimeStatusProvider(build, requests, projects, settings, config.StaticDir, client, authConfig)
 	handler := CoreHandler{Projects: projects, Files: files, Sessions: sessions, Apps: apps, Settings: settings, Admin: admin, Git: git, Watches: watches, Requests: requests, RuntimeStatus: statusProvider.snapshot, BrowserPanels: browserPanels, MCPGateway: mcpGateway}
@@ -197,6 +201,7 @@ func (r *Runtime) Start() (string, error) {
 		return "", fmt.Errorf("resume queued follow-ups: %w", err)
 	}
 	go func() { r.errors <- r.server.Serve(listener) }()
+	r.browser.ResumeCleanup()
 	r.sessions.resumeQueues(queued)
 	return "http://" + net.JoinHostPort(r.config.Host, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)), nil
 }
@@ -251,7 +256,7 @@ func (m *SessionManager) shutdown(ctx context.Context) {
 		entry.state.Unlock()
 	}
 	questions := m.questions
-	m.questions = make(map[string]*pendingQuestion)
+	m.questions = make(map[questionKey]*pendingQuestion)
 	m.mu.Unlock()
 	for _, id := range ids {
 		m.cancelPermissions(id)

@@ -715,7 +715,7 @@ test("mutation responses remain a fallback when their push event was missed", ()
 	expect(appStoreApi.getState().sessions.fallback?.configRevision).toBe(1);
 });
 
-test("mode and plan events update live state while a replay snapshot replaces it authoritatively", () => {
+test("mode, config and plan events update live state while a replay replaces them authoritatively", () => {
 	const modes = {
 		currentModeId: "ask",
 		availableModes: [
@@ -738,6 +738,12 @@ test("mode and plan events update live state while a replay snapshot replaces it
 		"mode-plan",
 	);
 	expect(appStoreApi.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("code");
+	appStoreApi
+		.getState()
+		.handleAgentEvent(
+			{ type: "config", configOptions: [{ id: "old-setting", currentValue: "old" }] },
+			"mode-plan",
+		);
 	expect(appStoreApi.getState().sessions["mode-plan"]?.planState?.entries[0]?.content).toBe(
 		"Inspect",
 	);
@@ -756,6 +762,7 @@ test("mode and plan events update live state while a replay snapshot replaces it
 			updatedAt: 42,
 			live: true,
 			archived: false,
+			configOptions: [{ id: "current-setting", currentValue: "current" }],
 		},
 		{
 			turns: [],
@@ -771,6 +778,9 @@ test("mode and plan events update live state while a replay snapshot replaces it
 	);
 	expect(appStoreApi.getState().sessions["mode-plan"]?.modes?.currentModeId).toBe("review");
 	expect(appStoreApi.getState().sessions["mode-plan"]?.planState).toBeNull();
+	expect(appStoreApi.getState().sessions["mode-plan"]?.configOptions).toEqual([
+		{ id: "current-setting", currentValue: "current" },
+	]);
 });
 
 test("session hydration restores controller queues and question replies", () => {
@@ -840,4 +850,34 @@ test("session hydration restores controller queues and question replies", () => 
 	expect(appStoreApi.getState().sessions.s1?.queue.followUp).toEqual([]);
 	expect(appStoreApi.getState().sessions.s1?.queue.revision).toBe("reconciled");
 	expect(appStoreApi.getState().sessions.s1?.parentSessionId).toBe("parent-session");
+});
+
+test("failed submissions retain payload and live work across chat closure", () => {
+	const state = appStoreApi.getState();
+	state.openChatSession("p1", "retained", null, "off");
+	state.handleAgentEvent({ type: "run-start" }, "retained");
+	state.appendUserMessage("retained", "Rejected message", []);
+	const optimistic = appStoreApi.getState().sessions.retained?.turns.at(-1)?.id;
+	if (!optimistic) throw new Error("missing optimistic message");
+	const submission = {
+		text: "Rejected message",
+		attachments: [
+			{
+				kind: "image" as const,
+				name: "image.png",
+				content: { type: "image" as const, data: "AA==", mimeType: "image/png" },
+			},
+		],
+		behavior: "queue" as const,
+		busy: false,
+		error: "Unavailable",
+		optimisticTurnId: optimistic,
+	};
+	state.setSubmission("retained", submission);
+	expect(appStoreApi.getState().sessions.retained?.isStreaming).toBe(true);
+	expect(
+		appStoreApi.getState().sessions.retained?.turns.some((turn) => turn.id === optimistic),
+	).toBe(false);
+	state.closeChatToHistory("retained", "p1");
+	expect(appStoreApi.getState().sessions.retained?.submission).toEqual(submission);
 });

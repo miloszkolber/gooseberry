@@ -16,7 +16,7 @@ export interface ChatTranscriptHandle {
 	import ChatTurnView from "../render/turns.svelte";
 	import type { ChatRow } from "../runtime/rows";
 	import StreamIndicator from "../session/stream-indicator.svelte";
-	import type { StreamStatus } from "../session/stream-status";
+	import { phaseLabel, type StreamStatus } from "../session/stream-status";
 	import {
 		captureChatScrollAnchor,
 		chatScrollIsAtBottom,
@@ -63,7 +63,9 @@ export interface ChatTranscriptHandle {
 
 	function moveToBottom(behavior: ScrollBehavior): void {
 		if (!viewport) return;
-		viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+		const motion = behavior === "smooth" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+			? "auto" : behavior;
+		viewport.scrollTo({ top: viewport.scrollHeight, behavior: motion });
 		lastAtBottom = true;
 	}
 
@@ -184,15 +186,14 @@ export interface ChatTranscriptHandle {
 	data-default-pinned="true"
 >
 	<h2 id={headingId} class="message-scroller-label">Conversation</h2>
-	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (This labelled, keyboard-scrollable live log intentionally owns pointer and keyboard interaction state.) -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (This labelled, keyboard-scrollable reading viewport intentionally owns pointer and keyboard interaction state.) -->
 	<div
 		bind:this={viewport}
 		id={logId}
 		data-testid="chat-scroll"
 		class="message-scroller-viewport chat-viewport"
 		role="log"
-		aria-live="polite"
-		aria-relevant="additions text"
+		aria-live="off"
 		aria-labelledby={headingId}
 		aria-busy={status !== null}
 		tabindex="0"
@@ -243,13 +244,17 @@ export interface ChatTranscriptHandle {
 			<div class="mx-auto max-w-3xl px-md pb-sm"><StreamIndicator {status} /></div>
 		{/if}
 	</div>
+	<p class="sr-only" role="status" aria-atomic="true" data-testid="chat-announcement">{status ? phaseLabel(status) : ""}</p>
 	{#if showScrollButton}
 		<button
 			type="button"
 			data-testid="scroll-to-bottom"
 			data-message-scroller-jump
 			aria-controls={logId}
-			onclick={() => scrollToBottom()}
+			onclick={() => {
+				viewport?.focus({ preventScroll: true });
+				scrollToBottom();
+			}}
 			class="message-scroller-jump flex items-center gap-xs"
 		>
 			<Icon name="arrow-down" size={12} />
