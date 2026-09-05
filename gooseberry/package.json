@@ -21,7 +21,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "bun run build:go && bun run build:web",
-		"build:go": "go build -trimpath -o dist/gooseberry ./cmd/gooseberry && go build -trimpath -o dist/gooseberry-browser ./cmd/gooseberry-browser && go build -trimpath -o dist/gooseberry-mcp ./cmd/gooseberry-mcp",
+		"build:go": "go build -trimpath -o dist/gooseberry ./cmd/gooseberry && go build -trimpath -o dist/gooseberry-mcp ./cmd/gooseberry-mcp",
 		"dev:web": "bun --filter @gooseberry/web dev",
 		"build:web": "bun --filter @gooseberry/web build",
 		"mewa:check": "bun --filter @gooseberry/web mewa:check",

@@ -94,9 +94,9 @@ type AuthConfig struct {
 }
 
 // BrowserServiceAuth selects the credential for controller-owned requests to
-// the Browser HTTP surface. When the optional MCP host owns that same origin,
-// its token is authoritative; otherwise the standalone Browser token remains
-// the compatibility path.
+// the Browser HTTP surface. The MCP host is the canonical Browser surface, so
+// its token is authoritative when it owns that origin. Browser-specific fields
+// remain supported for compatibility with older deployments.
 func (c AuthConfig) BrowserServiceAuth() (bool, string) {
 	if c.MCPURL != "" && sameAppViewOrigin(c.MCPURL, c.BrowserURL) {
 		return c.MCPToken != "", c.MCPToken
@@ -165,6 +165,9 @@ func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
 	} else if mcpToken != "" && !strongToken(mcpToken) {
 		return AuthConfig{}, fmt.Errorf("GOOSEBERRY_MCP_TOKEN must be a strong printable random token")
 	}
+	if enabled && mcpToken != "" && constantTimeStringEqual(controllerToken, mcpToken) {
+		return AuthConfig{}, fmt.Errorf("GOOSEBERRY_TOKEN and GOOSEBERRY_MCP_TOKEN must be different")
+	}
 	browserURL := strings.TrimSpace(getenv("GOOSEBERRY_BROWSER_URL"))
 	if browserURL == "" {
 		browserURL = mcpURL
@@ -182,16 +185,22 @@ func ReadAuthConfig(getenv func(string) string) (AuthConfig, error) {
 		return AuthConfig{}, fmt.Errorf("a non-loopback GOOSEBERRY_BROWSER_URL requires browser authentication")
 	}
 	browserPublicOrigin := strings.TrimSpace(getenv("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN"))
+	publicOriginSetting := "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN"
+	if browserPublicOrigin == "" && mcpURL != "" && sameAppViewOrigin(mcpURL, browserURL) {
+		// The embedded Browser module shares the host's public origin.
+		publicOriginSetting = "GOOSEBERRY_MCP_PUBLIC_ORIGIN"
+		browserPublicOrigin = strings.TrimSpace(getenv("GOOSEBERRY_MCP_PUBLIC_ORIGIN"))
+	}
 	if browserPublicOrigin != "" {
 		if !browserEnabled && !sharedMCPOrigin {
-			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN requires browser authentication")
+			return AuthConfig{}, fmt.Errorf("%s requires Browser module authentication", publicOriginSetting)
 		}
 		browserPublicOrigin, err = normalizeOrigin(browserPublicOrigin)
 		if err != nil {
-			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN must be an absolute http(s) origin without credentials or a path")
+			return AuthConfig{}, fmt.Errorf("%s must be an absolute http(s) origin without credentials or a path", publicOriginSetting)
 		}
 		if publicOrigin != "" && sameAppViewOrigin(browserPublicOrigin, publicOrigin) {
-			return AuthConfig{}, fmt.Errorf("GOOSEBERRY_BROWSER_PUBLIC_ORIGIN must differ from GOOSEBERRY_PUBLIC_ORIGIN")
+			return AuthConfig{}, fmt.Errorf("%s must differ from GOOSEBERRY_PUBLIC_ORIGIN", publicOriginSetting)
 		}
 	}
 	return AuthConfig{Enabled: enabled, BrowserEnabled: browserEnabled, ControllerToken: controllerToken, BrowserToken: browserToken, BrowserURL: browserURL, BrowserPublicOrigin: browserPublicOrigin, MCPURL: mcpURL, MCPToken: mcpToken, ControllerHost: host, PublicOrigin: publicOrigin, AllowRemoteWithout: allowRemote}, nil

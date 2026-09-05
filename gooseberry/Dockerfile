@@ -54,7 +54,7 @@ RUN --mount=type=cache,id=go-module-cache,target=/go/pkg/mod,sharing=locked \
     export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH; \
     set -eu; \
     mkdir -p /out; \
-    for entry in gooseberry:./cmd/gooseberry gooseberry-browser:./cmd/gooseberry-browser gooseberry-mcp:./cmd/gooseberry-mcp; do \
+    for entry in gooseberry:./cmd/gooseberry gooseberry-mcp:./cmd/gooseberry-mcp; do \
         binary=${entry%%:*}; package=${entry#*:}; \
         go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.revision=$REVISION" -o "/out/$binary" "$package"; \
         mkdir -p "/out/licenses/$binary/go"; \
@@ -168,29 +168,8 @@ RUN printf '%s\n' \
     && test -x /usr/local/libexec/agent-browser \
     && test -s /app/licenses/agent-browser/LICENSE
 
-FROM browser-automation AS browser
-ARG VERSION
-ARG REVISION
-ARG SOURCE_URL
-ARG CREATED
-LABEL org.opencontainers.image.title="Gooseberry Browser" \
-    org.opencontainers.image.version="${VERSION}" \
-    org.opencontainers.image.revision="${REVISION}" \
-    org.opencontainers.image.source="${SOURCE_URL}" \
-    org.opencontainers.image.created="${CREATED}"
-COPY --from=go-build /out/gooseberry-browser /app/gooseberry-browser
-COPY --from=go-build /out/licenses/gooseberry-browser /app/licenses
-COPY gooseberry/internal/browser/config.json /app/config.json
-RUN test -x /app/gooseberry-browser \
-    && test -f /app/config.json \
-    && test ! -e /app/gooseberry && test ! -d /app/web \
-    && ! command -v git && ! command -v bun && ! command -v node && ! command -v go
-USER 1000:1000
-EXPOSE 8787
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/app/gooseberry-browser", "healthcheck"]
-CMD ["/app/gooseberry-browser"]
-
+# The MCP host is the only published Browser-capable service image. It embeds
+# the Browser module and keeps its legacy HTTP/MCP compatibility routes.
 FROM browser-automation AS mcp
 ARG VERSION
 ARG REVISION

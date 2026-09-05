@@ -74,8 +74,6 @@ esac
 		BrowserConfig:         configFile,
 		CommandTimeout:        2 * time.Second,
 		RequestTimeout:        4 * time.Second,
-		HeadersTimeout:        time.Second,
-		KeepAlive:             time.Second,
 		MaxArtifactBytes:      64,
 		MaxTotalArtifactBytes: 10,
 		MaxStateBytes:         1024,

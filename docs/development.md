@@ -19,7 +19,7 @@ go vet ./...
 
 All tests live under `gooseberry/tests`. Add small regression tests for observable contracts and realistic failure modes at persistence, concurrency, authorization, protocol, filesystem, performance and fragile UI boundaries. Do not test copied types, constants or implementation details.
 
-The optional MCP host is covered by `go test ./internal/mcphost`, the controller MCP gateway tests under `tests/go/controller`, and the MCP Compose overlay assertions in `tests/deployment/compose.test.sh`. Its cross-compiled executable is built with `GOOS=linux GOARCH=amd64 go build ./cmd/gooseberry-mcp` when the host platform cannot run the Linux service image.
+The MCP host is covered by `go test ./internal/mcphost`, the controller MCP gateway tests under `tests/go/controller`, and the default Compose assertions in `tests/deployment/compose.test.sh`. Its cross-compiled executable is built with `GOOS=linux GOARCH=amd64 go build ./cmd/gooseberry-mcp` when the host platform cannot run the Linux service image.
 
 The frontend is Svelte 5 compiled directly by Bun. `bun run dev:web` builds the same application entry used in production, validates each staged artifact before publication and serves it with the same-origin Go UI fixture; this supported development path runs on Linux. Source and contract changes trigger rebuilds and browser reloads. Bun owns module compilation, splitting and reload publication, while the fixture owns the same-origin HTTP and WebSocket path.
 
@@ -52,12 +52,11 @@ Set `GOOSE_SERVER__SECRET_KEY` in the probe's private environment. The optional 
 
 ```bash
 docker build -f gooseberry/Dockerfile --target gooseberry -t gooseberry:local .
-docker build -f gooseberry/Dockerfile --target browser -t gooseberry-browser:local .
 docker build -f gooseberry/Dockerfile --target mcp -t gooseberry-mcp:local .
 sh gooseberry/tests/deployment/compose.test.sh
 ```
 
-The application build verifies every Git command used by Gooseberry against its assembled runtime. That final image has no shell or package manager. The Browser and MCP images keep Debian Trixie slim, Chromium, required fonts and `tini`. All production services run non-root with read-only filesystems, dropped capabilities and bounded writable mounts.
+The application build verifies every Git command used by Gooseberry against its assembled runtime. That final image has no shell or package manager. The MCP image keeps Debian Trixie slim, Chromium, required fonts and `tini` for its embedded Browser module. All production services run non-root with read-only filesystems, dropped capabilities and bounded writable mounts.
 
 Check both architectures after packaging changes. Exercise state and environment isolation, licenses, health, shutdown, authenticated MCP/HTTP and a Chromium screenshot through the application artifact proxy. Apple `container` is useful for disposable Linux image checks on macOS; it does not reproduce Docker Compose host-network semantics.
 

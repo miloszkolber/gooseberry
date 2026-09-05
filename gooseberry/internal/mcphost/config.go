@@ -15,7 +15,7 @@ const (
 	defaultPort = 8787
 )
 
-// Config describes the optional Gooseberry MCP host. BrowserConfig is an
+// Config describes the Gooseberry MCP host. BrowserConfig is an
 // internal composition detail: the first module reuses the existing Browser
 // service without making its environment part of the catalog API.
 type Config struct {

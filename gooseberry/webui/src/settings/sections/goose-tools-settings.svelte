@@ -232,7 +232,7 @@ function setGatewayEnabled(module: McpGatewayModule, enabled: boolean): void {
 			<p role="status" class="text-text-muted tr-text-metadata">Checking MCP host…</p>
 		{:else if gatewayCatalog?.gateway.state === "not-configured"}
 			<p class="text-text-muted tr-text-metadata">
-				Gooseberry MCP is not configured. The standalone Browser service remains available.
+				Gooseberry MCP is not configured. Configure the MCP host to publish Browser tools.
 			</p>
 		{:else if gatewayCatalog?.gateway.state === "unreachable" || gatewayCatalog?.gateway.state === "incompatible"}
 			<p role="status" class="text-text-muted tr-text-metadata">

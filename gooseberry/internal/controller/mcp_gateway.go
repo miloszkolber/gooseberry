@@ -18,7 +18,7 @@ const (
 	mcpGatewayBodyLimit   = 64 * 1024
 )
 
-// MCPGateway is the controller-side client for the optional Gooseberry MCP
+// MCPGateway is the controller-side client for the Gooseberry MCP
 // host. It owns discovery and endpoint construction; the browser never sees
 // the host token or raw Goose extension configuration.
 type MCPGateway struct {

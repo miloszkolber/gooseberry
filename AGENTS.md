@@ -39,9 +39,9 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Runtime boundaries
 
-- Goose runs on the host as the user's authenticated loopback service. The default deployment uses two host-networked containers for separate application and Browser executables; the optional `gooseberry-mcp` container replaces Browser and composes its service from the same Go module.
-- Objective updates use session-scoped MCP on the application listener. Browser tools and essential instructions use MCP on the standalone Browser listener or the optional host's `/browser` module; the host publishes a catalog at `/v1/mcp/modules` and keeps Browser HTTP/artifact compatibility routes available. Both MCP surfaces can serve trusted external host-network services.
-- Gooseberry configures discovered MCP modules through Goose administration when the optional host is present. Standalone Browser registration remains supported in private Goose configuration. Do not install host skills or put secrets in model-visible instructions.
+- Goose runs on the host as the user's authenticated loopback service. The default deployment uses two host-networked containers: the application and the `gooseberry-mcp` host, which embeds the Browser module from the same Go module. The standalone `gooseberry-browser` executable and image are retired.
+- Objective updates use session-scoped MCP on the application listener. Browser tools and essential instructions use the MCP host's `/browser` module; it publishes a catalog at `/v1/mcp/modules` and keeps Browser HTTP/artifact compatibility routes available. Both MCP surfaces can serve trusted external host-network services.
+- Gooseberry configures discovered MCP modules through Goose administration. The Browser module keeps the `gooseberry-browser` extension identity for existing Goose configuration compatibility, but new deployments use the MCP host endpoint. Do not install host skills or put secrets in model-visible instructions.
 - The browser has its own state mount, without project, application-state or Goose-configuration mounts. Its sessions still share one UID and filesystem; host networking is not network isolation.
 
 ## Engineering approach
@@ -75,4 +75,4 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Current stack
 
-The controller and browser packages share one Go module, with separate executables and images. The frontend uses TypeScript and Svelte 5, a small framework-neutral external store, Mewa UI foundations pinned from GitHub Releases, and Bun for compilation, development, and tests. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.
+The controller and embedded Browser module share one Go module, with separate application and MCP-host executables and images. The frontend uses TypeScript and Svelte 5, a small framework-neutral external store, Mewa UI foundations pinned from GitHub Releases, and Bun for compilation, development, and tests. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.

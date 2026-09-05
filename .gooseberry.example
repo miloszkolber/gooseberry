@@ -1,19 +1,17 @@
 # Existing host directories: app/ and browser/{artifacts,state}/, owned by UID/GID 1000.
+# The browser directory is the embedded Browser module's state in the MCP host.
 GOOSEBERRY_DATA_PATH=/absolute/path/to/gooseberry-data
 
 # Must match the independently installed Goose service's GOOSE_SERVER__SECRET_KEY.
 GOOSEBERRY_GOOSE_SECRET_KEY=replace-with-a-random-goose-secret
 
-# Standalone Browser MCP/API and the application artifact proxy share this token.
-# It remains the compatibility credential when the optional MCP host is absent.
-GOOSEBERRY_BROWSER_TOKEN=replace-with-a-random-browser-token
+# The MCP host and the application share one strong private token. It authenticates
+# the catalog, the embedded Browser module and the application's artifact proxy.
+GOOSEBERRY_MCP_TOKEN=replace-with-a-random-mcp-token
 
-# Optional modular MCP host. When enabled, use a separate strong token and keep it
-# in this private environment and Goose's private service environment.
+# The MCP host publishes the embedded Browser module and future modules from one
+# authenticated origin. Keep this token in Goose's private service environment too.
 # GOOSEBERRY_MCP_URL=http://127.0.0.1:8787
-# GOOSEBERRY_MCP_TOKEN=replace-with-a-random-mcp-token
-# GOOSEBERRY_MCP_IMAGE=ghcr.io/miloszkolber/gooseberry-mcp:sha-revision
-# GOOSEBERRY_MCP_AUTH=true
 # GOOSEBERRY_MCP_HOST=127.0.0.1
 # GOOSEBERRY_MCP_PORT=8787
 # GOOSEBERRY_MCP_PUBLIC_ORIGIN=
@@ -27,20 +25,14 @@ GOOSEBERRY_AUTH_ENABLED=false
 # GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=false
 # GOOSEBERRY_PUBLIC_ORIGIN=https://gooseberry.example.com
 
-# Host networking keeps Goose and browser access on loopback by default.
-# GOOSEBERRY_BROWSER_HOST=127.0.0.1
-# GOOSEBERRY_BROWSER_PORT=8787
-# GOOSEBERRY_BROWSER_URL=http://127.0.0.1:8787
-# GOOSEBERRY_BROWSER_PUBLIC_ORIGIN=https://browser.example.com
-
-# Optional container ceilings. Defaults: app 1 GiB/2 CPUs/256 PIDs; browser 2 GiB/2 CPUs/512 PIDs.
+# Optional container ceilings. Defaults: app 1 GiB/2 CPUs/256 PIDs; MCP 2 GiB/2 CPUs/512 PIDs.
 # GOOSEBERRY_MEMORY_LIMIT=1g
 # GOOSEBERRY_CPU_LIMIT=2.0
 # GOOSEBERRY_PIDS_LIMIT=256
-# GOOSEBERRY_BROWSER_MEMORY_LIMIT=2g
-# GOOSEBERRY_BROWSER_CPU_LIMIT=2.0
-# GOOSEBERRY_BROWSER_PIDS_LIMIT=512
+# GOOSEBERRY_MCP_MEMORY_LIMIT=2g
+# GOOSEBERRY_MCP_CPU_LIMIT=2.0
+# GOOSEBERRY_MCP_PIDS_LIMIT=512
 
 # Pin these to a release or sha-<revision> tag when using published images.
 # GOOSEBERRY_IMAGE=ghcr.io/miloszkolber/gooseberry:sha-revision
-# GOOSEBERRY_BROWSER_IMAGE=ghcr.io/miloszkolber/gooseberry-browser:sha-revision
+# GOOSEBERRY_MCP_IMAGE=ghcr.io/miloszkolber/gooseberry-mcp:sha-revision

@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,8 +37,6 @@ const (
 	maxRequestBytes       = 64 * 1024
 	defaultCommandTimeout = 120 * time.Second
 	defaultRequestTimeout = 120 * time.Second
-	defaultHeadersTimeout = 15 * time.Second
-	defaultKeepAlive      = 5 * time.Second
 	defaultArtifactLimit  = 64 * 1024 * 1024
 	defaultTotalArtifact  = 256 * 1024 * 1024
 	defaultStateLimit     = 256 * 1024 * 1024
@@ -54,14 +51,13 @@ const (
 var temporaryArtifactPrefix = ".gooseberry-screenshot-"
 
 // Config defines the browser service's runtime and storage boundaries. It is
-// intentionally a module-internal composition contract: the executable uses
-// ConfigFromEnvironment, while other module packages can embed the service
-// without reaching into its process-global environment.
+// a module-internal composition contract used by the MCP host to embed the
+// service without reaching into its process-global environment.
 type Config struct {
 	Host, Token, PublicOrigin, ArtifactRoot, StateRoot, AgentBrowser, BrowserConfig string
 	Port                                                                            int
 	Authentication                                                                  bool
-	CommandTimeout, RequestTimeout, HeadersTimeout, KeepAlive                       time.Duration
+	CommandTimeout, RequestTimeout                                                  time.Duration
 	MaxArtifactBytes, MaxTotalArtifactBytes, MaxStateBytes                          int64
 	MaxSessions, MaxStateEntries                                                    int
 }
@@ -111,7 +107,7 @@ func ConfigFromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 	return validateNetworkConfig(Config{
 		Host: host, Port: port, Authentication: auth, Token: token, PublicOrigin: publicOrigin,
 		ArtifactRoot: defaultArtifactRoot, StateRoot: defaultStateRoot, AgentBrowser: defaultAgentBrowser, BrowserConfig: defaultBrowserConfig,
-		CommandTimeout: defaultCommandTimeout, RequestTimeout: defaultRequestTimeout, HeadersTimeout: defaultHeadersTimeout, KeepAlive: defaultKeepAlive,
+		CommandTimeout: defaultCommandTimeout, RequestTimeout: defaultRequestTimeout,
 		MaxArtifactBytes: defaultArtifactLimit, MaxTotalArtifactBytes: defaultTotalArtifact, MaxStateBytes: defaultStateLimit, MaxSessions: defaultSessionLimit, MaxStateEntries: defaultStateEntries,
 	})
 }
@@ -213,12 +209,6 @@ func (s *Service) Ready() bool { return s.app.readiness().Ready }
 // Shutdown rejects new work, cancels active commands, and revokes App views.
 func (s *Service) Shutdown() {
 	s.app.shutdown()
-}
-
-func (s *Service) httpServer() *http.Server {
-	server := s.app.httpServer()
-	server.Handler = s
-	return server
 }
 
 func within(root, candidate string) bool {
@@ -1262,17 +1252,5 @@ func (a *app) shutdown() {
 	a.appViews.close()
 	for _, cancel := range cancels {
 		cancel()
-	}
-}
-
-func (a *app) httpServer() *http.Server {
-	return &http.Server{
-		Addr:              net.JoinHostPort(a.config.Host, strconv.Itoa(a.config.Port)),
-		Handler:           a,
-		ReadTimeout:       a.config.RequestTimeout,
-		ReadHeaderTimeout: a.config.HeadersTimeout,
-		WriteTimeout:      a.config.RequestTimeout,
-		IdleTimeout:       a.config.KeepAlive,
-		MaxHeaderBytes:    maxRequestBytes,
 	}
 }

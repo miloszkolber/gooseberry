@@ -24,12 +24,10 @@ services:
             GOOSEBERRY_CONTROLLER_HOST: "${GOOSEBERRY_CONTROLLER_HOST:-127.0.0.1}"
             GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE: "${GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE:-false}"
             GOOSEBERRY_PUBLIC_ORIGIN: "${GOOSEBERRY_PUBLIC_ORIGIN:-}"
-            GOOSEBERRY_BROWSER_AUTH: "true"
-            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set a distinct strong browser token in .gooseberry}"
-            GOOSEBERRY_BROWSER_URL: "${GOOSEBERRY_BROWSER_URL:-http://127.0.0.1:8787}"
-            GOOSEBERRY_BROWSER_PUBLIC_ORIGIN: "${GOOSEBERRY_BROWSER_PUBLIC_ORIGIN:-}"
-            GOOSEBERRY_MCP_URL: "${GOOSEBERRY_MCP_URL:-}"
-            GOOSEBERRY_MCP_TOKEN: "${GOOSEBERRY_MCP_TOKEN:-}"
+            # Discovery, Browser commands and App views share the MCP host.
+            GOOSEBERRY_MCP_URL: "${GOOSEBERRY_MCP_URL:-http://127.0.0.1:8787}"
+            GOOSEBERRY_MCP_TOKEN: "${GOOSEBERRY_MCP_TOKEN:?set a strong MCP token in .gooseberry}"
+            GOOSEBERRY_MCP_PUBLIC_ORIGIN: "${GOOSEBERRY_MCP_PUBLIC_ORIGIN:-}"
         volumes:
             - type: bind
               source: "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/app"
@@ -47,13 +45,13 @@ services:
                 max-file: "3"
         stop_grace_period: 20s
 
-    browser:
+    mcp:
         build:
             context: .
             dockerfile: gooseberry/Dockerfile
-            target: browser
-        image: "${GOOSEBERRY_BROWSER_IMAGE:-ghcr.io/miloszkolber/gooseberry-browser:latest}"
-        container_name: gooseberry-browser
+            target: mcp
+        image: "${GOOSEBERRY_MCP_IMAGE:-ghcr.io/miloszkolber/gooseberry-mcp:latest}"
+        container_name: gooseberry-mcp
         restart: unless-stopped
         network_mode: host
         user: "1000:1000"
@@ -62,17 +60,20 @@ services:
             - ALL
         security_opt:
             - no-new-privileges:true
-        mem_limit: "${GOOSEBERRY_BROWSER_MEMORY_LIMIT:-2g}"
-        cpus: "${GOOSEBERRY_BROWSER_CPU_LIMIT:-2.0}"
-        pids_limit: "${GOOSEBERRY_BROWSER_PIDS_LIMIT:-512}"
+        mem_limit: "${GOOSEBERRY_MCP_MEMORY_LIMIT:-2g}"
+        cpus: "${GOOSEBERRY_MCP_CPU_LIMIT:-2.0}"
+        pids_limit: "${GOOSEBERRY_MCP_PIDS_LIMIT:-512}"
         environment:
-            GOOSEBERRY_BROWSER_AUTH: "true"
-            GOOSEBERRY_BROWSER_TOKEN: "${GOOSEBERRY_BROWSER_TOKEN:?set a distinct strong browser token in .gooseberry}"
-            GOOSEBERRY_BROWSER_HOST: "${GOOSEBERRY_BROWSER_HOST:-127.0.0.1}"
-            GOOSEBERRY_BROWSER_PORT: "${GOOSEBERRY_BROWSER_PORT:-8787}"
-            GOOSEBERRY_BROWSER_PUBLIC_ORIGIN: "${GOOSEBERRY_BROWSER_PUBLIC_ORIGIN:-}"
+            GOOSEBERRY_MCP_AUTH: "true"
+            GOOSEBERRY_MCP_TOKEN: "${GOOSEBERRY_MCP_TOKEN:?set a strong MCP token in .gooseberry}"
+            GOOSEBERRY_MCP_HOST: "${GOOSEBERRY_MCP_HOST:-127.0.0.1}"
+            GOOSEBERRY_MCP_PORT: "${GOOSEBERRY_MCP_PORT:-8787}"
+            GOOSEBERRY_MCP_PUBLIC_ORIGIN: "${GOOSEBERRY_MCP_PUBLIC_ORIGIN:-}"
+            GOOSEBERRY_MCP_MODULES: "${GOOSEBERRY_MCP_MODULES:-browser}"
+            GOOSEBERRY_MCP_DISABLED_MODULES: "${GOOSEBERRY_MCP_DISABLED_MODULES:-}"
         volumes:
-            # Browser sessions and screenshots only; no application, project or Goose configuration mounts.
+            # Embedded Browser module sessions and screenshots only; no application,
+            # project or Goose configuration mounts.
             - type: bind
               source: "${GOOSEBERRY_DATA_PATH:?set GOOSEBERRY_DATA_PATH in .gooseberry}/browser"
               target: /var/lib/gooseberry-browser

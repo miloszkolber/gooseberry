@@ -85,6 +85,21 @@ func TestRemoteAndBrowserConfigurationFailsClosed(t *testing.T) {
 			"GOOSEBERRY_BROWSER_AUTH": "true", "GOOSEBERRY_BROWSER_TOKEN": token,
 			"GOOSEBERRY_PUBLIC_ORIGIN": "https://gooseberry.example:443", "GOOSEBERRY_BROWSER_PUBLIC_ORIGIN": "https://sandbox.example:443",
 		}, valid: true},
+		{name: "same controller and MCP token", values: map[string]string{
+			"GOOSEBERRY_AUTH_ENABLED": "true", "GOOSEBERRY_TOKEN": token,
+			"GOOSEBERRY_MCP_URL": "http://127.0.0.1:8787", "GOOSEBERRY_MCP_TOKEN": token,
+		}},
+		{name: "same application and MCP sandbox origin", values: map[string]string{
+			"GOOSEBERRY_MCP_URL": "http://127.0.0.1:8787", "GOOSEBERRY_MCP_TOKEN": token,
+			"GOOSEBERRY_PUBLIC_ORIGIN": "https://same.example", "GOOSEBERRY_MCP_PUBLIC_ORIGIN": "https://same.example:443",
+		}},
+		{name: "unauthenticated MCP sandbox origin", values: map[string]string{
+			"GOOSEBERRY_MCP_URL": "http://127.0.0.1:8787", "GOOSEBERRY_MCP_PUBLIC_ORIGIN": "https://sandbox.example",
+		}},
+		{name: "invalid MCP sandbox origin", values: map[string]string{
+			"GOOSEBERRY_MCP_URL": "http://127.0.0.1:8787", "GOOSEBERRY_MCP_TOKEN": token,
+			"GOOSEBERRY_MCP_PUBLIC_ORIGIN": "https://sandbox.example/path",
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config, err := controller.ReadAuthConfig(func(key string) string { return test.values[key] })
@@ -125,8 +140,9 @@ func TestMCPHostCredentialOwnsSharedBrowserOrigin(t *testing.T) {
 
 	remote, err := controller.ReadAuthConfig(func(key string) string {
 		return map[string]string{
-			"GOOSEBERRY_MCP_URL":   "https://mcp.example:443",
-			"GOOSEBERRY_MCP_TOKEN": mcpToken,
+			"GOOSEBERRY_MCP_URL":           "https://mcp.example:443",
+			"GOOSEBERRY_MCP_TOKEN":         mcpToken,
+			"GOOSEBERRY_MCP_PUBLIC_ORIGIN": "https://sandbox.example:443",
 		}[key]
 	})
 	if err != nil {
@@ -134,6 +150,9 @@ func TestMCPHostCredentialOwnsSharedBrowserOrigin(t *testing.T) {
 	}
 	if remote.BrowserURL != "https://mcp.example" {
 		t.Fatalf("MCP origin was not reused for Browser HTTP: %q", remote.BrowserURL)
+	}
+	if remote.BrowserPublicOrigin != "https://sandbox.example" {
+		t.Fatalf("MCP public origin was not reused for Browser views: %q", remote.BrowserPublicOrigin)
 	}
 	authenticated, token = remote.BrowserServiceAuth()
 	if !authenticated || token != mcpToken {

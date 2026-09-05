@@ -55,11 +55,12 @@ Custom agents, recipes and extension settings are Goose state. Gooseberry projec
 | Endpoint | Purpose |
 | --- | --- |
 | Application `/mcp/objective` | Session-scoped goals, tasks and questions. |
-| Browser `/mcp` | Authenticated browser automation and guidance for Goose or another trusted service. |
-| Optional MCP host `/v1/mcp/modules` | Authenticated catalog of published MCP modules. |
-| Optional MCP host `/<module-name>` | Namespaced MCP endpoint for one published module, currently `/browser`. |
+| MCP host `/browser` | Authenticated Browser automation and guidance for Goose or another trusted service. |
+| MCP host `/mcp` | Legacy Browser MCP compatibility route. |
+| MCP host `/v1/mcp/modules` | Authenticated catalog of published MCP modules. |
+| MCP host `/<module-name>` | Namespaced MCP endpoint for one published module, currently `/browser`. |
 
-The browser also exposes authenticated HTTP commands and artifacts. The optional MCP host composes that Browser service and keeps its HTTP and `/mcp` compatibility routes while publishing `/browser` as the canonical module endpoint. The controller discovers the host catalog through one configured origin and uses Goose's administration methods to add or toggle each module as an independent global extension; the Web UI does not receive raw MCP credentials or arbitrary endpoint configuration. The Web UI uses controller-owned random browser panels over typed WebSocket methods, so the browser/MCP token remains server-side. Panels expose HTTP(S) navigation, viewport, snapshot, screenshot, snapshot-reference click and text fill only. Setup is covered in [deployment](deployment.md#modular-mcp-host-optional).
+The browser also exposes authenticated HTTP commands and artifacts. The MCP host embeds that Browser service and keeps its HTTP and `/mcp` compatibility routes while publishing `/browser` as the canonical module endpoint. The controller discovers the host catalog through one configured origin and uses Goose's administration methods to add or toggle each module as an independent global extension; the Web UI does not receive raw MCP credentials or arbitrary endpoint configuration. The Web UI uses controller-owned random browser panels over typed WebSocket methods, so the MCP token remains server-side. Panels expose HTTP(S) navigation, viewport, snapshot, screenshot, snapshot-reference click and text fill only. Setup is covered in [deployment](deployment.md#mcp-host-and-browser-module).
 
 Projects, file and Git views, objectives and queues are Gooseberry-owned. Import/export/share and broader source administration remain out of scope until upstream offers stable operations; see the [roadmap](roadmap.md).
 

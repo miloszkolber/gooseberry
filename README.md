@@ -12,9 +12,9 @@ Its frontend uses Svelte 5 with Mewa UI foundations. Bun compiles it directly wi
 - Goals, tasks, permission prompts, plans, modes and custom agent mentions.
 - Provider, model, extension, recipe, schedule and tool controls supplied by Goose.
 - Browser automation over MCP, a bounded interactive browser panel and isolated interactive App views.
-- An optional modular MCP host that publishes Browser and future services from one authenticated origin.
+- A modular MCP host that publishes the embedded Browser module and future services from one authenticated origin.
 
-Goose runs on the host. The default deployment uses application and Browser containers; an optional MCP host replaces the Browser container and embeds its first module. Project root directories are mounted only into the application; the Browser module has separate state and no project or Goose configuration mounts.
+Goose runs on the host. The default deployment uses the application and the `gooseberry-mcp` container. That host embeds the Browser module, publishes its catalog and keeps Browser compatibility routes. Project root directories are mounted only into the application; the Browser module has separate state and no project or Goose configuration mounts.
 
 ## Run
 
@@ -26,7 +26,7 @@ cd gooseberry
 cp .gooseberry.example .gooseberry
 ```
 
-Configure Goose, secrets, state directories and project mounts using the [deployment guide](docs/deployment.md), then start both services:
+Configure Goose, secrets, state directories and project mounts using the [deployment guide](docs/deployment.md), then start both containers:
 
 ```bash
 docker compose --env-file .gooseberry up -d --build
