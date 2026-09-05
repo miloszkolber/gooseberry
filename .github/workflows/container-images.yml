@@ -12,8 +12,8 @@ on:
       - ".dockerignore"
       - "LICENSE"
       - "NOTICE.md"
-      - ".gooseberry.example"
-      - "gooseberry/**"
+      - ".pixie.example"
+      - "pixie/**"
   push:
     branches: [main]
     tags: ["v*"]
@@ -23,8 +23,8 @@ on:
       - ".dockerignore"
       - "LICENSE"
       - "NOTICE.md"
-      - ".gooseberry.example"
-      - "gooseberry/**"
+      - ".pixie.example"
+      - "pixie/**"
 
 concurrency:
   group: container-images-${{ github.workflow }}-${{ github.ref }}
@@ -54,10 +54,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: gooseberry
-            image: gooseberry
+          - target: pixie
+            image: pixie
           - target: mcp
-            image: gooseberry-mcp
+            image: pixie-mcp
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -107,7 +107,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: ./gooseberry/Dockerfile
+          file: ./pixie/Dockerfile
           target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
@@ -118,7 +118,7 @@ jobs:
             REVISION=${{ steps.source.outputs.revision }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          no-cache-filters: ${{ github.event_name == 'schedule' && 'git-runtime-trim,browser-packages,gooseberry' || '' }}
+          no-cache-filters: ${{ github.event_name == 'schedule' && 'git-runtime-trim,browser-packages,pixie' || '' }}
 
       - name: Record immutable image
         if: github.event_name != 'pull_request'
@@ -166,10 +166,10 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REVISION: ${{ github.sha }}
         run: |
-          gh run download "$GITHUB_RUN_ID" --name deployment-gooseberry --name deployment-gooseberry-mcp --dir image-identities
+          gh run download "$GITHUB_RUN_ID" --name deployment-pixie --name deployment-pixie-mcp --dir image-identities
           jq -s --arg revision "$REVISION" --arg owner "$OWNER" '
             if length != 2 or any(.[]; .revision != $revision or (.digest | test("^sha256:[a-f0-9]{64}$") | not))
-              or ([.[].image] | sort) != (["ghcr.io/" + $owner + "/gooseberry", "ghcr.io/" + $owner + "/gooseberry-mcp"] | sort)
+              or ([.[].image] | sort) != (["ghcr.io/" + $owner + "/pixie", "ghcr.io/" + $owner + "/pixie-mcp"] | sort)
             then error("Images do not form one deployment revision")
             else {schemaVersion: 1, revision: $revision, images: map({image, digest, reference: (.image + "@" + .digest)})} end
           ' image-identities/*/image.json > deployment.json

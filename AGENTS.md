@@ -1,14 +1,14 @@
-# Gooseberry
+# Pixie
 
-Gooseberry is a focused Web UI for Goose.
+Pixie is a focused Web UI for Pi.
 
 Read these files before changing the product:
 
 1. `README.md` defines the product surface.
 2. `docs/architecture.md` defines process, source and state boundaries.
-3. `docs/acp.md` defines the Goose and ACP contract.
+3. `docs/pi.md` defines the native Pi SDK and host protocol.
 4. `docs/security.md` defines authority and credential boundaries.
-5. `docs/deployment.md` defines host Goose and container deployment.
+5. `docs/deployment.md` defines host Pi and container deployment.
 6. `docs/development.md` defines verification and performance checks.
 7. `docs/roadmap.md` contains candidate future improvements.
 
@@ -20,29 +20,32 @@ Keep documentation short and present-tense: describe the product and direct setu
 
 Preserve the focused current baseline. Keep features, dependencies, tests, protocol methods, state, and documents aligned with it. Prefer a focused vertical slice over a generic workbench. Record accepted future improvements in `docs/roadmap.md`.
 
-## Goose boundary
+## Pi boundary
 
-- Use an official upstream Goose release installed and managed by the user. `gooseberry/tests/goose/upstream.json` records the supported release and official artifact identities.
-- Do not fork or rebuild Goose, package an installer or systemd unit, or add an automatic updater. Optional service configuration belongs in documentation, not a setup script.
-- Keep Goose authoritative for sessions, history, providers, models, tools, compaction, permissions, recipes, and scheduler state.
-- Do not build competing provider, model, credential, session, usage, or tool registries.
-- Use the Goose ACP service boundary and small Gooseberry adapters rather than forking Goose.
+- Use the unmodified pinned Pi SDK through the host service. Keep the application and MCP host in separate containers.
+- Keep Pi authoritative for transcripts, providers, credentials, models, core tools and native settings.
+- Run the unmodified SDK from source with Bun. Do not add standalone Pi binary packaging.
+- Optional extensions add capabilities. Do not introduce permission management, tool interception, replacement system prompts or restrictive execution modes.
+- Detect supported capability versions and complete operation sets before exposing optional features.
+- Retain Pixie's project ownership, durable queues, schedules, goals/tasks, questions, Browser isolation and transcript presentation.
+
+- Pixie owns schedules and their execution ledger. Keep recipes and the Automation settings screen out of the product.
 
 ## Product boundary
 
 - A project has exactly one admitted directory root. It may contain zero, one, or several Git repositories.
-- Group persistent Goose sessions by project, not by one required Git repository or worktree.
-- Keep Git observational in the UI: discovery, branch/HEAD, status, changed files, and readable diffs. Agents change Git through Goose tools.
+- Group persistent Pi sessions by project, not by one required Git repository or worktree.
+- Keep Git observational in the UI: discovery, branch/HEAD, status, changed files, and readable diffs. Agents change Git through Pi tools.
 - Keep a bounded read-only file tree and Shiki source preview. Do not add editing, Monaco, LSP, debugger, or collaborative IDE behavior.
-- Keep goals/tasks, custom agents and summon, multi-image turns, bounded browser QA, web access, optional Signet, and Goose provider configuration.
+- Keep goals/tasks, defined agents and delegation, multi-image turns, bounded browser QA, web access, optional Signet, and Pi provider configuration.
 - Keep the Web UI focused. Do not add a TUI or Web UI terminal.
 
 ## Runtime boundaries
 
-- Goose runs on the host as the user's authenticated loopback service. The default deployment uses two host-networked containers: the application and the `gooseberry-mcp` host, which embeds the Browser module from the same Go module. The standalone `gooseberry-browser` executable and image are retired.
+- Pi runs on the host as the user's authenticated loopback service. The default deployment uses two host-networked containers: the application and the `pixie-mcp` host, which embeds the Browser module from the same Go module.
 - Objective updates use session-scoped MCP on the application listener. Browser tools and essential instructions use the MCP host's `/browser` module; it publishes a catalog at `/v1/mcp/modules` and keeps Browser HTTP/artifact compatibility routes available. Both MCP surfaces can serve trusted external host-network services.
-- Gooseberry configures discovered MCP modules through Goose administration. The Browser module keeps the `gooseberry-browser` extension identity for existing Goose configuration compatibility, but new deployments use the MCP host endpoint. Do not install host skills or put secrets in model-visible instructions.
-- The browser has its own state mount, without project, application-state or Goose-configuration mounts. Its sessions still share one UID and filesystem; host networking is not network isolation.
+- Pixie configures discovered MCP modules through Pi administration. The Browser connection is named `pixie-browser`. The universal Pi MCP client extension must not assume this service or any deployment address. Do not install host skills or put secrets in model-visible instructions.
+- The browser has its own state mount, without project, application-state or Pi-configuration mounts. Its sessions still share one UID and filesystem; host networking is not network isolation.
 
 ## Engineering approach
 
@@ -61,10 +64,10 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 ## Verification
 
 - Run the narrowest relevant check during development.
-- Keep all tests under `gooseberry/tests/`.
+- Keep all tests under `pixie/tests/`.
 - Add small regression tests for observable contracts and realistic failure modes at persistence, concurrency, authorization, protocol, filesystem, performance and fragile UI boundaries.
 - Do not test copied types, constants, trivial forwarding or implementation details.
-- Use broader integration/image checks for changes crossing Goose, browser, or persistence boundaries.
+- Use broader integration/image checks for changes crossing Pi, browser, or persistence boundaries.
 - Before committing, review stale imports, protocol fields, scripts, documentation, generated files, and dependency-lock entries.
 
 ## Git history
@@ -75,4 +78,4 @@ Preserve the focused current baseline. Keep features, dependencies, tests, proto
 
 ## Current stack
 
-The controller and embedded Browser module share one Go module, with separate application and MCP-host executables and images. The frontend uses TypeScript and Svelte 5, a small framework-neutral external store, Mewa UI foundations pinned from GitHub Releases, and Bun for compilation, development, and tests. The controller uses the pinned Coder ACP SDK and WebSocket library. Treat these as current implementation choices, not permanent product scope.
+The controller and embedded Browser module share one Go module, with separate application and MCP-host executables and images. The frontend uses TypeScript and Svelte 5, a small framework-neutral external store, Mewa UI foundations pinned from GitHub Releases, and Bun for compilation, development, and tests. The controller uses a small native Pi event adapter and the pinned Coder WebSocket library. The host service uses the pinned Pi SDK and Bun. Treat these as current implementation choices, not permanent product scope.

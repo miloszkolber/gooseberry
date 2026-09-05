@@ -1,74 +1,35 @@
 # Deployment
 
-Gooseberry supports Linux x86-64 and arm64. It needs Docker Engine with Compose and the [supported official Goose release](acp.md#supported-goose-release).
+The primary setup is Linux x86-64 or arm64 with Docker Compose and Bun on the host. Pi runs as the host user through the source SDK service. No custom Pi executable is built.
 
-## Goose
+## Host service
 
-Install the GNU archive recorded in [`upstream.json`](../gooseberry/tests/goose/upstream.json), verify its SHA-256 and run `goose --version`. Keep Goose configuration and credentials on the host.
-
-Disable Goose telemetry in `~/.config/goose/config.yaml`:
-
-```yaml
-telemetry_enabled: false
+```sh
+git clone https://github.com/miloszkolber/pixie.git
+cd pixie/pixie
+bun install --frozen-lockfile
 ```
 
-Create `~/.config/goose/service.env` with mode `0600`. Generate separate values with `openssl rand -hex 32`:
+Generate separate random values for `PIXIE_PI_SECRET_KEY` and `PIXIE_MCP_TOKEN`. Store them in a private environment file with mode `0600`, load it into the host service environment, and use the same values in Compose's `.pixie` file. The optional Browser connection expands its token from the host environment.
 
-```dotenv
-GOOSE_SERVER__SECRET_KEY=replace-with-a-random-goose-secret
-GOOSEBERRY_MCP_TOKEN=replace-with-a-random-mcp-token
+```sh
+bun pi-host/src/main.ts --extensions mcp,agents,plans,web
 ```
 
-The MCP token is used by the Gooseberry application, the MCP host and any Goose extension registered for the embedded Browser module. Keep it in this private environment and in the private `.gooseberry` file; do not put it in prompts or checked-in configuration.
-
-Leave tracing credentials unset unless you use them. Start Goose on loopback; include the scheduler flag when you want schedule controls:
-
-```bash
-(
-  set -a
-  . "$HOME/.config/goose/service.env"
-  set +a
-  exec goose serve --host 127.0.0.1 --port 3284 --enable-scheduler
-)
-```
-
-For automatic startup, use a user service manager to run the same command with this environment file. Keep tokens out of the service definition and preserve the `0600` mode.
+Omit `--extensions` for baseline Pi. `--agent-dir /absolute/path` selects Pi state; the default is `~/.pi/agent`. The service listens at `127.0.0.1:3284`; `--host` and `--port` change it. A service manager can run the same command and environment file. Provider setup is available in Pixie or Pi's native configuration.
 
 ## Containers
 
-```bash
-git clone https://github.com/miloszkolber/gooseberry.git
-cd gooseberry
-cp .gooseberry.example .gooseberry
-chmod 600 .gooseberry
+From the repository root:
+
+```sh
+cp .pixie.example .pixie
+chmod 600 .pixie
 ```
 
-Set these values:
+Set `PIXIE_DATA_PATH`, `PIXIE_PI_SECRET_KEY` and `PIXIE_MCP_TOKEN`. The [example](../.pixie.example) lists optional addresses, authentication and resource limits. Create `app`, `browser/artifacts` and `browser/state` inside the data directory. They must be writable by container UID/GID `1000:1000`.
 
-| Variable | Value |
-| --- | --- |
-| `GOOSEBERRY_DATA_PATH` | Absolute path to dedicated Gooseberry state. |
-| `GOOSEBERRY_GOOSE_SECRET_KEY` | The same value as `GOOSE_SERVER__SECRET_KEY`. |
-| `GOOSEBERRY_MCP_TOKEN` | Strong token shared by the MCP host, application and private Goose extension environment. |
-| `GOOSEBERRY_AUTH_ENABLED`, `GOOSEBERRY_TOKEN` | Optional Web UI login. Authentication is required for remote binding. |
-| `GOOSEBERRY_MCP_URL` | MCP host origin; defaults to `http://127.0.0.1:8787`. |
-| `GOOSEBERRY_IMAGE`, `GOOSEBERRY_MCP_IMAGE` | Optional image references; digest-pinned pairs provide immutable deployments. |
-| `GOOSEBERRY_MCP_HOST`, `GOOSEBERRY_MCP_PORT`, `GOOSEBERRY_MCP_PUBLIC_ORIGIN` | MCP bind and exact public origin; defaults to authenticated loopback on `127.0.0.1:8787`. The public origin must differ from the application origin. Match `GOOSEBERRY_MCP_URL` to any bind-port change. |
-| `GOOSEBERRY_MCP_MODULES`, `GOOSEBERRY_MCP_DISABLED_MODULES` | Optional publication ceiling and environment-level disable list. Unknown or duplicate module IDs fail closed. |
-| `GOOSEBERRY_MEMORY_LIMIT`, `GOOSEBERRY_CPU_LIMIT`, `GOOSEBERRY_PIDS_LIMIT` | Optional application ceilings; defaults are 1 GiB, 2 CPUs and 256 processes. |
-| `GOOSEBERRY_MCP_MEMORY_LIMIT`, `GOOSEBERRY_MCP_CPU_LIMIT`, `GOOSEBERRY_MCP_PIDS_LIMIT` | Optional MCP host ceilings; defaults are 2 GiB, 2 CPUs and 512 processes. |
-
-Compose runs both containers as `1000:1000`. If the state owner uses another UID/GID, change `user` and the matching tmpfs ownership in both services.
-
-```bash
-gooseberry_data=/absolute/path/to/gooseberry-data
-install -d -m 700 "$gooseberry_data/app" "$gooseberry_data/browser" \
-  "$gooseberry_data/browser/artifacts" "$gooseberry_data/browser/state"
-```
-
-The `browser` state directory is retained as the stable storage location for the embedded Browser module. The MCP host receives only this state mount; it receives no project roots, application state or Goose configuration mounts.
-
-Add each project root to the application service in `docker-compose.yaml`. Keep the same absolute path inside the container:
+Add project roots to the `pixie` service's mounts, preserving host absolute paths:
 
 ```yaml
 - type: bind
@@ -79,59 +40,22 @@ Add each project root to the application service in `docker-compose.yaml`. Keep 
     create_host_path: false
 ```
 
-Start the application and MCP host together:
-
-```bash
-docker compose --env-file .gooseberry up -d --build
+```sh
+docker compose --env-file .pixie up -d --build
 ```
 
-To use published images instead, set `GOOSEBERRY_IMAGE` and `GOOSEBERRY_MCP_IMAGE` to a release or `sha-<revision>` tag, run `docker compose --env-file .gooseberry pull`, then start with `--no-build`. Each successful publishing run uploads a `deployment-manifest` artifact containing the application and MCP image digests for the same source revision. Use its two `reference` values as `GOOSEBERRY_IMAGE` and `GOOSEBERRY_MCP_IMAGE` for an immutable pair. Both builds must succeed before promotion starts. Registry tags are updated sequentially, so `latest` does not provide an atomic paired deployment.
+Open <http://127.0.0.1:7312>. Containers use host networking; bridged-container loopback cannot reach host Pi. For remote access configure authentication, HTTPS and exact, distinct application and MCP origins.
 
-## MCP host and Browser module
+## MCP and Signet
 
-The `gooseberry-mcp` image embeds the Browser module. It publishes a versioned catalog at `/v1/mcp/modules`, exposes Browser at `/browser`, and keeps the Browser `/mcp`, HTTP and artifact compatibility routes. Modules use the `[origin]/[module-name]` shape.
+Enable Browser in Settings → Tools with a compatible MCP extension loaded. Pixie discovers its catalog at `http://127.0.0.1:8787/v1/mcp/modules` and registers `pixie-browser` at `/browser`. The universal [Pi MCP extension](../pixie/pi-mcp/README.md) also accepts unrelated stdio, HTTP and SSE servers.
 
-Gooseberry discovers the catalog through the controller. The Tools settings section can add or toggle each discovered module in Goose. A UI disable changes Goose's global extension state only; it does not stop or hide a module published by the host. `GOOSEBERRY_MCP_DISABLED_MODULES` is the stronger environment-level publication control and removes a module from the catalog and route table. A manually configured Goose extension with the same name but a different endpoint or credential is shown as a conflict; remove it before enabling that module from Tools so Goose stores the host credential.
-
-If you need to register the Browser module manually, merge this entry into the existing `extensions` mapping in `~/.config/goose/config.yaml`:
-
-```yaml
-extensions:
-  gooseberry-browser:
-    name: Gooseberry Browser
-    type: streamable_http
-    enabled: true
-    uri: http://127.0.0.1:8787/browser
-    timeout: 130
-    env_keys:
-      - GOOSEBERRY_MCP_TOKEN
-    headers:
-      Authorization: 'Bearer ${GOOSEBERRY_MCP_TOKEN}'
-```
-
-`gooseberry-browser` identifies the Browser module inside Goose; its endpoint is the MCP host's `/browser` route. Restart Goose after environment changes and enable the extension in sessions that need it. `browser_command` performs automation; `browser_guidance` and `gooseberry://browser/guide` describe its use. The MCP and authenticated HTTP interfaces may also be used by trusted host-network services.
-
-Open <http://127.0.0.1:7312>, configure a provider and create a project.
+Optional Signet memory uses a separately running daemon reachable by Pi and Pixie. Configure it in Settings → Signet. New or reattached sessions receive its connection. The default is `http://127.0.0.1:3850/mcp`. Its health check verifies the daemon, not memory retrieval.
 
 ## Operations
 
-| Request | Result |
-| --- | --- |
-| `http://127.0.0.1:7312/livez` | Application process is alive. |
-| `http://127.0.0.1:7312/readyz` | State, UI files, ACP connection and required session capabilities are ready. |
-| `http://127.0.0.1:8787/health` | MCP host is alive without starting Chromium. |
-| `http://127.0.0.1:8787/readyz` | Authenticated readiness of published modules; returns `503` when degraded. |
-| `http://127.0.0.1:8787/v1/mcp/modules` | Authenticated MCP host catalog. |
-| `http://127.0.0.1:8787/v1/mcp/status` | Authenticated MCP host build and module diagnostics. |
+Application `/livez` checks liveness; `/readyz` checks state, UI and Pi connectivity. MCP `/health` checks liveness; authenticated `/readyz` checks published modules without launching Chromium. See [MCP service](mcp.md) for diagnostics.
 
-`docker compose --env-file .gooseberry ps` shows container health. MCP container health means liveness, not successful Chromium operation; use the [authenticated checks and troubleshooting](mcp.md#check-the-service) for readiness and browsing verification. Logs are bounded to three 10 MiB files per service, and both containers have configurable memory, CPU and process ceilings. A Goose outage makes application readiness fail without stopping the Web UI process.
+Schedules run while Pixie is up. Ask a chat with MCP support to create, list, pause, resume, run or stop a schedule. Each scheduled run is a separate chat in that project.
 
-Host networking is required for the loopback Goose and MCP URLs; loopback inside a bridged container points back to that container. For remote use, configure Web UI authentication, HTTPS and separate exact application/MCP origins. An SSH tunnel is the simplest way to keep the service on loopback.
-
-Back up Goose configuration and state, `GOOSEBERRY_DATA_PATH` and the private environment files after active work settles. Restore them from the same backup point. Goose and Gooseberry update independently; preserve the state paths and check [compatibility](acp.md) before changing Goose.
-
-## Optional Signet memory
-
-Run the Signet daemon on a host address reachable by both Goose and the application, then set its address/port and enable it in Settings → Signet. The default endpoint is `http://127.0.0.1:3850/mcp`, as documented by [Signet](https://docs.signetai.sh/mcp/). New or reattached ACP sessions receive this HTTP MCP server when the agent advertises HTTP MCP support. Existing attached chats need a reconnect or a new session to change membership.
-
-The health button checks the daemon only. Verify memory separately by asking a new test chat to store and recall a synthetic fact through Signet tools. Disabling the setting stops injection into subsequent attachments; it does not delete Signet data or change a separately configured global Goose extension. Signet session-start/end hooks are configured separately in Signet; this setting supplies on-demand memory tools.
+Back up Pi state, Pixie data and private environment files after active work settles. Use matching application and MCP image revisions. A publishing workflow produces digest references; set `PIXIE_IMAGE` and `PIXIE_MCP_IMAGE` to those references and use Compose `pull` followed by `up -d --no-build` for a prebuilt deployment.

@@ -1,41 +1,23 @@
 # Security
 
-Gooseberry is for one trusted user. Host Goose tools run with that user's permissions, including file and Git mutations.
+Pixie is for one trusted user. Pi tools and configured MCP subprocesses run with the host user's permissions. Extensions add capabilities; Pixie does not manage tool permissions or execution policies.
 
-## Isolation
+The application mounts admitted project directories read-only. Every file read rechecks resolved paths and size limits. Pi performs host-side edits. Browser receives only its own state and artifacts. Containers run non-root with read-only roots, dropped capabilities and bounded resources.
 
-The application mounts its state and admitted project root directories. The browser mounts only its state and artifacts. Goose configuration and provider credentials stay on the host.
+Chromium runs with `--no-sandbox`. Browser sessions share a UID and filesystem, and host networking permits access to local services. Treat page content as untrusted.
 
-Both containers run non-root with read-only filesystems, all capabilities dropped, new privileges disabled and bounded writable tmpfs. The application image has no shell or package manager. Browser subprocess environments are filtered; browser sessions share one UID and filesystem. Session IDs are not security identities.
-
-Chromium uses `--no-sandbox`: its internal sandbox is disabled. Container/mount isolation does not replace it. Host networking permits access to local services; private-network and cloud-metadata egress restrictions are the operator's responsibility. Treat page content as untrusted.
-
-Interactive App HTML runs inside a nested iframe served from the browser's separate origin. The browser service applies the resource's bounded CSP and permissions to a short-lived view ticket. Gooseberry sends no browser token, Goose secret or application credential into the sandbox; all tool and resource requests return to the application for same-session authorization.
-
-## Credentials and access
-
-| Connection | Credential |
+| Boundary | Credential |
 | --- | --- |
-| Goose ACP | Host `GOOSE_SERVER__SECRET_KEY`, matched by application `GOOSEBERRY_GOOSE_SECRET_KEY`. |
-| Web UI | Optional `GOOSEBERRY_AUTH_ENABLED=true` and `GOOSEBERRY_TOKEN`; loopback authentication defaults off. |
-| Browser MCP/HTTP/artifacts | `GOOSEBERRY_MCP_TOKEN` authenticates the MCP host, its embedded Browser module and the application's artifact proxy. |
-| Goose extension configuration | The same `GOOSEBERRY_MCP_TOKEN` is expanded by Goose from its private service environment. |
-| Objective/question MCP | Session-specific bearer token. |
+| Host SDK service | `PIXIE_PI_SECRET_KEY` shared with the application |
+| Web UI | Optional `PIXIE_AUTH_ENABLED=true` and `PIXIE_TOKEN` |
+| Browser MCP, HTTP and artifacts | `PIXIE_MCP_TOKEN` |
+| Goals, questions and schedules MCP | Session-specific bearer token |
+| Other MCP servers | Their own headers or subprocess environment |
 
-Use distinct tokens for Goose ACP, Web UI and the MCP host. Protect environment/configuration files with mode `0600`; keep tokens out of prompts and agent instructions. The [MCP registration](deployment.md#mcp-host-and-browser-module) and host setup read their headers from Goose's private environment or secret store.
+Use distinct tokens and private environment/configuration files. Provider credentials pass to Pi and are excluded from replay and snapshots. MCP connection summaries omit commands, environment values and secret headers.
 
-Remote controller access requires authentication unless `GOOSEBERRY_ALLOW_UNAUTHENTICATED_REMOTE=true` explicitly overrides it. Use HTTPS, `GOOSEBERRY_PUBLIC_ORIGIN` and a WebSocket-capable proxy. Origin checks use the exact public origin; cookies last 90 days.
+Remote Web UI access requires authentication unless explicitly overridden. Use HTTPS and an exact `PIXIE_PUBLIC_ORIGIN`. Remote MCP binding requires authentication and its own `PIXIE_MCP_PUBLIC_ORIGIN`.
 
-Remote MCP binding always requires authentication. Its MCP Host/Origin checks and Interactive App URLs use `GOOSEBERRY_MCP_PUBLIC_ORIGIN` for a matching proxy origin, which must differ from the application origin. Unauthenticated loopback is available for development only when explicitly configured.
+Interactive App HTML runs in a nested iframe on the Browser origin with bounded CSP and browser permissions. It receives no service credentials. Tool and resource requests return to Pixie for same-session checks. These iframe policies are separate from Pi tool behavior.
 
-The MCP host is an authenticated publication boundary. Its environment decides which modules exist in the catalog and route table; a Gooseberry UI toggle only changes Goose's global extension enablement and cannot publish a disabled module or stop a running service. In-process modules share the host's Browser trust boundary, so only co-host modules with the same operator and storage assumptions. A future module that needs project mounts or a different credential domain belongs behind a separately authenticated worker/sidecar instead.
-
-## Data and operations
-
-Provider setup forwards credentials to Goose and excludes them from replay, logs and snapshots. Settings responses omit raw extension commands, environment values, schemas and diagnostics.
-
-Every file read checks the admitted project root and resolved paths, including cached reads. Limits apply during I/O. Image delivery uses same-origin/no-store protections. Git runs with restricted configuration, hooks and filesystem monitors disabled.
-
-Session operations verify project ownership. Permission/question replies are single-use. Agent edits recheck opaque source IDs, writability and the project root inside mutation locks; recipe saves retain Goose's security scan.
-
-See [deployment](deployment.md) for private setup and backups, and [development](development.md) for boundary tests.
+Session, agent-edit and schedule operations verify project ownership. Question replies are single-use. Schedule roots are checked again before dispatch; ambiguous restart claims pause rather than replaying work.
