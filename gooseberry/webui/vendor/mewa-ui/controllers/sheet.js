@@ -1,7 +1,9 @@
 // -- Sheet ----------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('sheet');
 
 function openSheet(sheet, trigger) {
   if (!sheet || !sheet.isConnected || typeof sheet.showModal !== 'function') return;
@@ -20,38 +22,45 @@ function openSheet(sheet, trigger) {
 
 function initSheetTrigger(trigger) {
   trigger.dataset.init = '';
+  if (lifecycle.has(trigger)) return;
+  trigger.dataset.mewaSheetInit = '';
   const sheetId = trigger.dataset.sheetTrigger;
   const ownerDocument = trigger.ownerDocument;
   if (!ownerDocument.getElementById(sheetId)) {
-    delete trigger.dataset.init;
+    delete trigger.dataset.mewaSheetInit;
     return;
   }
-  trigger.addEventListener('click', () => {
+  lifecycle.listen(trigger, trigger, 'click', () => {
     openSheet(ownerDocument.getElementById(sheetId), trigger);
   });
 }
 
 export function enhance(root) {
-  const sheets = queryAll(root, 'dialog.sheet:not([data-init])');
-  queryAll(root, '[data-sheet-trigger]:not([data-init])').forEach(initSheetTrigger);
+  const sheets = queryAll(root, 'dialog.sheet');
+  queryAll(root, '[data-sheet-trigger]').forEach(initSheetTrigger);
 
   sheets.forEach((sheet) => {
     sheet.dataset.init = '';
-    sheet.addEventListener('click', (e) => {
+    if (lifecycle.has(sheet)) return;
+    sheet.dataset.mewaSheetInit = '';
+    lifecycle.listen(sheet, sheet, 'click', (e) => {
       if (e.target === sheet) sheet.close();
     });
-    sheet.querySelectorAll('[data-sheet-close]').forEach((btn) => {
-      btn.addEventListener('click', () => { sheet.close(); });
+    lifecycle.listen(sheet, sheet, 'click', (event) => {
+      if (event.target.closest('[data-sheet-close]')) sheet.close();
     });
-    sheet.addEventListener('close', () => {
+    lifecycle.listen(sheet, sheet, 'close', () => {
       if (sheet._trigger?.isConnected) sheet._trigger.focus();
     });
   });
 
   if (sheets.length) {
-    queryAll(sheets[0].ownerDocument, '[data-sheet-trigger]:not([data-init])')
-      .forEach(initSheetTrigger);
+    queryAll(sheets[0].ownerDocument, '[data-sheet-trigger]').forEach(initSheetTrigger);
   }
 }
 
-export const behavior = { name: 'sheet', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'sheet', enhance, destroy };

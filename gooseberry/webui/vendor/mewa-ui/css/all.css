@@ -399,6 +399,7 @@
   /* Border roles */
   --border-primary: var(--color-neutral-200);
   --border-secondary: var(--color-neutral-300);
+  --border-control: var(--color-neutral-600);
   --border-muted: var(--color-alpha-dark-200);
   --border-subtle: var(--color-alpha-dark-100);
   --border-hover: var(--color-neutral-300);
@@ -462,6 +463,7 @@
   /* Border roles */
   --border-primary: var(--color-neutral-800);
   --border-secondary: var(--color-neutral-700);
+  --border-control: var(--color-neutral-400);
   --border-muted: var(--color-alpha-light-800);
   --border-subtle: var(--color-alpha-light-900);
   --border-hover: var(--color-neutral-700);
@@ -1865,7 +1867,7 @@
     appearance: none;
     width: 1.125rem;
     height: 1.125rem;
-    border: var(--border-width-025) solid var(--border-primary);
+    border: var(--border-width-025) solid var(--border-control);
 
     background: var(--background);
     cursor: pointer;
@@ -2165,7 +2167,7 @@
     appearance: none;
     width: var(--size-400);
     height: var(--size-400);
-    border: var(--border-width-025) solid var(--border-primary);
+    border: var(--border-width-025) solid var(--border-control);
     border-radius: 50%;
     background: var(--background);
     cursor: pointer;
@@ -2637,6 +2639,9 @@
     }
 
     /* -- Sizes ----------------------------------------------- */
+  }
+  @media (forced-colors: active) {
+    .select { appearance: auto; background-image: none; }
   }
 }
 
@@ -3452,6 +3457,15 @@
       pointer-events: none;
       opacity: var(--opacity-05);
     }
+  }
+
+  .combobox-status {
+    position: absolute;
+    width: var(--size-025);
+    height: var(--size-025);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .combobox-empty {
@@ -5786,7 +5800,7 @@
     font-size: var(--font-size-300);
     line-height: var(--font-height-regular);
 
-    pointer-events: none;
+    pointer-events: auto;
     max-width: 16rem;
     width: max-content;
 
@@ -5975,7 +5989,7 @@
   .dialog-title   { font-size: var(--font-size-400); font-weight: var(--font-weight-550); margin: 0 0 var(--space-200); letter-spacing: -0.01em; }
   .dialog-description { font-size: var(--font-size-350); color: var(--text-muted); margin: 0; line-height: var(--font-height-regular); }
   .dialog-body    { margin-top: var(--space-400); }
-  .dialog-footer  { display: flex; justify-content: flex-end; gap: var(--space-200); margin-top: var(--space-600); }
+  .dialog-footer  { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-200); margin-top: var(--space-600); }
 
   /* -- Accessibility ---------------------------------------- */
   @media (prefers-contrast: more) {
@@ -5992,7 +6006,7 @@
       backdrop-filter: none;
     }
 
-    &[open]::backdrop {
+    dialog.dialog[open]::backdrop {
       backdrop-filter: none;
     }
   }

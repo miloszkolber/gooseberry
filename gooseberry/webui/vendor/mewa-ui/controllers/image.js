@@ -1,48 +1,57 @@
 /* -- Image component ----------------------------------------- */
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('image');
 
 const initializedDocuments = new WeakSet();
 
 export function enhance(root) {
-const ownerDocument = root?.nodeType === 9
-  ? root
-  : root?.ownerDocument || (typeof document === 'undefined' ? null : document);
-if (!ownerDocument) return;
-installPreviewListener(ownerDocument);
-/* -- Fallback: mark images that fail to load ----------------- */
-queryAll(root, '.image:not([data-init]) > img').forEach((img) => {
-  img.closest('.image').dataset.init = '';
-  const figure = img.closest('.image');
+  const ownerDocument =
+    root?.nodeType === 9
+      ? root
+      : root?.ownerDocument || (typeof document === 'undefined' ? null : document);
+  if (!ownerDocument) return;
+  installPreviewListener(ownerDocument);
+  /* -- Fallback: mark images that fail to load ----------------- */
+  queryAll(root, '.image > img').forEach((img) => {
+    img.closest('.image').dataset.init = '';
+    const figure = img.closest('.image');
+    if (lifecycle.has(figure)) return;
+    figure.dataset.mewaImageInit = '';
+    lifecycle.add(figure, () => delete img.dataset.error);
 
-  if (img.complete && img.naturalWidth === 0) {
-    img.dataset.error = '';
-  }
+    if (img.complete && img.naturalWidth === 0) {
+      img.dataset.error = '';
+    }
 
-  img.addEventListener('error', () => {
-    img.dataset.error = '';
+    lifecycle.listen(figure, img, 'error', () => {
+      img.dataset.error = '';
+    });
+
+    lifecycle.listen(figure, img, 'load', () => {
+      delete img.dataset.error;
+    });
+
+    if (!figure.hasAttribute('data-preview')) return;
+
+    figure.setAttribute('tabindex', '0');
+    if (!figure.hasAttribute('role')) figure.setAttribute('role', 'button');
+    if (!figure.hasAttribute('aria-label') && !figure.hasAttribute('aria-labelledby')) {
+      figure.setAttribute(
+        'aria-label',
+        img.alt ? `Open image preview: ${img.alt}` : 'Open image preview'
+      );
+    }
+
+    lifecycle.listen(figure, figure, 'keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (img.dataset.error !== undefined) return;
+      event.preventDefault();
+      openLightbox(img.ownerDocument, img.src, img.alt);
+    });
   });
-
-  img.addEventListener('load', () => {
-    delete img.dataset.error;
-  });
-
-  if (!figure.hasAttribute('data-preview')) return;
-
-  figure.setAttribute('tabindex', '0');
-  if (!figure.hasAttribute('role')) figure.setAttribute('role', 'button');
-  if (!figure.hasAttribute('aria-label') && !figure.hasAttribute('aria-labelledby')) {
-    figure.setAttribute('aria-label', img.alt ? `Open image preview: ${img.alt}` : 'Open image preview');
-  }
-
-  figure.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    if (img.dataset.error !== undefined) return;
-    event.preventDefault();
-    openLightbox(img.ownerDocument, img.src, img.alt);
-  });
-});
 }
 
 /* -- Lightbox ------------------------------------------------ */
@@ -90,22 +99,27 @@ function getLightbox(ownerDocument) {
 
   lightboxImg = lightbox.querySelector('.image-lightbox-content > img');
 
-  lightbox.querySelector('.image-lightbox-toolbar').addEventListener('click', (e) => {
+  lifecycle.listen(lightbox, lightbox.querySelector('.image-lightbox-toolbar'), 'click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
 
     const action = btn.dataset.action;
-    if (action === 'zoom-in')      zoom = Math.min(zoom + 0.25, 5);
+    if (action === 'zoom-in') zoom = Math.min(zoom + 0.25, 5);
     else if (action === 'zoom-out') zoom = Math.max(zoom - 0.25, 0.25);
-    else if (action === 'rotate-left')  rotation -= 90;
+    else if (action === 'rotate-left') rotation -= 90;
     else if (action === 'rotate-right') rotation += 90;
-    else if (action === 'reset') { zoom = 1; rotation = 0; }
-    else if (action === 'close') { lightbox.close(); return; }
+    else if (action === 'reset') {
+      zoom = 1;
+      rotation = 0;
+    } else if (action === 'close') {
+      lightbox.close();
+      return;
+    }
 
     applyTransform();
   });
 
-  lightbox.addEventListener('click', (e) => {
+  lifecycle.listen(lightbox, lightbox, 'click', (e) => {
     if (e.target === lightbox) lightbox.close();
   });
 
@@ -133,9 +147,10 @@ function openLightbox(ownerDocument, src, alt) {
 function installPreviewListener(ownerDocument) {
   if (initializedDocuments.has(ownerDocument)) return;
   initializedDocuments.add(ownerDocument);
+  lifecycle.add(ownerDocument, () => initializedDocuments.delete(ownerDocument));
 
-  ownerDocument.addEventListener('click', (e) => {
-    const figure = e.target.closest('.image[data-preview]');
+  lifecycle.listen(ownerDocument, ownerDocument, 'click', (e) => {
+    const figure = e.target.closest('.image[data-preview][data-mewa-image-init]');
     if (!figure) return;
 
     const img = figure.querySelector('img');
@@ -145,4 +160,13 @@ function installPreviewListener(ownerDocument) {
   });
 }
 
-export const behavior = { name: 'image', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+  if (root?.nodeType === 9 && lightbox?.ownerDocument === root) {
+    lightbox.remove();
+    lightbox = null;
+    lightboxImg = null;
+  }
+}
+
+export const behavior = { name: 'image', enhance, destroy };

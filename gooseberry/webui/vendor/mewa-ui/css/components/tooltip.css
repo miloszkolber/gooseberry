@@ -21,7 +21,7 @@
     font-size: var(--font-size-300);
     line-height: var(--font-height-regular);
 
-    pointer-events: none;
+    pointer-events: auto;
     max-width: 16rem;
     width: max-content;
 

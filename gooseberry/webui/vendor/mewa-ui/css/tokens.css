@@ -36,6 +36,7 @@
   /* Border roles */
   --border-primary: var(--color-neutral-200);
   --border-secondary: var(--color-neutral-300);
+  --border-control: var(--color-neutral-600);
   --border-muted: var(--color-alpha-dark-200);
   --border-subtle: var(--color-alpha-dark-100);
   --border-hover: var(--color-neutral-300);
@@ -99,6 +100,7 @@
   /* Border roles */
   --border-primary: var(--color-neutral-800);
   --border-secondary: var(--color-neutral-700);
+  --border-control: var(--color-neutral-400);
   --border-muted: var(--color-alpha-light-800);
   --border-subtle: var(--color-alpha-light-900);
   --border-hover: var(--color-neutral-700);

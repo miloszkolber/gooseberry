@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "mewa-icons",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "licenses": {
     "mewaUi": "LICENSE",
     "lucide": "licenses/LUCIDE-LICENSE.txt"

@@ -1,7 +1,9 @@
 // -- Context Menu --------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('context-menu');
 
 const TRIGGER_SELECTOR = '[data-context-menu-trigger]';
 const ITEM_SELECTOR = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
@@ -76,7 +78,7 @@ function clampPosition(menu, inline, block) {
   menu.style.top = `${top}px`;
 }
 
-function openContextMenu(trigger, inline, block, openedWithKeyboard) {
+function openContextMenu(trigger, inline, block) {
   const menu = resolveMenu(trigger);
   if (!menu || typeof menu.showPopover !== 'function') return false;
 
@@ -92,7 +94,7 @@ function openContextMenu(trigger, inline, block, openedWithKeyboard) {
     return false;
   }
 
-  activeContextMenu = { trigger, menu, openedWithKeyboard };
+  activeContextMenu = { trigger, menu };
   clampPosition(menu, inline, block);
   const first = getItems(menu)[0];
   if (first) highlight(menu, first);
@@ -113,22 +115,26 @@ function initContextMenuTriggers(root) {
 function installGlobalListeners(documentRoot) {
   if (documentRoot.__mewaContextMenuInit) return;
   documentRoot.__mewaContextMenuInit = true;
+  lifecycle.add(documentRoot, () => delete documentRoot.__mewaContextMenuInit);
 
-  documentRoot.addEventListener('contextmenu', (event) => {
+  lifecycle.listen(documentRoot, documentRoot, 'contextmenu', (event) => {
     const trigger = event.target?.closest?.(TRIGGER_SELECTOR);
+    if (!trigger?.hasAttribute('data-context-menu-init')) return;
     const menu = resolveMenu(trigger);
     if (!trigger || !menu || typeof menu.showPopover !== 'function') return;
     event.preventDefault();
     openContextMenu(trigger, event.clientX, event.clientY, false);
   });
 
-  documentRoot.addEventListener('keydown', (event) => {
+  lifecycle.listen(documentRoot, documentRoot, 'keydown', (event) => {
     const trigger = event.target?.closest?.(TRIGGER_SELECTOR);
-    const requestsContextMenu = event.key === 'ContextMenu'
-      || event.key === 'Apps'
-      || (event.shiftKey && event.key === 'F10');
+    const requestsContextMenu =
+      event.key === 'ContextMenu' ||
+      event.key === 'Apps' ||
+      (event.shiftKey && event.key === 'F10');
 
     if (trigger && requestsContextMenu) {
+      if (!trigger?.hasAttribute('data-context-menu-init')) return;
       const menu = resolveMenu(trigger);
       if (!menu || typeof menu.showPopover !== 'function') return;
       event.preventDefault();
@@ -182,7 +188,9 @@ function installGlobalListeners(documentRoot) {
       default:
         if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
           const query = event.key.toLowerCase();
-          const match = items.find((item) => item.textContent.trim().toLowerCase().startsWith(query));
+          const match = items.find((item) =>
+            item.textContent.trim().toLowerCase().startsWith(query)
+          );
           if (match) {
             event.preventDefault();
             highlight(menu, match);
@@ -191,14 +199,14 @@ function installGlobalListeners(documentRoot) {
     }
   });
 
-  documentRoot.addEventListener('mousemove', (event) => {
+  lifecycle.listen(documentRoot, documentRoot, 'mousemove', (event) => {
     if (!activeContextMenu) return;
     const { menu } = activeContextMenu;
     const item = event.target?.closest?.(ITEM_SELECTOR);
     if (item && menu.contains(item) && !isDisabled(item)) highlight(menu, item);
   });
 
-  documentRoot.addEventListener('click', (event) => {
+  lifecycle.listen(documentRoot, documentRoot, 'click', (event) => {
     if (!activeContextMenu) return;
     const { menu } = activeContextMenu;
     const item = event.target?.closest?.(ITEM_SELECTOR);
@@ -206,16 +214,19 @@ function installGlobalListeners(documentRoot) {
     if (!activateCheckable(menu, item)) closeContextMenu();
   });
 
-  documentRoot.addEventListener('pointerdown', (event) => {
+  lifecycle.listen(documentRoot, documentRoot, 'pointerdown', (event) => {
     if (!activeContextMenu) return;
     const { trigger, menu } = activeContextMenu;
     if (menu.contains(event.target) || trigger.contains(event.target)) return;
     closeContextMenu();
   });
 
-  documentRoot.addEventListener('scroll', () => closeContextMenu(), { passive: true, capture: true });
+  lifecycle.listen(documentRoot, documentRoot, 'scroll', () => closeContextMenu(), {
+    passive: true,
+    capture: true
+  });
   const view = documentRoot.defaultView || (typeof window === 'undefined' ? null : window);
-  view?.addEventListener('resize', () => closeContextMenu());
+  lifecycle.listen(documentRoot, view, 'resize', () => closeContextMenu());
 }
 
 export function enhance(root) {
@@ -227,22 +238,32 @@ export function enhance(root) {
   const triggerScope = queryAll(scope, '.context-menu-content').length ? documentRoot : scope;
   initContextMenuTriggers(triggerScope);
 
-  if (activeContextMenu && (!activeContextMenu.trigger.isConnected || !activeContextMenu.menu.isConnected)) {
+  if (
+    activeContextMenu &&
+    (!activeContextMenu.trigger.isConnected || !activeContextMenu.menu.isConnected)
+  ) {
     activeContextMenu = null;
   }
 }
 
 export function destroy(root) {
-  const removedActiveMenu = activeContextMenu && (
-    root === activeContextMenu.trigger
-    || root === activeContextMenu.menu
-    || root?.contains?.(activeContextMenu.trigger)
-    || root?.contains?.(activeContextMenu.menu)
-  );
-  if (removedActiveMenu || (activeContextMenu && (
-    !activeContextMenu.trigger.isConnected || !activeContextMenu.menu.isConnected
-  ))) {
-    activeContextMenu = null;
+  lifecycle.destroy(root);
+  queryAll(root, TRIGGER_SELECTOR).forEach((trigger) => {
+    delete trigger.dataset.contextMenuInit;
+    trigger.setAttribute('aria-expanded', 'false');
+  });
+  const removedActiveMenu =
+    activeContextMenu &&
+    (root === activeContextMenu.trigger ||
+      root === activeContextMenu.menu ||
+      root?.contains?.(activeContextMenu.trigger) ||
+      root?.contains?.(activeContextMenu.menu));
+  if (
+    removedActiveMenu ||
+    (activeContextMenu &&
+      (!activeContextMenu.trigger.isConnected || !activeContextMenu.menu.isConnected))
+  ) {
+    closeContextMenu();
   }
 }
 

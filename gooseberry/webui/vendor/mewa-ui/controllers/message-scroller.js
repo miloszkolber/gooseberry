@@ -9,14 +9,15 @@ function messageScrollerThreshold(root) {
 }
 
 function initMessageScroller(root) {
-  if (root.hasAttribute('data-init')) return;
+  if (messageScrollerInstances.has(root)) return;
   root.dataset.init = '';
+  root.dataset.mewaMessageScrollerInit = '';
 
   const viewport = root.querySelector('.message-scroller-viewport');
   const content = root.querySelector('.message-scroller-content');
   const jump = root.querySelector('[data-message-scroller-jump]');
   if (!viewport || !content) {
-    root.removeAttribute('data-init');
+    root.removeAttribute('data-mewa-message-scroller-init');
     return;
   }
 
@@ -24,9 +25,8 @@ function initMessageScroller(root) {
   let pinned = root.dataset.defaultPinned !== 'false';
   let conversationKey = root.dataset.conversationKey || '';
 
-  const atBottom = () => (
-    viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= threshold
-  );
+  const atBottom = () =>
+    viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= threshold;
 
   const syncJump = () => {
     if (jump) jump.hidden = pinned;
@@ -38,10 +38,12 @@ function initMessageScroller(root) {
     root.dataset.pinned = pinned ? 'true' : 'false';
     syncJump();
     if (changed && emit) {
-      root.dispatchEvent(new CustomEvent('message-scroller:pinned-change', {
-        bubbles: true,
-        detail: { pinned }
-      }));
+      root.dispatchEvent(
+        new CustomEvent('message-scroller:pinned-change', {
+          bubbles: true,
+          detail: { pinned }
+        })
+      );
     }
   };
 
@@ -51,7 +53,10 @@ function initMessageScroller(root) {
   };
 
   const onScroll = () => setPinned(atBottom());
-  const onJump = () => scrollToBottom();
+  const onJump = () => {
+    if (root.ownerDocument.activeElement === jump) viewport.focus({ preventScroll: true });
+    scrollToBottom();
+  };
 
   viewport.addEventListener('scroll', onScroll, { passive: true });
   jump?.addEventListener('click', onJump);
@@ -69,11 +74,12 @@ function initMessageScroller(root) {
   });
   attributeObserver.observe(root, { attributes: true, attributeFilter: ['data-conversation-key'] });
 
-  const resizeObserver = typeof ResizeObserver === 'function'
-    ? new ResizeObserver(() => {
-      if (pinned) scrollToBottom(false);
-    })
-    : null;
+  const resizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          if (pinned) scrollToBottom(false);
+        })
+      : null;
   resizeObserver?.observe(viewport);
   resizeObserver?.observe(content);
 
@@ -89,7 +95,7 @@ function initMessageScroller(root) {
       resizeObserver?.disconnect();
       if (jump) jump.hidden = true;
       root.removeAttribute('data-pinned');
-      root.removeAttribute('data-init');
+      root.removeAttribute('data-mewa-message-scroller-init');
       messageScrollerInstances.delete(root);
     }
   });

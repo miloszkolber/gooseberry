@@ -1,6 +1,6 @@
 function assertBehavior(behavior) {
-  if (!behavior || typeof behavior.enhance !== "function") {
-    throw new TypeError("mewa() requires a Mewa behavior with an enhance() function");
+  if (!behavior || typeof behavior.enhance !== 'function') {
+    throw new TypeError('mewa() requires a Mewa behavior with an enhance() function');
   }
 }
 

@@ -1,33 +1,33 @@
 {
 	"schemaVersion": 1,
 	"repository": "miloszkolber/mewa_ui",
-	"release": "v0.1.1",
-	"version": "0.1.1",
-	"revision": "e4d03b0771d90c1ebeec94eee46e9bae3f25d661",
+	"release": "v0.1.2",
+	"version": "0.1.2",
+	"revision": "c1bfb64a5874f2ca15d81c5ad78a2060360a37c0",
 	"assets": [
 		{
 			"package": "mewa-ui",
-			"file": "mewa-ui-0.1.1.tar.gz",
-			"url": "https://github.com/miloszkolber/mewa_ui/releases/download/v0.1.1/mewa-ui-0.1.1.tar.gz",
-			"size": 303196,
-			"sha256": "803e82ab968ca717b286c831e694eb471c13534e5a755a2edcb159a7cd344676",
-			"checksumsSha256": "c7ef3373e4995a56b02350d567a0d3a48d8b1d071b5ef46ce5912441cf04835e"
+			"file": "mewa-ui-0.1.2.tar.gz",
+			"url": "https://github.com/miloszkolber/mewa_ui/releases/download/v0.1.2/mewa-ui-0.1.2.tar.gz",
+			"size": 312114,
+			"sha256": "ace578b0f675e2daaf55dabf3a8a64d5f2e8ab31c1cd61d699258ef1d705cde3",
+			"checksumsSha256": "2452a7ef8803ec9c282834f9100d9f2f6c95b500d409c72591c0f9e115dae03b"
 		},
 		{
 			"package": "mewa-svelte",
-			"file": "mewa-svelte-0.1.1.tar.gz",
-			"url": "https://github.com/miloszkolber/mewa_ui/releases/download/v0.1.1/mewa-svelte-0.1.1.tar.gz",
-			"size": 3251,
-			"sha256": "200415ca2e6d45a7f0b9256ba724849b863f1969aba79fd9ac48ed9cdb472bd1",
-			"checksumsSha256": "1ce295f472b5c11214299037ebfc7a8dafaffd12db1181366359806b572642bb"
+			"file": "mewa-svelte-0.1.2.tar.gz",
+			"url": "https://github.com/miloszkolber/mewa_ui/releases/download/v0.1.2/mewa-svelte-0.1.2.tar.gz",
+			"size": 4462,
+			"sha256": "451eb2de95f124493ee27eeb13a19070daf384aedba958eefbc7aa90bf657371",
+			"checksumsSha256": "c660a1d4d60f1356db9d8fa427e680a7b06117152475557569ce9e7d66dc8080"
 		},
 		{
 			"package": "mewa-icons",
-			"file": "mewa-icons-0.1.1.tar.gz",
-			"url": "https://github.com/miloszkolber/mewa_ui/releases/download/v0.1.1/mewa-icons-0.1.1.tar.gz",
-			"size": 212565,
-			"sha256": "4505138e3eddcd4e352c066c8c249e602e18425b7e1fe9fa1a84c6094afc7899",
-			"checksumsSha256": "2bafb6e57f166f65a6d8b26a277ed6b14b99e1ed16e8285d89a31a01080dc20a"
+			"file": "mewa-icons-0.1.2.tar.gz",
+			"url": "https://github.com/miloszkolber/mewa_ui/releases/download/v0.1.2/mewa-icons-0.1.2.tar.gz",
+			"size": 212562,
+			"sha256": "6501f46157173ac473e7f8f7cce46e5da2b67a796a943ab64101ccf769df6be9",
+			"checksumsSha256": "68f0adac9de934d1a89bf63ea6592692e9ed3013edbb84fd376448b3bb96d589"
 		}
 	],
 	"icons": [

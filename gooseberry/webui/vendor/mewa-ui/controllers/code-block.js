@@ -14,19 +14,21 @@ function codeBlockText(root, code) {
 }
 
 function initCodeBlock(root) {
-  if (root.hasAttribute('data-init')) return;
+  if (codeBlockInstances.has(root)) return;
   root.dataset.init = '';
+  root.dataset.mewaCodeBlockInit = '';
 
   const viewport = root.querySelector('.code-block-viewport');
   const code = root.querySelector('.code-block-code');
   if (!viewport || !code) {
-    root.removeAttribute('data-init');
+    root.removeAttribute('data-mewa-code-block-init');
     return;
   }
 
   const copyButton = root.querySelector('[data-code-block-copy]');
   const status = root.querySelector('.code-block-status');
   let copyTimer = null;
+  let active = true;
   let streaming = root.hasAttribute('data-streaming');
   let pinned = streaming || codeBlockAtBottom(viewport);
 
@@ -42,10 +44,11 @@ function initCodeBlock(root) {
     if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return;
     try {
       await navigator.clipboard.writeText(codeBlockText(root, code));
-    } catch (_error) {
+    } catch {
       return;
     }
 
+    if (!active) return;
     copyButton.textContent = 'Copied';
     copyButton.setAttribute('aria-label', 'Copied');
     if (status) status.textContent = 'Copied to clipboard.';
@@ -81,17 +84,19 @@ function initCodeBlock(root) {
   });
   attributeObserver.observe(root, { attributes: true, attributeFilter: ['data-streaming'] });
 
-  const resizeObserver = typeof ResizeObserver === 'function'
-    ? new ResizeObserver(() => {
-      if (streaming && pinned) scrollToBottom();
-    })
-    : null;
+  const resizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          if (streaming && pinned) scrollToBottom();
+        })
+      : null;
   resizeObserver?.observe(code);
 
   if (streaming) scrollToBottom();
 
   codeBlockInstances.set(root, {
     destroy() {
+      active = false;
       viewport.removeEventListener('scroll', onScroll);
       copyButton?.removeEventListener('click', onCopy);
       contentObserver.disconnect();
@@ -104,7 +109,7 @@ function initCodeBlock(root) {
         copyButton.removeAttribute('aria-label');
       }
       if (status) status.textContent = '';
-      root.removeAttribute('data-init');
+      root.removeAttribute('data-mewa-code-block-init');
       codeBlockInstances.delete(root);
     }
   });

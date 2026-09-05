@@ -1,4 +1,4 @@
-# mewa-icons 0.1.1
+# mewa-icons 0.1.2
 
 This optional GitHub release package contains the complete mewa_ui SVG icon set.
 

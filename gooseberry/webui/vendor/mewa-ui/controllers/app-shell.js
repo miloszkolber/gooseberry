@@ -1,7 +1,9 @@
 // -- App shell theme enhancement -------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('app-shell');
 
 const APP_SHELL_THEME_KEY = 'mewa-ui-theme';
 const APP_SHELL_LEGACY_THEME_KEY = 'mewa-theme';
@@ -13,8 +15,9 @@ function documentView(documentRoot) {
 
 function readStoredTheme(view) {
   try {
-    const value = view?.localStorage?.getItem(APP_SHELL_THEME_KEY)
-      || view?.localStorage?.getItem(APP_SHELL_LEGACY_THEME_KEY);
+    const value =
+      view?.localStorage?.getItem(APP_SHELL_THEME_KEY) ||
+      view?.localStorage?.getItem(APP_SHELL_LEGACY_THEME_KEY);
     return value === 'light' || value === 'dark' ? value : null;
   } catch {
     return null;
@@ -41,7 +44,7 @@ function syncToggle(toggle, documentRoot = toggle.ownerDocument) {
 
 function applyTheme(documentRoot, theme) {
   documentRoot.documentElement.classList.toggle('dark', theme === 'dark');
-  queryAll(documentRoot, '[data-theme-toggle][data-init]').forEach((toggle) => {
+  queryAll(documentRoot, '[data-theme-toggle][data-mewa-app-shell-init]').forEach((toggle) => {
     syncToggle(toggle, documentRoot);
   });
 }
@@ -49,12 +52,13 @@ function applyTheme(documentRoot, theme) {
 function initializeDocument(documentRoot) {
   if (initializedDocuments.has(documentRoot)) return;
   initializedDocuments.add(documentRoot);
+  lifecycle.add(documentRoot, () => initializedDocuments.delete(documentRoot));
 
   const view = documentView(documentRoot);
   applyTheme(documentRoot, readStoredTheme(view) || preferredTheme(view));
 
   const colorScheme = view?.matchMedia?.('(prefers-color-scheme: dark)');
-  colorScheme?.addEventListener('change', (event) => {
+  lifecycle.listen(documentRoot, colorScheme, 'change', (event) => {
     if (!readStoredTheme(view)) applyTheme(documentRoot, event.matches ? 'dark' : 'light');
   });
 }
@@ -65,10 +69,12 @@ export function enhance(root) {
   if (!documentRoot) return;
 
   initializeDocument(documentRoot);
-  queryAll(scope, '[data-theme-toggle]:not([data-init])').forEach((toggle) => {
+  queryAll(scope, '[data-theme-toggle]').forEach((toggle) => {
     toggle.dataset.init = '';
+    if (lifecycle.has(toggle)) return;
+    toggle.dataset.mewaAppShellInit = '';
     syncToggle(toggle, documentRoot);
-    toggle.addEventListener('click', () => {
+    lifecycle.listen(toggle, toggle, 'click', () => {
       const theme = documentRoot.documentElement.classList.contains('dark') ? 'light' : 'dark';
       writeStoredTheme(documentView(documentRoot), theme);
       applyTheme(documentRoot, theme);
@@ -76,4 +82,8 @@ export function enhance(root) {
   });
 }
 
-export const behavior = { name: 'app-shell', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'app-shell', enhance, destroy };

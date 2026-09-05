@@ -2,7 +2,7 @@
   "algorithm": "sha256",
   "files": {
     "LICENSE": "52af9942add48997c0365303a1ba68315626e7c75e1b2fcae4f064da833e0d27",
-    "README.md": "6030edd3a985a568447d35d65ebbd1c612285cdb6867d9dc1a46e2d859189bf6",
+    "README.md": "ee729e11085108b66ddf1578066a4910e19f56ea2187be66592fdf3825318b6a",
     "icons/a-arrow-down.svg": "d3b9e9ea20f6eddc2175c447161f9b297475eb5a30ed5f7feacea67a8e97b22e",
     "icons/a-arrow-up.svg": "ba14f1d6c4d4a622c4ab43b4cb0261dea6235cbec4e801b59e03e9c09e139c04",
     "icons/a-large-small.svg": "488d91333b3a4b983ef5f5c8be0919e4936bcf64b9ec93d370e9fe7dbafac50c",
@@ -1771,7 +1771,7 @@
     "icons/zoom-in.svg": "106c49ec7e8e829b5ad706d789663292edfdd9d02b6ce5bba5e02688c11b317e",
     "icons/zoom-out.svg": "88290c0981a57ec299bb9a03214cd60a0c7d1ce88c9b11fbbbd01b4a77368282",
     "licenses/LUCIDE-LICENSE.txt": "169ae0f967410d2c6444294704d0f3a52243f5a29f1ffbaec9255f13bd5f7281",
-    "manifest.json": "f3ae3c681bb86af84d6c1382ca10824d33670d2dfb4fd7caa7d0f5983ff93151",
-    "package.json": "e8872cf1b7521f363ff3396f89b0bdc297c329d8e8b935177ffad2c5ff16bcd2"
+    "manifest.json": "7e8b3e050add0d6f29f592d25325530734812f11d032670420e374add0508fe7",
+    "package.json": "7e42b3181d189f7eed92deedf53f50999e21548edb32be7d185844d00318f9ad"
   }
 }

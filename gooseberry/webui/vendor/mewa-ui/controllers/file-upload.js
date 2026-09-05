@@ -1,9 +1,9 @@
 // -- File Upload -----------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
 
-const cleanupByUpload = new WeakMap();
+const lifecycle = createLifecycle('file-upload');
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 1024) return `${bytes} B`;
@@ -41,14 +41,14 @@ function droppedDirectory(dataTransfer) {
 }
 
 export function enhance(root) {
-  const uploads = queryAll(root, '[data-file-upload]:not([data-init])');
-  const ancestor = root?.nodeType === 1
-    ? root.closest?.('[data-file-upload]:not([data-init])')
-    : null;
+  const uploads = queryAll(root, '[data-file-upload]');
+  const ancestor = root?.nodeType === 1 ? root.closest?.('[data-file-upload]') : null;
   if (ancestor) uploads.push(ancestor);
 
   new Set(uploads).forEach((upload) => {
     upload.dataset.init = '';
+    if (lifecycle.has(upload)) return;
+    upload.dataset.mewaFileUploadInit = '';
 
     const dropzone = upload.querySelector('.file-upload-dropzone');
     const input = upload.querySelector('.file-upload-input[type="file"]');
@@ -57,7 +57,7 @@ export function enhance(root) {
     const error = upload.querySelector('[data-file-upload-error]');
 
     if (!dropzone || !input || !list || !status || !error) {
-      upload.removeAttribute('data-init');
+      upload.removeAttribute('data-mewa-file-upload-init');
       return;
     }
 
@@ -145,16 +145,17 @@ export function enhance(root) {
         remove.className = 'file-upload-remove';
         remove.textContent = 'Remove';
         remove.setAttribute('aria-label', `Remove ${file.name}`);
-        remove.disabled = input.disabled;
+        remove.disabled = input.matches(':disabled');
         remove.dataset.fileIndex = String(index);
 
         item.append(details, remove);
         list.append(item);
       });
 
-      status.textContent = files.length === 0
-        ? ''
-        : `${files.length} ${files.length === 1 ? 'file' : 'files'} selected.`;
+      status.textContent =
+        files.length === 0
+          ? ''
+          : `${files.length} ${files.length === 1 ? 'file' : 'files'} selected.`;
     };
 
     const assignNativeFiles = (next) => {
@@ -164,16 +165,18 @@ export function enhance(root) {
         next.forEach((file) => transfer.items.add(file));
         input.files = transfer.files;
         return true;
-      } catch (_error) {
+      } catch {
         return false;
       }
     };
 
     const emitChange = (source) => {
-      upload.dispatchEvent(new CustomEvent('file-upload:change', {
-        bubbles: true,
-        detail: { files: files.slice(), source }
-      }));
+      upload.dispatchEvent(
+        new CustomEvent('file-upload:change', {
+          bubbles: true,
+          detail: { files: files.slice(), source }
+        })
+      );
     };
 
     const commit = (next, source, dispatchNative = false) => {
@@ -197,7 +200,7 @@ export function enhance(root) {
       return true;
     };
 
-    input.addEventListener('change', () => {
+    lifecycle.listen(upload, input, 'change', () => {
       if (synchronizing) return;
 
       const incoming = Array.from(input.files || []);
@@ -216,27 +219,31 @@ export function enhance(root) {
       emitChange('picker');
     });
 
-    dropzone.addEventListener('dragenter', (event) => {
-      if (input.disabled || !Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+    lifecycle.listen(upload, dropzone, 'dragenter', (event) => {
+      if (
+        input.matches(':disabled') ||
+        !Array.from(event.dataTransfer?.types || []).includes('Files')
+      )
+        return;
       event.preventDefault();
       dragDepth += 1;
       upload.dataset.dragging = '';
     });
 
-    dropzone.addEventListener('dragover', (event) => {
-      if (input.disabled || !event.dataTransfer) return;
+    lifecycle.listen(upload, dropzone, 'dragover', (event) => {
+      if (input.matches(':disabled') || !event.dataTransfer) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'copy';
       upload.dataset.dragging = '';
     });
 
-    dropzone.addEventListener('dragleave', () => {
+    lifecycle.listen(upload, dropzone, 'dragleave', () => {
       dragDepth = Math.max(0, dragDepth - 1);
       if (dragDepth === 0) delete upload.dataset.dragging;
     });
 
-    dropzone.addEventListener('drop', (event) => {
-      if (input.disabled || !event.dataTransfer) return;
+    lifecycle.listen(upload, dropzone, 'drop', (event) => {
+      if (input.matches(':disabled') || !event.dataTransfer) return;
       event.preventDefault();
       dragDepth = 0;
       delete upload.dataset.dragging;
@@ -259,25 +266,38 @@ export function enhance(root) {
       commit(next, 'drop', true);
     });
 
-    list.addEventListener('click', (event) => {
+    lifecycle.listen(upload, list, 'click', (event) => {
       const button = event.target.closest('.file-upload-remove');
-      if (!button || button.disabled) return;
+      if (!button || button.matches(':disabled') || input.matches(':disabled')) return;
 
       const index = Number.parseInt(button.dataset.fileIndex || '', 10);
       if (!Number.isInteger(index) || !files[index]) return;
-      commit(files.filter((_file, fileIndex) => fileIndex !== index), 'remove', true);
+      commit(
+        files.filter((_file, fileIndex) => fileIndex !== index),
+        'remove',
+        true
+      );
     });
 
+    lifecycle.reset(upload, input.form, () => {
+      files = Array.from(input.files || []);
+      dragDepth = 0;
+      delete upload.dataset.dragging;
+      clearError();
+      render();
+    });
+    lifecycle.add(upload, () => {
+      clearPreviews();
+      list.replaceChildren();
+      delete upload.dataset.enhanced;
+    });
     render();
     upload.dataset.enhanced = '';
-    cleanupByUpload.set(upload, clearPreviews);
   });
 }
 
 export function destroy(root) {
-  queryAll(root, '[data-file-upload]').forEach((upload) => {
-    cleanupByUpload.get(upload)?.();
-  });
+  lifecycle.destroy(root);
 }
 
 export const behavior = { name: 'file-upload', enhance, destroy };

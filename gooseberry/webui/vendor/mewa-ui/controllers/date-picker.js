@@ -1,16 +1,16 @@
 // -- Date Picker ------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('date-picker');
 
 const weekdayFormatter = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
 const longWeekdayFormatter = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
 const monthFormatter = new Intl.DateTimeFormat(undefined, { month: 'long' });
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'long' });
 
-const DAYS = Array.from({ length: 7 }, (_, i) =>
-  weekdayFormatter.format(new Date(2024, 0, i))
-);
+const DAYS = Array.from({ length: 7 }, (_, i) => weekdayFormatter.format(new Date(2024, 0, i)));
 const LONG_DAYS = Array.from({ length: 7 }, (_, i) =>
   longWeekdayFormatter.format(new Date(2024, 0, i))
 );
@@ -19,16 +19,19 @@ const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
 
 const isToday = (date) => {
   const now = new Date();
-  return now.getFullYear() === date.getFullYear()
-    && now.getMonth() === date.getMonth()
-    && now.getDate() === date.getDate();
+  return (
+    now.getFullYear() === date.getFullYear() &&
+    now.getMonth() === date.getMonth() &&
+    now.getDate() === date.getDate()
+  );
 };
 
-const dateKey = (date) => [
-  date.getFullYear(),
-  String(date.getMonth() + 1).padStart(2, '0'),
-  String(date.getDate()).padStart(2, '0')
-].join('-');
+const dateKey = (date) =>
+  [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
 
 const dateFromKey = (value) => {
   const [year, month, day] = value.split('-').map(Number);
@@ -48,8 +51,9 @@ const setTabStop = (datePicker, activeButton) => {
 };
 
 const focusDate = (datePicker, value) => {
-  const button = Array.from(datePicker.querySelectorAll('.date-picker-day button'))
-    .find((candidate) => candidate.dataset.date === value);
+  const button = Array.from(datePicker.querySelectorAll('.date-picker-day button')).find(
+    (candidate) => candidate.dataset.date === value
+  );
   if (!button) return;
   setTabStop(datePicker, button);
   button.focus();
@@ -136,8 +140,10 @@ const renderDatePicker = (el, year, month, selectedDay) => {
 };
 
 export function enhance(root) {
-  queryAll(root, '.date-picker:not([data-init])').forEach((datePicker) => {
+  queryAll(root, '.date-picker').forEach((datePicker) => {
     datePicker.dataset.init = '';
+    if (lifecycle.has(datePicker)) return;
+    datePicker.dataset.mewaDatePickerInit = '';
     const now = new Date();
     const state = {
       year: now.getFullYear(),
@@ -147,7 +153,7 @@ export function enhance(root) {
 
     renderDatePicker(datePicker, state.year, state.month, state.selected);
 
-    datePicker.addEventListener('click', (event) => {
+    lifecycle.listen(datePicker, datePicker, 'click', (event) => {
       const nav = event.target.closest('.date-picker-nav');
       if (nav) {
         const action = nav.dataset.action;
@@ -170,13 +176,15 @@ export function enhance(root) {
       renderDatePicker(datePicker, state.year, state.month, state.selected);
       focusDate(datePicker, dateKey(selectedDate));
 
-      datePicker.dispatchEvent(new CustomEvent('date-picker:select', {
-        detail: { date: selectedDate },
-        bubbles: true
-      }));
+      datePicker.dispatchEvent(
+        new CustomEvent('date-picker:select', {
+          detail: { date: selectedDate },
+          bubbles: true
+        })
+      );
     });
 
-    datePicker.addEventListener('keydown', (event) => {
+    lifecycle.listen(datePicker, datePicker, 'keydown', (event) => {
       const dayButton = event.target.closest('.date-picker-day button');
       if (!dayButton) return;
 
@@ -211,4 +219,8 @@ export function enhance(root) {
   });
 }
 
-export const behavior = { name: 'date-picker', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'date-picker', enhance, destroy };

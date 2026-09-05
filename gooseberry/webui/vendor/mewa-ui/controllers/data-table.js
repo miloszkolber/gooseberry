@@ -1,16 +1,11 @@
 // -- Data Table ------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
 
-const rootSelector = '.data-table:not([data-init])';
+const lifecycle = createLifecycle('data-table');
 
-function getMatchingElements(root, selector) {
-  const elements = [];
-  if (root.matches?.(selector)) elements.push(root);
-  elements.push(...root.querySelectorAll(selector));
-  return elements;
-}
+const rootSelector = '.data-table';
 
 function getNumber(value, fallback = 0) {
   const number = Number(value);
@@ -18,32 +13,47 @@ function getNumber(value, fallback = 0) {
 }
 
 export function enhance(scope) {
+  lifecycle.refresh(scope);
   queryAll(scope, rootSelector).forEach((root) => {
     root.dataset.init = '';
+    if (lifecycle.has(root)) return;
+    root.dataset.mewaDataTableInit = '';
 
     const table = root.matches('table') ? root : root.querySelector('table');
     const body = table?.tBodies?.[0];
     if (!table || !body) {
-      root.removeAttribute('data-init');
+      root.removeAttribute('data-mewa-data-table-init');
       return;
     }
 
-    const filters = () => getMatchingElements(root, '[data-table-filter], .data-table-filter')
-      .filter((element) => element.matches('input, textarea'));
-    const status = () => getMatchingElements(root, '[data-table-status], .data-table-summary[role="status"], [role="status"]')[0];
-    const emptyState = () => getMatchingElements(root, '[data-table-empty], .data-table-empty')[0];
-    const range = () => getMatchingElements(root, '[data-table-range], .data-table-range')[0];
-    const pagination = () => getMatchingElements(root, '[data-table-pagination], .data-table-pagination')[0];
+    const filters = () =>
+      queryAll(root, '[data-table-filter], .data-table-filter').filter((element) =>
+        element.matches('input, textarea')
+      );
+    const status = () =>
+      queryAll(root, '[data-table-status], .data-table-summary[role="status"], [role="status"]')[0];
+    const emptyState = () => queryAll(root, '[data-table-empty], .data-table-empty')[0];
+    const range = () => queryAll(root, '[data-table-range], .data-table-range')[0];
+    const pagination = () => queryAll(root, '[data-table-pagination], .data-table-pagination')[0];
     const pageControls = () => {
       const nav = pagination();
       if (!nav) return [];
-      return getMatchingElements(nav, '[data-table-page], .data-table-pagination-link, .data-table-pagination-button');
+      return queryAll(
+        nav,
+        '[data-table-page], .data-table-pagination-link, .data-table-pagination-button'
+      );
     };
     const rows = () => Array.from(body.rows);
-    const sortButtons = () => Array.from(table.querySelectorAll('th[aria-sort] button, th button[data-table-sort], th .data-table-sort'));
-    const sortHeaders = () => sortButtons()
-      .map((button) => button.closest('th'))
-      .filter((header, index, headers) => header && headers.indexOf(header) === index);
+    const sortButtons = () =>
+      Array.from(
+        table.querySelectorAll(
+          'th[aria-sort] button, th button[data-table-sort], th .data-table-sort'
+        )
+      );
+    const sortHeaders = () =>
+      sortButtons()
+        .map((button) => button.closest('th'))
+        .filter((header, index, headers) => header && headers.indexOf(header) === index);
     const pageSize = () => {
       const configured = root.dataset.pageSize || table.dataset.pageSize;
       const value = Math.floor(getNumber(configured));
@@ -59,13 +69,15 @@ export function enhance(scope) {
 
     rows().forEach((row) => originalOrder.set(row, nextOrder++));
     pageControls().forEach((control) => {
-      if (control.hasAttribute('tabindex')) linkTabIndexes.set(control, control.getAttribute('tabindex'));
+      if (control.hasAttribute('tabindex'))
+        linkTabIndexes.set(control, control.getAttribute('tabindex'));
     });
 
-    const getFilterValue = () => filters()
-      .map((input) => input.value.trim())
-      .filter(Boolean)
-      .join(' ');
+    const getFilterValue = () =>
+      filters()
+        .map((input) => input.value.trim())
+        .filter(Boolean)
+        .join(' ');
 
     const getLabels = () => {
       const summary = status();
@@ -99,7 +111,8 @@ export function enhance(scope) {
       } else if (type === 'date') {
         const firstDate = Date.parse(firstValue);
         const secondDate = Date.parse(secondValue);
-        if (Number.isFinite(firstDate) && Number.isFinite(secondDate)) result = firstDate - secondDate;
+        if (Number.isFinite(firstDate) && Number.isFinite(secondDate))
+          result = firstDate - secondDate;
       }
 
       if (result === undefined || Number.isNaN(result)) {
@@ -114,12 +127,19 @@ export function enhance(scope) {
       sortButtons().forEach((button) => {
         const header = button.closest('th');
         if (!header) return;
-        const label = sortLabels.get(button) || button.getAttribute('aria-label')?.replace(/^sort by\s+/i, '') || button.textContent.trim() || 'column';
+        const label =
+          sortLabels.get(button) ||
+          button.getAttribute('aria-label')?.replace(/^sort by\s+/i, '') ||
+          button.textContent.trim() ||
+          'column';
         sortLabels.set(button, label);
         const direction = header.getAttribute('aria-sort');
         if (direction === 'ascending' || direction === 'descending') {
           const nextDirection = direction === 'ascending' ? 'descending' : 'ascending';
-          button.setAttribute('aria-label', `Sort by ${label}. Currently ${direction}. Activate to sort ${nextDirection}.`);
+          button.setAttribute(
+            'aria-label',
+            `Sort by ${label}. Currently ${direction}. Activate to sort ${nextDirection}.`
+          );
         } else if (!button.hasAttribute('aria-label')) {
           button.setAttribute('aria-label', `Sort by ${label}. Activate to sort ascending.`);
         }
@@ -178,7 +198,9 @@ export function enhance(scope) {
       });
 
       const needle = getFilterValue().toLocaleLowerCase();
-      const matchingRows = allRows.filter((row) => row.textContent.toLocaleLowerCase().includes(needle));
+      const matchingRows = allRows.filter((row) =>
+        row.textContent.toLocaleLowerCase().includes(needle)
+      );
       const size = pageSize();
       const pageCount = size ? Math.max(1, Math.ceil(matchingRows.length / size)) : 1;
       currentPage = Math.min(Math.max(currentPage, 1), pageCount);
@@ -226,37 +248,56 @@ export function enhance(scope) {
       const ascending = header.getAttribute('aria-sort') !== 'ascending';
       const direction = ascending ? 'ascending' : 'descending';
       const multiplier = ascending ? 1 : -1;
-      sortHeaders().forEach((item) => item.setAttribute('aria-sort', item === header ? direction : 'none'));
-      const orderedRows = rows()
-        .sort((first, second) => compareRows(first, second, columnIndex, header.dataset.sortType || 'text', multiplier));
+      sortHeaders().forEach((item) =>
+        item.setAttribute('aria-sort', item === header ? direction : 'none')
+      );
+      const orderedRows = rows().sort((first, second) =>
+        compareRows(first, second, columnIndex, header.dataset.sortType || 'text', multiplier)
+      );
       orderedRows.forEach((row, index) => {
         originalOrder.set(row, index);
         body.append(row);
       });
       currentPage = 1;
       render();
-      root.dispatchEvent(new CustomEvent('data-table:sort', {
-        bubbles: true,
-        detail: { column: columnIndex, direction, header }
-      }));
+      root.dispatchEvent(
+        new CustomEvent('data-table:sort', {
+          bubbles: true,
+          detail: { column: columnIndex, direction, header }
+        })
+      );
     };
 
     const emitFilter = () => {
       const result = render();
-      root.dispatchEvent(new CustomEvent('data-table:filter', {
-        bubbles: true,
-        detail: { query: getFilterValue(), matching: result.matchingRows.length, total: result.allRows.length }
-      }));
+      root.dispatchEvent(
+        new CustomEvent('data-table:filter', {
+          bubbles: true,
+          detail: {
+            query: getFilterValue(),
+            matching: result.matchingRows.length,
+            total: result.allRows.length
+          }
+        })
+      );
     };
 
-    root.addEventListener('click', (event) => {
+    lifecycle.listen(root, root, 'click', (event) => {
       const target = event.target.closest?.('button, a');
       if (!target || !root.contains(target)) return;
 
-      const sortButton = target.matches('[data-table-sort], .data-table-sort') || target.closest('th[aria-sort]') ? target : null;
+      const sortButton =
+        target.matches('[data-table-sort], .data-table-sort') || target.closest('th[aria-sort]')
+          ? target
+          : null;
       if (sortButton) {
         const header = sortButton.closest('th');
-        if (!header || (!header.hasAttribute('aria-sort') && !sortButton.matches('[data-table-sort], .data-table-sort'))) return;
+        if (
+          !header ||
+          (!header.hasAttribute('aria-sort') &&
+            !sortButton.matches('[data-table-sort], .data-table-sort'))
+        )
+          return;
         if (!header.hasAttribute('aria-sort')) header.setAttribute('aria-sort', 'none');
         event.preventDefault();
         sortBy(sortButton);
@@ -265,19 +306,28 @@ export function enhance(scope) {
 
       if (target.matches('[data-table-clear]')) {
         event.preventDefault();
-        filters().forEach((input) => { input.value = ''; });
+        filters().forEach((input) => {
+          input.value = '';
+        });
         currentPage = 1;
         emitFilter();
         filters()[0]?.focus();
         return;
       }
 
-      const control = target.closest('[data-table-page], .data-table-pagination-link, .data-table-pagination-button');
+      const control = target.closest(
+        '[data-table-page], .data-table-pagination-link, .data-table-pagination-button'
+      );
       if (!control || !root.contains(control) || !pageSize()) return;
-      const pageCount = Math.max(1, Math.ceil(rows().filter((row) => {
-        const needle = getFilterValue().toLocaleLowerCase();
-        return row.textContent.toLocaleLowerCase().includes(needle);
-      }).length / pageSize()));
+      const needle = getFilterValue().toLocaleLowerCase();
+      const pageCount = Math.max(
+        1,
+        Math.ceil(
+          rows().filter((row) => {
+            return row.textContent.toLocaleLowerCase().includes(needle);
+          }).length / pageSize()
+        )
+      );
       if (control.getAttribute('aria-disabled') === 'true' || control.disabled) {
         event.preventDefault();
         return;
@@ -290,26 +340,28 @@ export function enhance(scope) {
       event.preventDefault();
       currentPage = page;
       const result = render();
-      root.dispatchEvent(new CustomEvent('data-table:page', {
-        bubbles: true,
-        detail: {
-          page: currentPage,
-          pageSize: pageSize(),
-          pageCount: result.pageCount,
-          matching: result.matchingRows.length,
-          total: result.allRows.length
-        }
-      }));
+      root.dispatchEvent(
+        new CustomEvent('data-table:page', {
+          bubbles: true,
+          detail: {
+            page: currentPage,
+            pageSize: pageSize(),
+            pageCount: result.pageCount,
+            matching: result.matchingRows.length,
+            total: result.allRows.length
+          }
+        })
+      );
     });
 
-    root.addEventListener('input', (event) => {
+    lifecycle.listen(root, root, 'input', (event) => {
       const target = event.target;
       if (!target.matches?.('[data-table-filter], .data-table-filter')) return;
       currentPage = 1;
       emitFilter();
     });
 
-    root.addEventListener('submit', (event) => {
+    lifecycle.listen(root, root, 'submit', (event) => {
       const form = event.target.closest?.('form');
       if (!form || !root.contains(form) || !filters().some((input) => form.contains(input))) return;
       event.preventDefault();
@@ -321,13 +373,20 @@ export function enhance(scope) {
       const header = button.closest('th');
       if (header && !header.hasAttribute('aria-sort')) header.setAttribute('aria-sort', 'none');
     });
-    const activePage = pageControls().find((control) => control.getAttribute('aria-current') === 'page');
+    const activePage = pageControls().find(
+      (control) => control.getAttribute('aria-current') === 'page'
+    );
     if (activePage) {
       const parsedPage = getPage(activePage, Number.MAX_SAFE_INTEGER);
       if (parsedPage) currentPage = parsedPage;
     }
+    lifecycle.onUpdate(root, render);
     render();
   });
 }
 
-export const behavior = { name: 'data-table', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'data-table', enhance, destroy };

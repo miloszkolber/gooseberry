@@ -1,7 +1,9 @@
 // -- Dialog ---------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('dialog');
 
 function openDialog(dialog, trigger) {
   if (!dialog || !dialog.isConnected || typeof dialog.showModal !== 'function') return;
@@ -25,31 +27,43 @@ function focusableElements(dialog) {
     '[contenteditable="true"]',
     '[tabindex]:not([tabindex="-1"]):not([disabled]):not([type="hidden"])'
   ].join(',');
-  return Array.from(dialog.querySelectorAll(selector))
-    .filter((element) => !element.matches(':disabled') && !element.closest('[hidden], [inert]'));
+  return Array.from(dialog.querySelectorAll(selector)).filter(
+    (element) =>
+      !element.matches(':disabled') &&
+      !element.closest('[hidden], [inert]') &&
+      element.tabIndex !== -1 &&
+      (!element.getClientRects || element.getClientRects().length > 0)
+  );
 }
 
 function initDialogTrigger(trigger) {
   trigger.dataset.init = '';
+  if (lifecycle.has(trigger)) return;
+  trigger.dataset.mewaDialogInit = '';
   const dialogId = trigger.dataset.dialogTrigger;
   const ownerDocument = trigger.ownerDocument;
   if (!ownerDocument.getElementById(dialogId)) {
-    delete trigger.dataset.init;
+    delete trigger.dataset.mewaDialogInit;
     return;
   }
-  trigger.addEventListener('click', () => {
+  lifecycle.listen(trigger, trigger, 'click', () => {
     openDialog(ownerDocument.getElementById(dialogId), trigger);
   });
 }
 
 export function enhance(root) {
-  const dialogs = queryAll(root, 'dialog:not(.alert-dialog):not(.sheet):not([data-init])');
-  queryAll(root, '[data-dialog-trigger]:not([data-init])').forEach(initDialogTrigger);
+  const dialogs = queryAll(
+    root,
+    'dialog:not(.alert-dialog):not(.sheet):not(.command-palette):not(.sidebar-mobile)'
+  );
+  queryAll(root, '[data-dialog-trigger]').forEach(initDialogTrigger);
 
   dialogs.forEach((dialog) => {
     dialog.dataset.init = '';
+    if (lifecycle.has(dialog)) return;
+    dialog.dataset.mewaDialogInit = '';
 
-    dialog.addEventListener('keydown', (event) => {
+    lifecycle.listen(dialog, dialog, 'keydown', (event) => {
       if (event.key !== 'Tab' || !dialog.open) return;
       const focusable = focusableElements(dialog);
       if (!focusable.length) return;
@@ -64,23 +78,26 @@ export function enhance(root) {
       }
     });
 
-    dialog.addEventListener('click', (event) => {
+    lifecycle.listen(dialog, dialog, 'click', (event) => {
       if (event.target === dialog) dialog.close();
     });
 
-    dialog.querySelectorAll('[data-dialog-close]').forEach((button) => {
-      button.addEventListener('click', () => dialog.close());
+    lifecycle.listen(dialog, dialog, 'click', (event) => {
+      if (event.target.closest('[data-dialog-close]')) dialog.close();
     });
 
-    dialog.addEventListener('close', () => {
+    lifecycle.listen(dialog, dialog, 'close', () => {
       if (dialog._trigger?.isConnected) dialog._trigger.focus();
     });
   });
 
   if (dialogs.length) {
-    queryAll(dialogs[0].ownerDocument, '[data-dialog-trigger]:not([data-init])')
-      .forEach(initDialogTrigger);
+    queryAll(dialogs[0].ownerDocument, '[data-dialog-trigger]').forEach(initDialogTrigger);
   }
 }
 
-export const behavior = { name: 'dialog', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'dialog', enhance, destroy };

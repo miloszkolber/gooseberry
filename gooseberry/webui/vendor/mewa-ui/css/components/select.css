@@ -44,4 +44,7 @@
 
     /* -- Sizes ----------------------------------------------- */
   }
+  @media (forced-colors: active) {
+    .select { appearance: auto; background-image: none; }
+  }
 }

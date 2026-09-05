@@ -12,7 +12,7 @@
     appearance: none;
     width: 1.125rem;
     height: 1.125rem;
-    border: var(--border-width-025) solid var(--border-primary);
+    border: var(--border-width-025) solid var(--border-control);
 
     background: var(--background);
     cursor: pointer;

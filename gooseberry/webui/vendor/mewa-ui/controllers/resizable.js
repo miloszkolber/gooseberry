@@ -19,11 +19,11 @@ const ENHANCED_ATTRIBUTES = [
   'aria-valuetext'
 ];
 const instances = new WeakMap();
+const initializingRoots = new WeakSet();
 const resizeFallbacks = new WeakMap();
 
 function registerResizeFallback(ownerDocument, callback) {
-  const view = ownerDocument.defaultView
-    || (typeof window === 'undefined' ? null : window);
+  const view = ownerDocument.defaultView || (typeof window === 'undefined' ? null : window);
   if (!view) return () => {};
 
   let fallback = resizeFallbacks.get(ownerDocument);
@@ -134,298 +134,316 @@ function createPointerControls(root, output, valueLabel) {
 }
 
 export function enhance(scope) {
-  const roots = queryAll(scope, '.resizable:not([data-init])');
-  const ancestor = scope?.nodeType === 1
-    ? scope.closest?.('.resizable:not([data-init])')
-    : null;
+  const roots = queryAll(scope, '.resizable');
+  const ancestor = scope?.nodeType === 1 ? scope.closest?.('.resizable') : null;
   if (ancestor) roots.push(ancestor);
 
   new Set(roots).forEach((root) => {
-    root.dataset.init = '';
+    if (instances.has(root) || initializingRoots.has(root)) return;
+    initializingRoots.add(root);
+    try {
+      root.dataset.init = '';
+      root.dataset.mewaResizableInit = '';
 
-    const group = root.querySelector('.resizable-group');
-    const handle = group?.querySelector('.resizable-handle');
-    const panels = group ? getPanels(group) : [];
-    if (!group || !handle || panels.length < 2) {
-      root.removeAttribute('data-init');
-      return;
-    }
-
-    const handleAttributes = snapshotAttributes(handle, ENHANCED_ATTRIBUTES);
-    const groupOrientation = group.getAttribute('data-orientation');
-    const panelStyles = {
-      flexBasis: panels[0].style.flexBasis,
-      flexGrow: panels[0].style.flexGrow,
-      flexShrink: panels[0].style.flexShrink
-    };
-
-    const requestedOrientation = handle.getAttribute('aria-orientation')
-      || group.dataset.orientation
-      || root.dataset.orientation
-      || 'vertical';
-    const orientation = requestedOrientation === 'horizontal' ? 'horizontal' : 'vertical';
-    const isHorizontal = orientation === 'horizontal';
-    const dimension = isHorizontal ? 'height' : 'width';
-    const coordinate = isHorizontal ? 'clientY' : 'clientX';
-    const decreaseKey = isHorizontal ? 'ArrowUp' : 'ArrowLeft';
-    const increaseKey = isHorizontal ? 'ArrowDown' : 'ArrowRight';
-
-    handle.setAttribute('aria-orientation', orientation);
-    group.dataset.orientation = orientation;
-    if (!handle.hasAttribute('tabindex') && handle.tagName !== 'BUTTON') {
-      handle.setAttribute('tabindex', '0');
-    }
-
-    let minimum = clamp(
-      readConfiguredNumber(handle, root, 'data-value-min', 'aria-valuemin', DEFAULT_MIN),
-      0,
-      100
-    );
-    let maximum = clamp(
-      readConfiguredNumber(handle, root, 'data-value-max', 'aria-valuemax', DEFAULT_MAX),
-      0,
-      100
-    );
-    if (maximum < minimum) [minimum, maximum] = [maximum, minimum];
-    handle.setAttribute('aria-valuemin', formatValue(minimum));
-    handle.setAttribute('aria-valuemax', formatValue(maximum));
-
-    const requestedStep = readNumber(
-      handle,
-      'data-step',
-      readNumber(root, 'data-step', DEFAULT_STEP)
-    );
-    const step = requestedStep > 0 ? requestedStep : DEFAULT_STEP;
-    const requestedPageStep = readNumber(
-      handle,
-      'data-page-step',
-      readNumber(root, 'data-page-step', DEFAULT_PAGE_STEP)
-    );
-    const pageStep = requestedPageStep >= step
-      ? requestedPageStep
-      : Math.max(step, DEFAULT_PAGE_STEP);
-
-    const containerSize = () => group.getBoundingClientRect()[dimension] || 0;
-    const panelSize = () => panels[0].getBoundingClientRect()[dimension] || 0;
-    const initialValue = readConfiguredNumber(handle, root, 'data-value-now', 'aria-valuenow', NaN);
-    const measuredValue = containerSize() > 0
-      ? (panelSize() / containerSize()) * 100
-      : DEFAULT_VALUE;
-    let value = Number.isFinite(initialValue) ? initialValue : measuredValue;
-    const initialLabel = handle.getAttribute('aria-label') || '';
-    const valueLabel = handle.dataset.valueLabel
-      || root.dataset.valueLabel
-      || initialLabel.replace(/^resize\s+/i, '').trim()
-      || (isHorizontal ? 'Panel height' : 'Panel width');
-    const accessibleLabel = readConfiguredString(handle, root, 'data-label')
-      || initialLabel
-      || `Resize ${valueLabel}`;
-    const controls = readConfiguredString(handle, root, 'data-controls')
-      || handle.getAttribute('aria-controls')
-      || panels.map((panel) => panel.id).filter(Boolean).join(' ');
-
-    handle.setAttribute('aria-label', accessibleLabel);
-    if (controls) handle.setAttribute('aria-controls', controls);
-    else handle.removeAttribute('aria-controls');
-
-    const existingOutput = getOutput(root);
-    const outputAttributes = existingOutput
-      ? snapshotAttributes(existingOutput, ['class', 'aria-live', 'aria-atomic'])
-      : null;
-    const outputText = existingOutput?.textContent || '';
-    const outputValue = existingOutput?.value || '';
-    let output = existingOutput;
-    if (!output) output = createOutput(root);
-    output.classList.add('resizable-output');
-    output.setAttribute('aria-live', output.getAttribute('aria-live') || 'polite');
-    output.setAttribute('aria-atomic', output.getAttribute('aria-atomic') || 'true');
-
-    const pointerControls = createPointerControls(root, output, valueLabel);
-
-    function quantize(next) {
-      const bounded = clamp(Number(next) || 0, minimum, maximum);
-      const stepped = minimum + Math.round((bounded - minimum) / step) * step;
-      return roundValue(clamp(stepped, minimum, maximum));
-    }
-
-    function announcement(next) {
-      const text = `${valueLabel}: ${formatValue(next)} percent`;
-      handle.setAttribute('aria-valuenow', formatValue(next));
-      handle.setAttribute('aria-valuetext', text);
-      output.value = text;
-      output.textContent = text;
-      const interactionDisabled = handle.disabled || handle.getAttribute('aria-disabled') === 'true';
-      pointerControls.decrease.disabled = interactionDisabled || next <= minimum;
-      pointerControls.increase.disabled = interactionDisabled || next >= maximum;
-    }
-
-    function setPanelBasis(next) {
-      const size = containerSize();
-      if (size <= 0) return;
-      panels[0].style.flexBasis = `${size * next / 100}px`;
-      panels[0].style.flexGrow = '0';
-      panels[0].style.flexShrink = '0';
-    }
-
-    function setValue(next, source = 'programmatic', emit = true) {
-      const nextValue = quantize(next);
-      const changed = nextValue !== value;
-      value = nextValue;
-      setPanelBasis(value);
-      announcement(value);
-      if (changed && emit) {
-        root.dispatchEvent(new CustomEvent('resizable-change', {
-          bubbles: true,
-          detail: {
-            value,
-            percentage: value,
-            source,
-            orientation,
-            panel: panels[0]
-          }
-        }));
+      const group = root.querySelector('.resizable-group');
+      const handle = group?.querySelector('.resizable-handle');
+      const panels = group ? getPanels(group) : [];
+      if (!group || !handle || panels.length < 2) {
+        root.removeAttribute('data-mewa-resizable-init');
+        return;
       }
-      return changed;
-    }
 
-    function setPixelSize(size, source) {
-      const container = containerSize();
-      if (container <= 0) return false;
-      const bounded = clamp(size, container * minimum / 100, container * maximum / 100);
-      return setValue((bounded / container) * 100, source);
-    }
+      const handleAttributes = snapshotAttributes(handle, ENHANCED_ATTRIBUTES);
+      const groupOrientation = group.getAttribute('data-orientation');
+      const panelStyles = {
+        flexBasis: panels[0].style.flexBasis,
+        flexGrow: panels[0].style.flexGrow,
+        flexShrink: panels[0].style.flexShrink
+      };
 
-    setValue(value, 'initial', false);
+      const requestedOrientation =
+        handle.getAttribute('aria-orientation') ||
+        group.dataset.orientation ||
+        root.dataset.orientation ||
+        'vertical';
+      const orientation = requestedOrientation === 'horizontal' ? 'horizontal' : 'vertical';
+      const isHorizontal = orientation === 'horizontal';
+      const dimension = isHorizontal ? 'height' : 'width';
+      const coordinate = isHorizontal ? 'clientY' : 'clientX';
+      const decreaseKey = isHorizontal ? 'ArrowUp' : 'ArrowLeft';
+      const increaseKey = isHorizontal ? 'ArrowDown' : 'ArrowRight';
 
-    function onKeydown(event) {
-      if (handle.disabled || handle.getAttribute('aria-disabled') === 'true') return;
+      handle.setAttribute('aria-orientation', orientation);
+      group.dataset.orientation = orientation;
+      if (!handle.hasAttribute('tabindex') && handle.tagName !== 'BUTTON') {
+        handle.setAttribute('tabindex', '0');
+      }
 
-      let next;
-      if (event.key === decreaseKey) next = value - step;
-      if (event.key === increaseKey) next = value + step;
-      if (event.key === 'PageDown') next = value - pageStep;
-      if (event.key === 'PageUp') next = value + pageStep;
-      if (event.key === 'Home') next = minimum;
-      if (event.key === 'End') next = maximum;
-      if (next === undefined) return;
+      let minimum = clamp(
+        readConfiguredNumber(handle, root, 'data-value-min', 'aria-valuemin', DEFAULT_MIN),
+        0,
+        100
+      );
+      let maximum = clamp(
+        readConfiguredNumber(handle, root, 'data-value-max', 'aria-valuemax', DEFAULT_MAX),
+        0,
+        100
+      );
+      if (maximum < minimum) [minimum, maximum] = [maximum, minimum];
+      handle.setAttribute('aria-valuemin', formatValue(minimum));
+      handle.setAttribute('aria-valuemax', formatValue(maximum));
 
-      event.preventDefault();
-      setValue(next, 'keyboard');
-    }
+      const requestedStep = readNumber(
+        handle,
+        'data-step',
+        readNumber(root, 'data-step', DEFAULT_STEP)
+      );
+      const step = requestedStep > 0 ? requestedStep : DEFAULT_STEP;
+      const requestedPageStep = readNumber(
+        handle,
+        'data-page-step',
+        readNumber(root, 'data-page-step', DEFAULT_PAGE_STEP)
+      );
+      const pageStep =
+        requestedPageStep >= step ? requestedPageStep : Math.max(step, DEFAULT_PAGE_STEP);
 
-    function onDecrease() {
-      if (pointerControls.decrease.disabled) return;
-      setValue(value - pageStep, 'pointer');
-    }
+      const containerSize = () => group.getBoundingClientRect()[dimension] || 0;
+      const panelSize = () => panels[0].getBoundingClientRect()[dimension] || 0;
+      const initialValue = readConfiguredNumber(
+        handle,
+        root,
+        'data-value-now',
+        'aria-valuenow',
+        NaN
+      );
+      const measuredValue =
+        containerSize() > 0 ? (panelSize() / containerSize()) * 100 : DEFAULT_VALUE;
+      let value = Number.isFinite(initialValue) ? initialValue : measuredValue;
+      const initialLabel = handle.getAttribute('aria-label') || '';
+      const valueLabel =
+        handle.dataset.valueLabel ||
+        root.dataset.valueLabel ||
+        initialLabel.replace(/^resize\s+/i, '').trim() ||
+        (isHorizontal ? 'Panel height' : 'Panel width');
+      const accessibleLabel =
+        readConfiguredString(handle, root, 'data-label') || initialLabel || `Resize ${valueLabel}`;
+      const controls =
+        readConfiguredString(handle, root, 'data-controls') ||
+        handle.getAttribute('aria-controls') ||
+        panels
+          .map((panel) => panel.id)
+          .filter(Boolean)
+          .join(' ');
 
-    function onIncrease() {
-      if (pointerControls.increase.disabled) return;
-      setValue(value + pageStep, 'pointer');
-    }
+      handle.setAttribute('aria-label', accessibleLabel);
+      if (controls) handle.setAttribute('aria-controls', controls);
+      else handle.removeAttribute('aria-controls');
 
-    handle.addEventListener('keydown', onKeydown);
-    pointerControls.decrease.addEventListener('click', onDecrease);
-    pointerControls.increase.addEventListener('click', onIncrease);
+      const existingOutput = getOutput(root);
+      const outputAttributes = existingOutput
+        ? snapshotAttributes(existingOutput, ['class', 'aria-live', 'aria-atomic'])
+        : null;
+      const outputText = existingOutput?.textContent || '';
+      const outputValue = existingOutput?.value || '';
+      let output = existingOutput;
+      if (!output) output = createOutput(root);
+      output.classList.add('resizable-output');
+      output.setAttribute('aria-live', output.getAttribute('aria-live') || 'polite');
+      output.setAttribute('aria-atomic', output.getAttribute('aria-atomic') || 'true');
 
-    let drag = null;
+      const pointerControls = createPointerControls(root, output, valueLabel);
 
-    function finishPointer() {
-      if (drag) {
-        const pointerId = drag.pointerId;
-        handle.removeEventListener('pointermove', movePointer);
-        handle.removeEventListener('pointerup', finishPointer);
-        handle.removeEventListener('pointercancel', finishPointer);
-        if (handle.hasPointerCapture?.(pointerId)) {
-          try {
-            handle.releasePointerCapture(pointerId);
-          } catch {
-            // Pointer capture can disappear before cleanup runs.
+      function quantize(next) {
+        const bounded = clamp(Number(next) || 0, minimum, maximum);
+        const stepped = minimum + Math.round((bounded - minimum) / step) * step;
+        return roundValue(clamp(stepped, minimum, maximum));
+      }
+
+      function announcement(next) {
+        const text = `${valueLabel}: ${formatValue(next)} percent`;
+        handle.setAttribute('aria-valuenow', formatValue(next));
+        handle.setAttribute('aria-valuetext', text);
+        output.value = text;
+        output.textContent = text;
+        const interactionDisabled =
+          handle.disabled || handle.getAttribute('aria-disabled') === 'true';
+        pointerControls.decrease.disabled = interactionDisabled || next <= minimum;
+        pointerControls.increase.disabled = interactionDisabled || next >= maximum;
+      }
+
+      function setPanelBasis(next) {
+        const size = containerSize();
+        if (size <= 0) return;
+        panels[0].style.flexBasis = `${(size * next) / 100}px`;
+        panels[0].style.flexGrow = '0';
+        panels[0].style.flexShrink = '0';
+      }
+
+      function setValue(next, source = 'programmatic', emit = true) {
+        const nextValue = quantize(next);
+        const changed = nextValue !== value;
+        value = nextValue;
+        setPanelBasis(value);
+        announcement(value);
+        if (changed && emit) {
+          root.dispatchEvent(
+            new CustomEvent('resizable-change', {
+              bubbles: true,
+              detail: {
+                value,
+                percentage: value,
+                source,
+                orientation,
+                panel: panels[0]
+              }
+            })
+          );
+        }
+        return changed;
+      }
+
+      function setPixelSize(size, source) {
+        const container = containerSize();
+        if (container <= 0) return false;
+        const bounded = clamp(size, (container * minimum) / 100, (container * maximum) / 100);
+        return setValue((bounded / container) * 100, source);
+      }
+
+      setValue(value, 'initial', false);
+
+      function onKeydown(event) {
+        if (handle.disabled || handle.getAttribute('aria-disabled') === 'true') return;
+
+        let next;
+        if (event.key === decreaseKey) next = value - step;
+        if (event.key === increaseKey) next = value + step;
+        if (event.key === 'PageDown') next = value - pageStep;
+        if (event.key === 'PageUp') next = value + pageStep;
+        if (event.key === 'Home') next = minimum;
+        if (event.key === 'End') next = maximum;
+        if (next === undefined) return;
+
+        event.preventDefault();
+        setValue(next, 'keyboard');
+      }
+
+      function onDecrease() {
+        if (pointerControls.decrease.disabled) return;
+        setValue(value - pageStep, 'pointer');
+      }
+
+      function onIncrease() {
+        if (pointerControls.increase.disabled) return;
+        setValue(value + pageStep, 'pointer');
+      }
+
+      handle.addEventListener('keydown', onKeydown);
+      pointerControls.decrease.addEventListener('click', onDecrease);
+      pointerControls.increase.addEventListener('click', onIncrease);
+
+      let drag = null;
+
+      function finishPointer() {
+        if (drag) {
+          const pointerId = drag.pointerId;
+          handle.removeEventListener('pointermove', movePointer);
+          handle.removeEventListener('pointerup', finishPointer);
+          handle.removeEventListener('pointercancel', finishPointer);
+          if (handle.hasPointerCapture?.(pointerId)) {
+            try {
+              handle.releasePointerCapture(pointerId);
+            } catch {
+              // Pointer capture can disappear before cleanup runs.
+            }
           }
         }
+        handle.removeAttribute('data-resizing');
+        root.removeAttribute('data-resizing');
+        drag = null;
       }
-      handle.removeAttribute('data-resizing');
-      root.removeAttribute('data-resizing');
-      drag = null;
-    }
 
-    function movePointer(event) {
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const position = Number(event[coordinate]);
-      if (!Number.isFinite(position)) return;
-      setPixelSize(drag.initialSize + position - drag.start, 'pointer');
-    }
+      function movePointer(event) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const position = Number(event[coordinate]);
+        if (!Number.isFinite(position)) return;
+        setPixelSize(drag.initialSize + position - drag.start, 'pointer');
+      }
 
-    function startPointer(event) {
-      if (handle.disabled || handle.getAttribute('aria-disabled') === 'true') return;
-      if (event.button !== undefined && event.button !== 0) return;
-      if (event.isPrimary === false) return;
+      function startPointer(event) {
+        if (handle.disabled || handle.getAttribute('aria-disabled') === 'true') return;
+        if (event.button !== undefined && event.button !== 0) return;
+        if (event.isPrimary === false) return;
 
-      event.preventDefault();
-      finishPointer();
-      const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 1;
-      drag = {
-        pointerId,
-        start: Number(event[coordinate]) || 0,
-        initialSize: panelSize() || (containerSize() * value / 100)
+        event.preventDefault();
+        finishPointer();
+        const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 1;
+        drag = {
+          pointerId,
+          start: Number(event[coordinate]) || 0,
+          initialSize: panelSize() || (containerSize() * value) / 100
+        };
+        handle.setAttribute('data-resizing', '');
+        root.setAttribute('data-resizing', '');
+        try {
+          handle.setPointerCapture?.(pointerId);
+        } catch {
+          // Pointer capture can fail for synthetic events or an inactive pointer.
+        }
+        handle.addEventListener('pointermove', movePointer);
+        handle.addEventListener('pointerup', finishPointer);
+        handle.addEventListener('pointercancel', finishPointer);
+      }
+
+      handle.addEventListener('pointerdown', startPointer);
+
+      let active = true;
+      const updateLayout = () => {
+        if (active) setPanelBasis(value);
       };
-      handle.setAttribute('data-resizing', '');
-      root.setAttribute('data-resizing', '');
-      try {
-        handle.setPointerCapture?.(pointerId);
-      } catch {
-        // Pointer capture can fail for synthetic events or an inactive pointer.
-      }
-      handle.addEventListener('pointermove', movePointer);
-      handle.addEventListener('pointerup', finishPointer);
-      handle.addEventListener('pointercancel', finishPointer);
-    }
-
-    handle.addEventListener('pointerdown', startPointer);
-
-    let active = true;
-    const updateLayout = () => {
-      if (active) setPanelBasis(value);
-    };
-    let resizeObserver = null;
-    let removeResizeFallback = null;
-    const ResizeObserverConstructor = root.ownerDocument.defaultView?.ResizeObserver
-      || (typeof ResizeObserver === 'function' ? ResizeObserver : null);
-    if (ResizeObserverConstructor) {
-      resizeObserver = new ResizeObserverConstructor(updateLayout);
-      resizeObserver.observe(group);
-    } else {
-      removeResizeFallback = registerResizeFallback(root.ownerDocument, updateLayout);
-    }
-
-    function cleanup() {
-      active = false;
-      finishPointer();
-      handle.removeEventListener('keydown', onKeydown);
-      handle.removeEventListener('pointerdown', startPointer);
-      pointerControls.decrease.removeEventListener('click', onDecrease);
-      pointerControls.increase.removeEventListener('click', onIncrease);
-      pointerControls.controls.remove();
-      if (resizeObserver) resizeObserver.disconnect();
-      else removeResizeFallback?.();
-      restoreAttributes(handle, handleAttributes);
-      if (groupOrientation === null) group.removeAttribute('data-orientation');
-      else group.setAttribute('data-orientation', groupOrientation);
-      panels[0].style.flexBasis = panelStyles.flexBasis;
-      panels[0].style.flexGrow = panelStyles.flexGrow;
-      panels[0].style.flexShrink = panelStyles.flexShrink;
-      if (existingOutput) {
-        restoreAttributes(existingOutput, outputAttributes);
-        existingOutput.value = outputValue;
-        existingOutput.textContent = outputText;
+      let resizeObserver = null;
+      let removeResizeFallback = null;
+      const ResizeObserverConstructor =
+        root.ownerDocument.defaultView?.ResizeObserver ||
+        (typeof ResizeObserver === 'function' ? ResizeObserver : null);
+      if (ResizeObserverConstructor) {
+        resizeObserver = new ResizeObserverConstructor(updateLayout);
+        resizeObserver.observe(group);
       } else {
-        output.remove();
+        removeResizeFallback = registerResizeFallback(root.ownerDocument, updateLayout);
       }
-      root.removeAttribute('data-resizing');
-      root.removeAttribute('data-init');
-      instances.delete(root);
-    }
 
-    instances.set(root, cleanup);
+      function cleanup() {
+        active = false;
+        finishPointer();
+        handle.removeEventListener('keydown', onKeydown);
+        handle.removeEventListener('pointerdown', startPointer);
+        pointerControls.decrease.removeEventListener('click', onDecrease);
+        pointerControls.increase.removeEventListener('click', onIncrease);
+        pointerControls.controls.remove();
+        if (resizeObserver) resizeObserver.disconnect();
+        else removeResizeFallback?.();
+        restoreAttributes(handle, handleAttributes);
+        if (groupOrientation === null) group.removeAttribute('data-orientation');
+        else group.setAttribute('data-orientation', groupOrientation);
+        panels[0].style.flexBasis = panelStyles.flexBasis;
+        panels[0].style.flexGrow = panelStyles.flexGrow;
+        panels[0].style.flexShrink = panelStyles.flexShrink;
+        if (existingOutput) {
+          restoreAttributes(existingOutput, outputAttributes);
+          existingOutput.value = outputValue;
+          existingOutput.textContent = outputText;
+        } else {
+          output.remove();
+        }
+        root.removeAttribute('data-resizing');
+        root.removeAttribute('data-mewa-resizable-init');
+        instances.delete(root);
+      }
+
+      instances.set(root, cleanup);
+    } finally {
+      initializingRoots.delete(root);
+    }
   });
 }
 

@@ -1,25 +1,42 @@
 import { behavior as behavior0 } from "../controllers/sidebar.js";
+import { acquireBehavior } from "../runtime/core.js";
 
 export const behaviors = Object.freeze([behavior0]);
-const statesByRoot = new WeakMap();
+const leasesByRoot = new WeakMap();
 
 export function enhance(root, options) {
   const scope = root || (typeof document === "undefined" ? null : document);
   if (!scope) return [];
-  const previous = statesByRoot.get(scope) || [];
-  const states = behaviors.map((entry, index) => entry.enhance(scope, options) ?? previous[index]);
-  statesByRoot.set(scope, states);
-  return states;
+  let leases = leasesByRoot.get(scope);
+  if (leases) {
+    for (const lease of leases) lease.update(options);
+  } else {
+    leases = [];
+    try {
+      for (const entry of behaviors) leases.push(acquireBehavior(entry, scope, options));
+    } catch (error) {
+      const errors = [error];
+      for (const lease of leases.reverse()) {
+        try { lease.destroy(); } catch (cleanupError) { errors.push(cleanupError); }
+      }
+      if (errors.length > 1) throw new AggregateError(errors, 'Component setup failed');
+      throw error;
+    }
+    leasesByRoot.set(scope, leases);
+  }
+  return leases.map((lease) => lease.state);
 }
 
-export function destroy(root, states) {
+export function destroy(root) {
   const scope = root || (typeof document === "undefined" ? null : document);
   if (!scope) return;
-  const currentStates = states || statesByRoot.get(scope) || [];
-  for (let index = behaviors.length - 1; index >= 0; index -= 1) {
-    behaviors[index].destroy?.(scope, currentStates[index]);
+  const leases = leasesByRoot.get(scope) || [];
+  leasesByRoot.delete(scope);
+  const errors = [];
+  for (const lease of leases.reverse()) {
+    try { lease.destroy(); } catch (error) { errors.push(error); }
   }
-  statesByRoot.delete(scope);
+  if (errors.length) throw new AggregateError(errors, 'Component cleanup failed');
 }
 
 export const behavior = { name: "sidebar", enhance, destroy };

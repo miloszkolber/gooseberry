@@ -1,7 +1,9 @@
 // -- Time Field -------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('time-field');
 
 const TIME_PARTS = {
   hour: { minimum: 1, maximum: 12, fallback: 12, label: 'Hour' },
@@ -28,7 +30,9 @@ function padded(value) {
 }
 
 function filterNumeric(field) {
-  const next = String(field.value || '').replace(/[^0-9]/g, '').slice(0, 2);
+  const next = String(field.value || '')
+    .replace(/[^0-9]/g, '')
+    .slice(0, 2);
   if (field.value !== next) field.value = next;
   return next;
 }
@@ -39,11 +43,7 @@ function normalize(field, settings) {
     field.value = '';
     return null;
   }
-  const value = clamp(
-    Number.parseInt(digits, 10),
-    settings.minimum,
-    settings.maximum
-  );
+  const value = clamp(Number.parseInt(digits, 10), settings.minimum, settings.maximum);
   field.value = padded(value);
   return value;
 }
@@ -52,24 +52,28 @@ function segmentValue(field, settings) {
   const digits = String(field.value || '').replace(/[^0-9]/g, '');
   if (!digits) return { value: null, empty: true, valid: true };
   const value = Number.parseInt(digits, 10);
-  const valid = Number.isFinite(value)
-    && value >= settings.minimum
-    && value <= settings.maximum;
+  const valid = Number.isFinite(value) && value >= settings.minimum && value <= settings.maximum;
   return { value: valid ? value : null, empty: false, valid };
 }
 
+const segmentMessages = new WeakMap();
+
 function setSegmentValidity(field, state, settings) {
   if (typeof field.setCustomValidity !== 'function') return;
-  field.setCustomValidity(
+  if (field.validity?.customError && field.validationMessage !== segmentMessages.get(field)) return;
+  const message =
     state.valid || state.empty
       ? ''
-      : `${settings.label} must be between ${settings.minimum} and ${settings.maximum}.`
-  );
+      : `${settings.label} must be between ${settings.minimum} and ${settings.maximum}.`;
+  field.setCustomValidity(message);
+  segmentMessages.set(field, message);
 }
 
 export function enhance(root) {
-  queryAll(root, '.time-field:not([data-init])').forEach((timeField) => {
+  queryAll(root, '.time-field').forEach((timeField) => {
     timeField.dataset.init = '';
+    if (lifecycle.has(timeField)) return;
+    timeField.dataset.mewaTimeFieldInit = '';
 
     const hour = findPart(timeField, 'hour');
     const minute = findPart(timeField, 'minute');
@@ -77,11 +81,18 @@ export function enhance(root) {
     const submitted = findPart(timeField, 'value');
     const status = findPart(timeField, 'status');
     if (!hour || !minute || !period) {
-      timeField.removeAttribute('data-init');
+      timeField.removeAttribute('data-mewa-time-field-init');
       return;
     }
 
     if (submitted) submitted.disabled = false;
+    lifecycle.add(timeField, () => {
+      for (const field of [hour, minute]) {
+        if (segmentMessages.has(field) && field.validationMessage === segmentMessages.get(field))
+          field.setCustomValidity('');
+        segmentMessages.delete(field);
+      }
+    });
 
     const announce = (source, emit = true) => {
       const hourState = segmentValue(hour, TIME_PARTS.hour);
@@ -101,8 +112,8 @@ export function enhance(root) {
       const display = !valid
         ? 'Enter a valid hour and minute.'
         : complete
-        ? `${padded(hourValue)}:${padded(minuteValue)} ${periodValue}`
-        : 'Enter an hour and minute.';
+          ? `${padded(hourValue)}:${padded(minuteValue)} ${periodValue}`
+          : 'Enter an hour and minute.';
 
       if (submitted) submitted.value = serialized;
       if (status) {
@@ -111,16 +122,18 @@ export function enhance(root) {
       }
 
       if (emit) {
-        timeField.dispatchEvent(new CustomEvent('time-field:change', {
-          bubbles: true,
-          detail: {
-            value: serialized,
-            hour: hourValue === null ? '' : padded(hourValue),
-            minute: minuteValue === null ? '' : padded(minuteValue),
-            period: periodValue,
-            source
-          }
-        }));
+        timeField.dispatchEvent(
+          new CustomEvent('time-field:change', {
+            bubbles: true,
+            detail: {
+              value: serialized,
+              hour: hourValue === null ? '' : padded(hourValue),
+              minute: minuteValue === null ? '' : padded(minuteValue),
+              period: periodValue,
+              source
+            }
+          })
+        );
       }
       return { hourValue, minuteValue, periodValue, serialized, display };
     };
@@ -149,35 +162,45 @@ export function enhance(root) {
         settings.maximum
       );
       const range = settings.maximum - settings.minimum + 1;
-      const next = ((current - settings.minimum + amount) % range + range) % range + settings.minimum;
+      const next =
+        ((((current - settings.minimum + amount) % range) + range) % range) + settings.minimum;
       field.value = padded(next);
       announce('keyboard');
     };
 
     const handleKeydown = (event, field, name) => {
+      if (event.isComposing || field.matches(':disabled') || field.readOnly) return;
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       event.preventDefault();
       step(field, name, event.key === 'ArrowUp' ? 1 : -1);
     };
 
-    [[hour, 'hour'], [minute, 'minute']].forEach(([field, name]) => {
-      field.addEventListener('input', () => handleInput(field, name));
-      field.addEventListener('change', () => handleChange(field, name));
-      field.addEventListener('blur', () => handleBlur(field, name));
-      field.addEventListener('keydown', (event) => handleKeydown(event, field, name));
+    [
+      [hour, 'hour'],
+      [minute, 'minute']
+    ].forEach(([field, name]) => {
+      lifecycle.listen(timeField, field, 'input', (event) => {
+        if (event.isComposing || field.matches(':disabled') || field.readOnly) return;
+        handleInput(field, name);
+      });
+      lifecycle.listen(timeField, field, 'change', () => {
+        if (!field.matches(':disabled') && !field.readOnly) handleChange(field, name);
+      });
+      lifecycle.listen(timeField, field, 'blur', () => {
+        if (!field.matches(':disabled') && !field.readOnly) handleBlur(field, name);
+      });
+      lifecycle.listen(timeField, field, 'keydown', (event) => handleKeydown(event, field, name));
     });
 
-    period.addEventListener('input', () => handleChange(period, ''));
-    period.addEventListener('change', () => handleChange(period, ''));
+    lifecycle.listen(timeField, period, 'input', () => handleChange(period, ''));
+    lifecycle.listen(timeField, period, 'change', () => handleChange(period, ''));
 
-    const form = timeField.closest('form');
+    const form = hour.form;
     if (form) {
-      form.addEventListener('reset', () => {
-        queueMicrotask(() => {
-          normalize(hour, TIME_PARTS.hour);
-          normalize(minute, TIME_PARTS.minute);
-          announce('reset', false);
-        });
+      lifecycle.reset(timeField, form, () => {
+        normalize(hour, TIME_PARTS.hour);
+        normalize(minute, TIME_PARTS.minute);
+        announce('reset', false);
       });
     }
 
@@ -187,4 +210,8 @@ export function enhance(root) {
   });
 }
 
-export const behavior = { name: 'time-field', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'time-field', enhance, destroy };

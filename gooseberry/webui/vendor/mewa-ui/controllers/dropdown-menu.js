@@ -13,8 +13,8 @@ function bindMenu(trigger, state, menu) {
 
   const itemSelector = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
   const isDisabled = (item) => item.disabled || item.getAttribute('aria-disabled') === 'true';
-  const getItems = () => Array.from(menu.querySelectorAll(itemSelector))
-    .filter((item) => !isDisabled(item));
+  const getItems = () =>
+    Array.from(menu.querySelectorAll(itemSelector)).filter((item) => !isDisabled(item));
   const activateCheckable = (item) => {
     if (!item || isDisabled(item)) return;
     const role = item.getAttribute('role');
@@ -23,14 +23,23 @@ function bindMenu(trigger, state, menu) {
       item.setAttribute('aria-checked', String(!checked));
     } else if (role === 'menuitemradio') {
       const group = item.closest('[role="group"]');
-      const radios = group ? group.querySelectorAll('[role="menuitemradio"]') : menu.querySelectorAll('[role="menuitemradio"]');
-      radios.forEach((radio) => { radio.setAttribute('aria-checked', 'false'); });
+      const radios = group
+        ? group.querySelectorAll('[role="menuitemradio"]')
+        : menu.querySelectorAll('[role="menuitemradio"]');
+      radios.forEach((radio) => {
+        radio.setAttribute('aria-checked', 'false');
+      });
       item.setAttribute('aria-checked', 'true');
     }
   };
   const highlight = (item) => {
-    getItems().forEach((i) => { i.removeAttribute('data-highlighted'); });
-    if (item) { item.setAttribute('data-highlighted', ''); item.focus(); }
+    getItems().forEach((i) => {
+      i.removeAttribute('data-highlighted');
+    });
+    if (item) {
+      item.setAttribute('data-highlighted', '');
+      item.focus();
+    }
   };
   const onToggle = (e) => {
     if (state.menu !== menu || !trigger.isConnected) return;
@@ -40,7 +49,9 @@ function bindMenu(trigger, state, menu) {
       const first = getItems()[0];
       if (first) highlight(first);
     } else {
-      getItems().forEach((i) => { i.removeAttribute('data-highlighted'); });
+      getItems().forEach((i) => {
+        i.removeAttribute('data-highlighted');
+      });
       if (menu.contains(menu.ownerDocument.activeElement)) trigger.focus();
     }
   };
@@ -51,12 +62,21 @@ function bindMenu(trigger, state, menu) {
   };
   const onMouseleave = () => {
     if (state.menu !== menu || !trigger.isConnected) return;
-    getItems().forEach((i) => { i.removeAttribute('data-highlighted'); });
+    getItems().forEach((i) => {
+      i.removeAttribute('data-highlighted');
+    });
   };
   const onClick = (e) => {
     if (state.menu !== menu || !trigger.isConnected) return;
-    const item = e.target.closest('[role="menuitemcheckbox"], [role="menuitemradio"]');
-    if (item) activateCheckable(item);
+    const item = e.target.closest(itemSelector);
+    if (!item || !menu.contains(item)) return;
+    if (isDisabled(item)) {
+      e.preventDefault();
+      return;
+    }
+    const role = item.getAttribute('role');
+    if (role === 'menuitemcheckbox' || role === 'menuitemradio') activateCheckable(item);
+    else menu.hidePopover();
   };
   const onKeydown = (e) => {
     if (state.menu !== menu || !trigger.isConnected) return;
@@ -64,18 +84,32 @@ function bindMenu(trigger, state, menu) {
     const targetItem = e.target?.closest?.(itemSelector);
     const current = items.indexOf(targetItem || menu.ownerDocument.activeElement);
     switch (e.key) {
-      case 'ArrowDown': e.preventDefault(); highlight(items[(current + 1) % items.length]); break;
-      case 'ArrowUp': e.preventDefault(); highlight(items[(current - 1 + items.length) % items.length]); break;
-      case 'Home': e.preventDefault(); highlight(items[0]); break;
-      case 'End': e.preventDefault(); highlight(items[items.length - 1]); break;
+      case 'ArrowDown':
+        e.preventDefault();
+        highlight(items[(current + 1) % items.length]);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        highlight(items[(current - 1 + items.length) % items.length]);
+        break;
+      case 'Home':
+        e.preventDefault();
+        highlight(items[0]);
+        break;
+      case 'End':
+        e.preventDefault();
+        highlight(items[items.length - 1]);
+        break;
       case 'Escape':
         menu.hidePopover();
         break;
-      case 'Enter': case ' ':
+      case 'Enter':
+      case ' ':
         e.preventDefault();
         if (targetItem && menu.contains(targetItem) && !isDisabled(targetItem)) {
           const role = targetItem.getAttribute('role');
-          if (role === 'menuitemcheckbox' || role === 'menuitemradio') activateCheckable(targetItem);
+          if (role === 'menuitemcheckbox' || role === 'menuitemradio')
+            activateCheckable(targetItem);
           else {
             targetItem.click();
             menu.hidePopover();
@@ -84,7 +118,9 @@ function bindMenu(trigger, state, menu) {
         break;
       default:
         if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-          const match = items.find((item) => item.textContent.trim().toLowerCase().startsWith(e.key.toLowerCase()));
+          const match = items.find((item) =>
+            item.textContent.trim().toLowerCase().startsWith(e.key.toLowerCase())
+          );
           if (match) highlight(match);
         }
     }
@@ -111,7 +147,7 @@ function rebindTargets() {
     if (!trigger.isConnected) {
       state.unbindMenu?.();
       trigger.removeEventListener('click', state.onTriggerClick);
-      delete trigger.dataset.init;
+      delete trigger.dataset.mewaDropdownMenuInit;
       triggerStates.delete(trigger);
       initializedTriggers.delete(trigger);
       return;
@@ -131,14 +167,21 @@ function rebindTargets() {
 }
 
 export function enhance(root) {
-  queryAll(root, '[data-dropdown-menu-trigger]:not([data-init])').forEach((trigger) => {
+  queryAll(root, '[data-dropdown-menu-trigger]').forEach((trigger) => {
+    if (triggerStates.has(trigger)) return;
     trigger.dataset.init = '';
+    trigger.dataset.mewaDropdownMenuInit = '';
     const state = { menu: null, unbindMenu: null, onTriggerClick: null };
     triggerStates.set(trigger, state);
     initializedTriggers.add(trigger);
     state.onTriggerClick = () => {
       const currentMenu = trigger.ownerDocument.getElementById(trigger.dataset.dropdownMenuTrigger);
-      if (!currentMenu || !currentMenu.isConnected || typeof currentMenu.togglePopover !== 'function') return;
+      if (
+        !currentMenu ||
+        !currentMenu.isConnected ||
+        typeof currentMenu.togglePopover !== 'function'
+      )
+        return;
       trigger.focus();
       currentMenu.togglePopover();
     };
@@ -153,7 +196,7 @@ export function destroy(root) {
     if (!state) return;
     state.unbindMenu?.();
     trigger.removeEventListener('click', state.onTriggerClick);
-    delete trigger.dataset.init;
+    delete trigger.dataset.mewaDropdownMenuInit;
     triggerStates.delete(trigger);
     initializedTriggers.delete(trigger);
   });

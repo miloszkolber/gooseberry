@@ -1,7 +1,9 @@
 // -- Command Palette -----------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('command-palette');
 
 let commandItemId = 0;
 
@@ -14,8 +16,9 @@ function isDisabled(item) {
 }
 
 function getVisibleItems(list) {
-  return Array.from(list.querySelectorAll('.command-palette-item'))
-    .filter((item) => !item.hidden && !isDisabled(item));
+  return Array.from(list.querySelectorAll('.command-palette-item')).filter(
+    (item) => !item.hidden && !isDisabled(item)
+  );
 }
 
 function clearHighlight(list, input) {
@@ -58,9 +61,12 @@ function showPalette(dialog, trigger) {
 function installDocumentListener(documentRoot) {
   if (documentRoot.__commandPaletteKeydownInit) return;
   documentRoot.__commandPaletteKeydownInit = true;
-  documentRoot.addEventListener('keydown', (e) => {
+  lifecycle.add(documentRoot, () => delete documentRoot.__commandPaletteKeydownInit);
+  lifecycle.listen(documentRoot, documentRoot, 'keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      const dialog = documentRoot.querySelector('dialog.command-palette');
+      const dialog = documentRoot.querySelector(
+        'dialog.command-palette[data-mewa-command-palette-init]'
+      );
       if (!isConnected(dialog)) return;
       e.preventDefault();
       if (dialog.open) dialog.close();
@@ -70,58 +76,79 @@ function installDocumentListener(documentRoot) {
 }
 
 export function enhance(root) {
+  lifecycle.refresh(root);
   const scope = root || (typeof document === 'undefined' ? null : document);
   const documentRoot = scope?.nodeType === 9 ? scope : scope?.ownerDocument;
   if (!documentRoot) return;
   installDocumentListener(documentRoot);
 
-  const dialogs = queryAll(scope, 'dialog.command-palette:not([data-init])');
+  const dialogs = queryAll(scope, 'dialog.command-palette');
   dialogs.forEach((dialog) => {
     dialog.dataset.init = '';
+    if (lifecycle.has(dialog)) return;
+    dialog.dataset.mewaCommandPaletteInit = '';
     const input = dialog.querySelector('.command-palette-input');
     const inputWrapper = dialog.querySelector('.command-palette-input-wrapper');
     const list = dialog.querySelector('.command-palette-list');
     const empty = dialog.querySelector('.command-palette-empty');
     if (!input || !list) {
-      delete dialog.dataset.init;
+      delete dialog.dataset.mewaCommandPaletteInit;
       return;
     }
 
     if (!list.id) list.setAttribute('id', `command-palette-list-${++commandItemId}`);
     input.setAttribute('aria-controls', list.id);
 
-    const items = Array.from(list.querySelectorAll('.command-palette-item'));
-    items.forEach((item, index) => {
-      if (!item.id) item.setAttribute('id', `${list.id}-item-${index + 1}`);
-      item.setAttribute('aria-selected', 'false');
-      item.addEventListener('click', (event) => {
-        if (!isDisabled(item)) return;
-        event.preventDefault();
-        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-        else event.stopPropagation();
+    const items = () => Array.from(list.querySelectorAll('.command-palette-item'));
+    const prepareItems = () =>
+      items().forEach((item) => {
+        if (!item.id) item.id = `${list.id}-item-${++commandItemId}`;
+        if (!item.hasAttribute('aria-selected')) item.setAttribute('aria-selected', 'false');
       });
-    });
+    prepareItems();
+    lifecycle.listen(
+      dialog,
+      list,
+      'click',
+      (event) => {
+        const item = event.target.closest('.command-palette-item');
+        if (!item || !isDisabled(item)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true
+    );
     let highlightIndex = -1;
 
     const filter = (q) => {
       const query = q.toLowerCase();
-      items.forEach((item) => {
+      prepareItems();
+      items().forEach((item) => {
         item.hidden = Boolean(query) && !item.textContent.toLowerCase().includes(query);
       });
       list.querySelectorAll('.command-palette-group').forEach((group) => {
-        group.hidden = !Array.from(group.querySelectorAll('.command-palette-item')).some((item) => !item.hidden);
+        group.hidden = !Array.from(group.querySelectorAll('.command-palette-item')).some(
+          (item) => !item.hidden
+        );
       });
       list.querySelectorAll('.command-palette-separator').forEach((separator) => {
         separator.hidden = Boolean(query);
       });
-      if (empty) empty.hidden = items.some((item) => !item.hidden);
+      if (empty) empty.hidden = items().some((item) => !item.hidden);
       highlightIndex = highlightItem(list, 0, input);
     };
 
-    input.addEventListener('input', () => { filter(input.value); });
-    if (inputWrapper) inputWrapper.addEventListener('click', () => { input.focus(); });
+    lifecycle.onUpdate(dialog, () => filter(input.value));
+    lifecycle.listen(dialog, input, 'input', () => {
+      filter(input.value);
+    });
+    if (inputWrapper)
+      lifecycle.listen(dialog, inputWrapper, 'click', () => {
+        input.focus();
+      });
 
-    input.addEventListener('keydown', (e) => {
+    lifecycle.listen(dialog, input, 'keydown', (e) => {
+      if (e.isComposing) return;
       const visible = getVisibleItems(list);
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -142,7 +169,7 @@ export function enhance(root) {
       }
     });
 
-    dialog.addEventListener('click', (e) => {
+    lifecycle.listen(dialog, dialog, 'click', (e) => {
       if (e.target === dialog) {
         if (dialog.open) dialog.close();
         return;
@@ -155,7 +182,7 @@ export function enhance(root) {
       }
       if (dialog.open) dialog.close();
     });
-    dialog.addEventListener('close', () => {
+    lifecycle.listen(dialog, dialog, 'close', () => {
       input.value = '';
       filter('');
       clearHighlight(list, input);
@@ -167,21 +194,27 @@ export function enhance(root) {
   });
 
   const triggerScope = dialogs.length ? documentRoot : scope;
-  queryAll(triggerScope, '[data-command-palette-trigger]:not([data-init])').forEach((trigger) => {
+  queryAll(triggerScope, '[data-command-palette-trigger]').forEach((trigger) => {
     trigger.dataset.init = '';
+    if (lifecycle.has(trigger)) return;
+    trigger.dataset.mewaCommandPaletteInit = '';
     const dialogId = trigger.dataset.commandPaletteTrigger;
     const triggerDocument = trigger.ownerDocument;
     const dialog = triggerDocument.getElementById(dialogId);
     if (!dialog) {
       // Leave the trigger eligible for a later SPA insertion of its dialog.
-      delete trigger.dataset.init;
+      delete trigger.dataset.mewaCommandPaletteInit;
       return;
     }
-    trigger.addEventListener('click', () => {
+    lifecycle.listen(trigger, trigger, 'click', () => {
       const currentDialog = triggerDocument.getElementById(dialogId);
       showPalette(currentDialog, trigger);
     });
   });
 }
 
-export const behavior = { name: 'command-palette', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'command-palette', enhance, destroy };

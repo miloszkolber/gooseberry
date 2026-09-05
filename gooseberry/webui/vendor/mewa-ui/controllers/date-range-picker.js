@@ -1,7 +1,9 @@
 // -- Date Range Picker ------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('date-range-picker');
 
 const DATE_VALUE = /^\d{4}-\d{2}-\d{2}$/;
 const ORDER_MESSAGE = 'End date must be on or after the start date.';
@@ -12,13 +14,15 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 
 const isDateValue = (value) => DATE_VALUE.test(value);
 
-const maxDateValue = (...values) => values
-  .filter(Boolean)
-  .reduce((current, value) => (!current || value > current ? value : current), '');
+const maxDateValue = (...values) =>
+  values
+    .filter(Boolean)
+    .reduce((current, value) => (!current || value > current ? value : current), '');
 
-const minDateValue = (...values) => values
-  .filter(Boolean)
-  .reduce((current, value) => (!current || value < current ? value : current), '');
+const minDateValue = (...values) =>
+  values
+    .filter(Boolean)
+    .reduce((current, value) => (!current || value < current ? value : current), '');
 
 const formatDate = (value) => {
   if (!isDateValue(value)) return '';
@@ -78,8 +82,10 @@ const restoreAttribute = (element, name, state) => {
 const hasCustomError = (input) => Boolean(input.validity && input.validity.customError);
 
 export function enhance(root) {
-  queryAll(root, '.date-range-picker:not([data-init])').forEach((picker) => {
+  queryAll(root, '.date-range-picker').forEach((picker) => {
     picker.dataset.init = '';
+    if (lifecycle.has(picker)) return;
+    picker.dataset.mewaDateRangePickerInit = '';
 
     const start = picker.querySelector('[data-range-start]');
     const end = picker.querySelector('[data-range-end]');
@@ -117,17 +123,15 @@ export function enhance(root) {
     const initialStartValue = isDateValue(start.value) ? start.value : '';
     const initialEndValue = isDateValue(end.value) ? end.value : '';
     const initialOrderInvalid = Boolean(
-      initialStartValue
-      && initialEndValue
-      && initialStartValue > initialEndValue
+      initialStartValue && initialEndValue && initialStartValue > initialEndValue
     );
-    const initialServerOrderInvalid = initialOrderInvalid && (
-      initial.pickerInvalid.present
-      || initial.orderInvalid.present
-      || initial.startAriaInvalid.value === 'true'
-      || initial.endAriaInvalid.value === 'true'
-      || (error && !initial.errorHidden)
-    );
+    const initialServerOrderInvalid =
+      initialOrderInvalid &&
+      (initial.pickerInvalid.present ||
+        initial.orderInvalid.present ||
+        initial.startAriaInvalid.value === 'true' ||
+        initial.endAriaInvalid.value === 'true' ||
+        (error && !initial.errorHidden));
 
     const clearManagedCustomValidity = () => {
       if (!managedCustomValidity) return;
@@ -219,15 +223,20 @@ export function enhance(root) {
       const startValue = isDateValue(start.value) ? start.value : '';
       const endValue = isDateValue(end.value) ? end.value : '';
       const orderInvalid = Boolean(startValue && endValue && startValue > endValue);
-      const applyOrderConstraints = !initialOrderInvalid || interactionStarted || initialServerOrderInvalid;
+      const applyOrderConstraints =
+        !initialOrderInvalid || interactionStarted || initialServerOrderInvalid;
 
       setConstraint(start, 'min', base.startMin);
-      setConstraint(start, 'max', applyOrderConstraints
-        ? minDateValue(base.startMax, endValue)
-        : base.startMax);
-      setConstraint(end, 'min', applyOrderConstraints
-        ? maxDateValue(base.endMin, startValue)
-        : base.endMin);
+      setConstraint(
+        start,
+        'max',
+        applyOrderConstraints ? minDateValue(base.startMax, endValue) : base.startMax
+      );
+      setConstraint(
+        end,
+        'min',
+        applyOrderConstraints ? maxDateValue(base.endMin, startValue) : base.endMin
+      );
       setConstraint(end, 'max', base.endMax);
 
       if (orderInvalid) {
@@ -240,7 +249,13 @@ export function enhance(root) {
         if (managedStatus && status) status.textContent = initial.statusText;
         managedStatus = false;
       } else if (status) {
-        updateStatus(status, startValue, endValue, orderInvalid, announceOrder || initialServerOrderInvalid);
+        updateStatus(
+          status,
+          startValue,
+          endValue,
+          orderInvalid,
+          announceOrder || initialServerOrderInvalid
+        );
         managedStatus = true;
       }
       return {
@@ -252,51 +267,60 @@ export function enhance(root) {
     const emitInvalid = (result) => {
       if (result.orderInvalid === managedOrderInvalid) return;
       managedOrderInvalid = result.orderInvalid;
-      picker.dispatchEvent(new CustomEvent('date-range:invalid', {
-        bubbles: true,
-        detail: { ...result.detail, reason: 'order' }
-      }));
+      picker.dispatchEvent(
+        new CustomEvent('date-range:invalid', {
+          bubbles: true,
+          detail: { ...result.detail, reason: 'order' }
+        })
+      );
     };
 
     const emitChange = () => {
       interactionStarted = true;
       const result = sync({ announceOrder: true });
       emitInvalid(result);
-      picker.dispatchEvent(new CustomEvent('date-range:change', {
-        bubbles: true,
-        detail: result.detail
-      }));
+      picker.dispatchEvent(
+        new CustomEvent('date-range:change', {
+          bubbles: true,
+          detail: result.detail
+        })
+      );
     };
 
     const handleInput = () => {
       interactionStarted = true;
       emitInvalid(sync({ announceOrder: true }));
     };
-    start.addEventListener('input', handleInput);
-    end.addEventListener('input', handleInput);
-    start.addEventListener('change', emitChange);
-    end.addEventListener('change', emitChange);
+    lifecycle.listen(picker, start, 'input', handleInput);
+    lifecycle.listen(picker, end, 'input', handleInput);
+    lifecycle.listen(picker, start, 'change', emitChange);
+    lifecycle.listen(picker, end, 'change', emitChange);
 
-    const form = picker.closest('form');
-    if (form) {
-      form.addEventListener('reset', (event) => {
-        queueMicrotask(() => {
-          if (event.defaultPrevented) return;
-          interactionStarted = false;
-          const result = sync({ announceOrder: initialServerOrderInvalid });
-          managedOrderInvalid = initialServerOrderInvalid && result.orderInvalid;
-          if (result.orderInvalid && !initialServerOrderInvalid) {
-            restoreManagedInvalidState();
-            if (status && managedStatus) status.textContent = initial.statusText;
-            managedStatus = false;
-          }
-        });
-      });
-    }
+    lifecycle.reset(picker, start.form || end.form || picker.closest('form'), () => {
+      interactionStarted = false;
+      const result = sync({ announceOrder: initialServerOrderInvalid });
+      managedOrderInvalid = initialServerOrderInvalid && result.orderInvalid;
+      if (result.orderInvalid && !initialServerOrderInvalid) {
+        restoreManagedInvalidState();
+        if (status && managedStatus) status.textContent = initial.statusText;
+        managedStatus = false;
+      }
+    });
 
+    lifecycle.add(picker, () => {
+      restoreManagedInvalidState();
+      setConstraint(start, 'min', base.startMin);
+      setConstraint(start, 'max', base.startMax);
+      setConstraint(end, 'min', base.endMin);
+      setConstraint(end, 'max', base.endMax);
+    });
     const initialState = sync({ announceOrder: initialServerOrderInvalid });
     managedOrderInvalid = initialServerOrderInvalid && initialState.orderInvalid;
   });
 }
 
-export const behavior = { name: 'date-range-picker', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'date-range-picker', enhance, destroy };

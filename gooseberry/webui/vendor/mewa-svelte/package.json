@@ -1,6 +1,6 @@
 {
   "name": "mewa-svelte",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Optional Svelte 5 lifecycle attachment and Bun compiler plugin for mewa_ui.",
   "license": "MIT",

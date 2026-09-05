@@ -1,7 +1,12 @@
 {
   "schemaVersion": 1,
   "name": "mewa-ui",
-  "version": "0.1.1",
+  "version": "0.1.2",
+  "source": {
+    "revision": "c1bfb64a5874f2ca15d81c5ad78a2060360a37c0",
+    "dirty": false,
+    "url": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/"
+  },
   "foundations": {
     "base": "css/base.css",
     "tokens": "css/tokens.css",
@@ -23,6 +28,7 @@
       "purpose": "Formats document text, code, quotations, keyboard notation, and lists.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/typography/typography.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -38,6 +44,7 @@
       "purpose": "Creates intrinsic containers, stacks, grids, sidebar splits, centering, and opposite-end groups.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/layout/layout.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -53,6 +60,7 @@
       "purpose": "Marks a real visual or semantic division.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/separator/separator.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -68,6 +76,7 @@
       "purpose": "Presents a local Lucide glyph inside text or a control.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/icon/icon.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -83,6 +92,7 @@
       "purpose": "Starts an action, submits a form, or styles a navigation link as a button.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/button/button.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -98,6 +108,7 @@
       "purpose": "Changes one independent pressed state.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/toggle/toggle.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -113,6 +124,7 @@
       "purpose": "Coordinates a set of related pressed buttons.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/toggle-group/toggle-group.md",
       "styleDependencies": [
         "toggle"
       ],
@@ -130,6 +142,7 @@
       "purpose": "Connects related buttons into one visual control group.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/button-group/button-group.md",
       "styleDependencies": [
         "button"
       ],
@@ -147,6 +160,7 @@
       "purpose": "Groups frequently used controls with managed arrow-key navigation.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/toolbar/toolbar.md",
       "styleDependencies": [
         "separator",
         "button",
@@ -168,6 +182,7 @@
       "purpose": "Names one native form control.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/label/label.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -183,6 +198,7 @@
       "purpose": "Composes a label, native control, help text, error text, and related fieldsets.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/field/field.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -198,6 +214,7 @@
       "purpose": "Collects one line of text with labels, descriptions, icons, and validation.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/text-field/text-field.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -213,6 +230,7 @@
       "purpose": "Collects multi-line text.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/textarea/textarea.md",
       "styleDependencies": [
         "field"
       ],
@@ -230,6 +248,7 @@
       "purpose": "Selects one independent option or several independent options.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/checkbox/checkbox.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -245,6 +264,7 @@
       "purpose": "Selects one value from a visible set.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/radio-group/radio-group.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -260,6 +280,7 @@
       "purpose": "Changes an immediate binary system state.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/switch/switch.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -275,6 +296,7 @@
       "purpose": "Selects a value from a continuous or stepped numeric range.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/slider/slider.md",
       "styleDependencies": [
         "field",
         "label"
@@ -293,6 +315,7 @@
       "purpose": "Selects one or several values from a fixed native option list.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/select/select.md",
       "styleDependencies": [
         "field"
       ],
@@ -310,6 +333,7 @@
       "purpose": "Collects a numeric value with explicit increment and decrement controls.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/number-field/number-field.md",
       "styleDependencies": [
         "field"
       ],
@@ -327,6 +351,7 @@
       "purpose": "Opens the native file picker.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/file-input/file-input.md",
       "styleDependencies": [
         "field",
         "label"
@@ -345,6 +370,7 @@
       "purpose": "Collects a date or local date and time with the browser control.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/date-field/date-field.md",
       "styleDependencies": [
         "field",
         "label"
@@ -363,6 +389,7 @@
       "purpose": "Selects a date from a custom accessible month grid.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/date-picker/date-picker.md",
       "styleDependencies": [
         "button"
       ],
@@ -380,6 +407,7 @@
       "purpose": "Collects a start date and an end date with native inputs.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/date-range-picker/date-range-picker.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -395,6 +423,7 @@
       "purpose": "Selects one option from a searchable list.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/combobox/combobox.md",
       "styleDependencies": [
         "label",
         "button"
@@ -413,6 +442,7 @@
       "purpose": "Collects a structured time from native numeric fields and a period selector.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/time-field/time-field.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -428,6 +458,7 @@
       "purpose": "Composes a complete native submission task.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/form/form.md",
       "styleDependencies": [
         "field",
         "label",
@@ -450,6 +481,7 @@
       "purpose": "Shows short non-interactive status or metadata.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/badge/badge.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -465,6 +497,7 @@
       "purpose": "Shows a person or entity image with a fallback and optional status.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/avatar/avatar.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -480,6 +513,7 @@
       "purpose": "Groups one standalone object or a small related content set.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/card/card.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -495,6 +529,7 @@
       "purpose": "Presents an image, caption, fallback, and optional larger preview.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/image/image.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -510,6 +545,7 @@
       "purpose": "Shows one value with a label, description, and optional trend.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/statistic/statistic.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -525,6 +561,7 @@
       "purpose": "Presents data with stable row and column relationships.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/table/table.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -540,6 +577,7 @@
       "purpose": "Adds filtering, sorting, status, and pagination around Table.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/data-table/data-table.md",
       "styleDependencies": [
         "table",
         "text-field",
@@ -560,6 +598,7 @@
       "purpose": "Reveals and hides supplementary content.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/collapsible/collapsible.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -575,6 +614,7 @@
       "purpose": "Presents events or steps in chronological or procedural order.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/timeline/timeline.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -590,6 +630,7 @@
       "purpose": "Presents hierarchical items with expandable branches.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/tree-view/tree-view.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -605,6 +646,7 @@
       "purpose": "Presents a sequence of slides in a bounded scroll region.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/carousel/carousel.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -620,6 +662,7 @@
       "purpose": "Contains overflow inside a bounded region.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/scroll-area/scroll-area.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -635,6 +678,7 @@
       "purpose": "Reorders a user-owned list.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/sortable/sortable.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -650,6 +694,7 @@
       "purpose": "Shows that an indeterminate task is active.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/spinner/spinner.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -665,6 +710,7 @@
       "purpose": "Reserves the shape of content that is loading.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/skeleton/skeleton.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -680,6 +726,7 @@
       "purpose": "Shows known task completion.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/progress/progress.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -695,6 +742,7 @@
       "purpose": "Presents persistent important information in the page flow.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/callout/callout.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -710,6 +758,7 @@
       "purpose": "Requires an explicit response to a high-impact decision.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/alert-dialog/alert-dialog.md",
       "styleDependencies": [
         "button"
       ],
@@ -727,6 +776,7 @@
       "purpose": "Announces a brief non-blocking result.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/toast/toast.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -742,6 +792,7 @@
       "purpose": "Shows non-modal contextual content in the top layer.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/popover/popover.md",
       "styleDependencies": [
         "button"
       ],
@@ -759,6 +810,7 @@
       "purpose": "Shows a short supplementary hint on hover and focus.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/tooltip/tooltip.md",
       "styleDependencies": [
         "button"
       ],
@@ -776,6 +828,7 @@
       "purpose": "Contains a focused modal task.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/dialog/dialog.md",
       "styleDependencies": [
         "button",
         "text-field"
@@ -794,6 +847,7 @@
       "purpose": "Presents an edge-aligned modal task.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/sheet/sheet.md",
       "styleDependencies": [
         "button"
       ],
@@ -811,6 +865,7 @@
       "purpose": "Groups several disclosure sections.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/accordion/accordion.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -826,6 +881,7 @@
       "purpose": "Finds and activates global application commands.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/command-palette/command-palette.md",
       "styleDependencies": [
         "button"
       ],
@@ -843,6 +899,7 @@
       "purpose": "Shows the current route within a hierarchy.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/breadcrumbs/breadcrumbs.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -858,6 +915,7 @@
       "purpose": "Moves between result pages.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/pagination/pagination.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -873,6 +931,7 @@
       "purpose": "Switches among related panels within one route.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/tabs/tabs.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -888,6 +947,7 @@
       "purpose": "Shows a compact set of actions from one trigger.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/dropdown-menu/dropdown-menu.md",
       "styleDependencies": [
         "button"
       ],
@@ -905,6 +965,7 @@
       "purpose": "Groups related site routes in top-level navigation popovers.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/navigation-menu/navigation-menu.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -920,6 +981,7 @@
       "purpose": "Provides reusable application header, toolbar, page overview, content, status, and empty-state primitives.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/app-shell/app-shell.md",
       "styleDependencies": [
         "button"
       ],
@@ -937,6 +999,7 @@
       "purpose": "Provides collapsible desktop navigation and a mobile navigation dialog.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/sidebar/sidebar.md",
       "styleDependencies": [
         "button"
       ],
@@ -954,6 +1017,7 @@
       "purpose": "Presents two panels with an optional adjustable separator.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/resizable/resizable.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -969,6 +1033,7 @@
       "purpose": "Selects a color through a native picker with optional editable hexadecimal synchronization.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/color-picker/color-picker.md",
       "styleDependencies": [
         "field"
       ],
@@ -986,6 +1051,7 @@
       "purpose": "Selects files with optional drag-and-drop feedback, file details, and image previews.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/file-upload/file-upload.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1001,6 +1067,7 @@
       "purpose": "Captures a fixed-length one-time code through segmented native inputs.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/input-otp/input-otp.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1016,6 +1083,7 @@
       "purpose": "Commits free text into discrete removable values.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/tag-input/tag-input.md",
       "styleDependencies": [
         "field"
       ],
@@ -1033,6 +1101,7 @@
       "purpose": "Provides a reusable banner landmark for brand, primary navigation, and global actions.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/header/header.md",
       "styleDependencies": [
         "nav"
       ],
@@ -1050,6 +1119,7 @@
       "purpose": "Presents a small flat route set with explicit current-page state.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/nav/nav.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1065,6 +1135,7 @@
       "purpose": "Provides a reusable content-information landmark for secondary routes and service metadata.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/footer/footer.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1080,6 +1151,7 @@
       "purpose": "Shows a compact action menu at a pointer context position or from a keyboard trigger.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/context-menu/context-menu.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1095,6 +1167,7 @@
       "purpose": "Shows a rich supplementary preview from pointer hover or keyboard focus.",
       "stability": "stable",
       "jsMode": "required",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/hover-card/hover-card.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1110,6 +1183,7 @@
       "purpose": "Presents one chronological stream of assistant reasoning, searches, tool calls, and related steps.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/agent-activity/agent-activity.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1125,6 +1199,7 @@
       "purpose": "Presents code with an optional copy action, line numbers, and stable streamed updates.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/code-block/code-block.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1140,6 +1215,7 @@
       "purpose": "Provides a message-entry form with an expanding textarea and optional leading and trailing actions.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/composer/composer.md",
       "styleDependencies": [
         "button"
       ],
@@ -1157,6 +1233,7 @@
       "purpose": "Presents file changes with metadata and semantic added, removed, and context lines.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/file-diff/file-diff.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1172,6 +1249,7 @@
       "purpose": "Presents an ordered conversation as authored rows with metadata and optional expansion.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/message/message.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1187,6 +1265,7 @@
       "purpose": "Follows streamed conversation output at the live edge until the reader scrolls away.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/message-scroller/message-scroller.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1202,6 +1281,7 @@
       "purpose": "Presents an optional assistant reasoning trace with explicit streaming and complete states.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/reasoning/reasoning.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1217,6 +1297,7 @@
       "purpose": "Connects inline citations with a readable list of external references.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/sources/sources.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1232,6 +1313,7 @@
       "purpose": "Presents short prompt choices that can seed the next composer value.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/suggestion/suggestion.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1247,6 +1329,7 @@
       "purpose": "Communicates that an assistant is actively preparing a response.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/thinking-indicator/thinking-indicator.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1262,6 +1345,7 @@
       "purpose": "Presents an ordered task plan with visible item status and completion context.",
       "stability": "stable",
       "jsMode": "optional",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/todo-list/todo-list.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],
@@ -1277,6 +1361,7 @@
       "purpose": "Presents an assistant tool operation with visible status and optional result content.",
       "stability": "stable",
       "jsMode": "none",
+      "contract": "https://github.com/miloszkolber/mewa_ui/blob/c1bfb64a5874f2ca15d81c5ad78a2060360a37c0/library/components/tool-call/tool-call.md",
       "styleDependencies": [],
       "behaviorDependencies": [],
       "assets": [],

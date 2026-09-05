@@ -1,7 +1,9 @@
 // -- Color Picker -----------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('color-picker');
 
 const HEX_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
@@ -10,21 +12,23 @@ function normalizeHex(raw) {
   if (!match) return null;
 
   const digits = match[1];
-  const expanded = digits.length === 3
-    ? Array.from(digits, (digit) => `${digit}${digit}`).join('')
-    : digits;
+  const expanded =
+    digits.length === 3 ? Array.from(digits, (digit) => `${digit}${digit}`).join('') : digits;
 
   return `#${expanded.toLowerCase()}`;
 }
 
 export function enhance(scope) {
-  queryAll(scope, '.color-picker:not([data-init])').forEach((root) => {
+  lifecycle.refresh(scope, false);
+  queryAll(scope, '.color-picker').forEach((root) => {
     root.dataset.init = '';
+    if (lifecycle.has(root)) return;
+    root.dataset.mewaColorPickerInit = '';
 
     const colorInput = root.querySelector('.color-picker-input[type="color"]');
     const hexInput = root.querySelector('[data-color-picker-hex]');
     if (!colorInput || !hexInput) {
-      root.removeAttribute('data-init');
+      root.removeAttribute('data-mewa-color-picker-init');
       return;
     }
 
@@ -42,21 +46,27 @@ export function enhance(scope) {
       hexInput.disabled = colorInput.disabled;
     };
 
+    lifecycle.reset(root, colorInput.form, syncFromColor);
+    lifecycle.onUpdate(root, () => {
+      syncFromColor();
+      syncDisabled();
+    });
     syncFromColor();
     syncDisabled();
     hexInput.hidden = false;
     root.dataset.enhanced = '';
 
-    colorInput.addEventListener('input', () => {
+    lifecycle.listen(root, colorInput, 'input', () => {
       if (!updatingFromHex) syncFromColor();
     });
-    colorInput.addEventListener('change', syncFromColor);
+    lifecycle.listen(root, colorInput, 'change', syncFromColor);
 
-    hexInput.addEventListener('focus', () => {
+    lifecycle.listen(root, hexInput, 'focus', () => {
       valueAtFocus = colorInput.value;
     });
 
-    hexInput.addEventListener('input', () => {
+    lifecycle.listen(root, hexInput, 'input', () => {
+      if (colorInput.matches(':disabled') || hexInput.readOnly) return;
       const normalized = normalizeHex(hexInput.value);
       const draftIsInvalid = hexInput.value !== '' && !normalized;
       if (draftIsInvalid) hexInput.setAttribute('aria-invalid', 'true');
@@ -69,7 +79,7 @@ export function enhance(scope) {
       updatingFromHex = false;
     });
 
-    hexInput.addEventListener('blur', () => {
+    lifecycle.listen(root, hexInput, 'blur', () => {
       const normalized = normalizeHex(hexInput.value);
       if (!normalized) {
         syncFromColor();
@@ -83,7 +93,7 @@ export function enhance(scope) {
       }
     });
 
-    hexInput.addEventListener('keydown', (event) => {
+    lifecycle.listen(root, hexInput, 'keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
       hexInput.blur();
@@ -91,4 +101,8 @@ export function enhance(scope) {
   });
 }
 
-export const behavior = { name: 'color-picker', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'color-picker', enhance, destroy };

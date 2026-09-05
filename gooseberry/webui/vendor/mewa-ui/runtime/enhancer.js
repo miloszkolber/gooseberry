@@ -20,7 +20,15 @@ export function createEnhancer(initialBehaviors = []) {
 
   function destroy(root) {
     if (!root) return;
-    behaviors.forEach((behavior) => behavior.destroy?.(root));
+    const errors = [];
+    for (const behavior of [...behaviors.values()].reverse()) {
+      try {
+        behavior.destroy?.(root);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, 'Enhancer cleanup failed');
   }
 
   function observe(root = defaultDocument()) {
@@ -35,12 +43,27 @@ export function createEnhancer(initialBehaviors = []) {
     disconnect();
     observedRoot = root;
     observer = new MutationObserver((records) => {
-      records.forEach((record) => {
-        record.removedNodes.forEach((node) => destroy(node));
-        record.addedNodes.forEach((node) => {
-          if (node.nodeType === 1 || node.nodeType === 11) enhance(node);
+      const removed = new Set();
+      const added = new Set();
+      for (const record of records) {
+        for (const node of record.removedNodes) removed.add(node);
+        for (const node of record.addedNodes) added.add(node);
+      }
+      const contains = (node) => node === root || root.contains(node);
+      const outermost = (nodes) =>
+        [...nodes].filter((node) => {
+          for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+            if (nodes.has(parent)) return false;
+          }
+          return true;
         });
-      });
+      // Decide from the final tree: moving an instance must not dispose its resources.
+      for (const node of outermost(removed)) {
+        if (!contains(node)) destroy(node);
+      }
+      for (const node of outermost(added)) {
+        if (contains(node) && (node.nodeType === 1 || node.nodeType === 11)) enhance(node);
+      }
     });
     observer.observe(root, { childList: true, subtree: true });
     const currentObserver = observer;

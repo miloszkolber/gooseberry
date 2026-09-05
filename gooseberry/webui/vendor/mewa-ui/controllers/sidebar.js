@@ -1,7 +1,9 @@
 // -- Sidebar --------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('sidebar');
 
 function documentView(doc) {
   return doc.defaultView || (typeof window === 'undefined' ? null : window);
@@ -31,7 +33,7 @@ function toggleSidebar(sidebar) {
 
 function mobileTriggerFor(dialog) {
   return Array.from(dialog.ownerDocument.querySelectorAll('[data-sidebar-mobile]')).find(
-    (trigger) => trigger.dataset.sidebarMobile === dialog.id,
+    (trigger) => trigger.dataset.sidebarMobile === dialog.id
   );
 }
 
@@ -48,7 +50,8 @@ function closeMobileDialog(dialog) {
 }
 
 function openMobileDialog(dialog, trigger) {
-  if (!dialog || !dialog.isConnected || typeof dialog.showModal !== 'function' || dialog.open) return;
+  if (!dialog || !dialog.isConnected || typeof dialog.showModal !== 'function' || dialog.open)
+    return;
   try {
     dialog.showModal();
     trigger.setAttribute('aria-expanded', 'true');
@@ -58,18 +61,19 @@ function openMobileDialog(dialog, trigger) {
 }
 
 function sidebarForTrigger(trigger) {
-  return Array.from(trigger.ownerDocument.querySelectorAll('.app-sidebar')).find(
-    (sidebar) => triggerMatchesSidebar(trigger, sidebar),
+  return Array.from(trigger.ownerDocument.querySelectorAll('.app-sidebar')).find((sidebar) =>
+    triggerMatchesSidebar(trigger, sidebar)
   );
 }
 
 function installGlobalListeners(doc) {
   if (!doc.__sidebarKbInit) {
     doc.__sidebarKbInit = true;
-    doc.addEventListener('keydown', (event) => {
+    lifecycle.add(doc, () => delete doc.__sidebarKbInit);
+    lifecycle.listen(doc, doc, 'keydown', (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'b') {
         event.preventDefault();
-        const sidebar = doc.querySelector('.app-sidebar');
+        const sidebar = doc.querySelector('.app-sidebar[data-mewa-sidebar-init]');
         if (sidebar) toggleSidebar(sidebar);
       }
     });
@@ -79,8 +83,9 @@ function installGlobalListeners(doc) {
     const view = documentView(doc);
     if (!view?.matchMedia) return;
     doc.__sidebarViewportInit = true;
+    lifecycle.add(doc, () => delete doc.__sidebarViewportInit);
     const desktopViewport = view.matchMedia('(width > 48rem)');
-    desktopViewport.addEventListener('change', (event) => {
+    lifecycle.listen(doc, desktopViewport, 'change', (event) => {
       if (!event.matches) return;
       doc.querySelectorAll('.sidebar-mobile[open]').forEach((dialog) => closeMobileDialog(dialog));
     });
@@ -88,56 +93,66 @@ function installGlobalListeners(doc) {
 }
 
 export function enhance(root) {
-  const doc = root?.nodeType === 9
-    ? root
-    : root?.ownerDocument || (typeof document === 'undefined' ? null : document);
+  const doc =
+    root?.nodeType === 9
+      ? root
+      : root?.ownerDocument || (typeof document === 'undefined' ? null : document);
   if (doc) installGlobalListeners(doc);
 
-  queryAll(root, '.app-sidebar:not([data-init])').forEach((sidebar) => {
+  queryAll(root, '.app-sidebar').forEach((sidebar) => {
     sidebar.dataset.init = '';
+    if (lifecycle.has(sidebar)) return;
+    sidebar.dataset.mewaSidebarInit = '';
+    lifecycle.add(sidebar, () => {});
   });
 
-  queryAll(root, '.sidebar-trigger:not([data-init])').forEach((trigger) => {
+  queryAll(root, '.sidebar-trigger').forEach((trigger) => {
     trigger.dataset.init = '';
+    if (lifecycle.has(trigger)) return;
+    trigger.dataset.mewaSidebarInit = '';
     const sidebar = sidebarForTrigger(trigger);
     if (!sidebar) {
-      delete trigger.dataset.init;
+      delete trigger.dataset.mewaSidebarInit;
       return;
     }
-    trigger.addEventListener('click', () => toggleSidebar(sidebar));
+    lifecycle.listen(trigger, trigger, 'click', () => {
+      const current = sidebarForTrigger(trigger);
+      if (current) toggleSidebar(current);
+    });
     syncTriggers(sidebar);
   });
 
   queryAll(root, '.app-sidebar').forEach((sidebar) => syncTriggers(sidebar));
 
-  queryAll(root, '[data-sidebar-mobile]:not([data-init])').forEach((trigger) => {
+  queryAll(root, '[data-sidebar-mobile]').forEach((trigger) => {
     trigger.dataset.init = '';
+    if (lifecycle.has(trigger)) return;
+    trigger.dataset.mewaSidebarInit = '';
     const dialog = trigger.ownerDocument.getElementById(trigger.dataset.sidebarMobile);
     if (!dialog) {
-      delete trigger.dataset.init;
+      delete trigger.dataset.mewaSidebarInit;
       return;
     }
 
     if (!trigger.hasAttribute('aria-expanded')) trigger.setAttribute('aria-expanded', 'false');
-    trigger.addEventListener('click', () => {
-      openMobileDialog(trigger.ownerDocument.getElementById(trigger.dataset.sidebarMobile), trigger);
+    lifecycle.listen(trigger, trigger, 'click', () => {
+      openMobileDialog(
+        trigger.ownerDocument.getElementById(trigger.dataset.sidebarMobile),
+        trigger
+      );
     });
   });
 
-  queryAll(root, '.sidebar-mobile:not([data-init])').forEach((dialog) => {
+  queryAll(root, '.sidebar-mobile').forEach((dialog) => {
     dialog.dataset.init = '';
+    if (lifecycle.has(dialog)) return;
+    dialog.dataset.mewaSidebarInit = '';
 
-    dialog.querySelectorAll('.sidebar-mobile-close:not([data-init])').forEach((button) => {
-      button.dataset.init = '';
-      button.addEventListener('click', () => closeMobileDialog(dialog));
+    lifecycle.listen(dialog, dialog, 'click', (event) => {
+      if (event.target.closest('.sidebar-mobile-close, .sidebar-link')) closeMobileDialog(dialog);
     });
 
-    dialog.querySelectorAll('.sidebar-link:not([data-init])').forEach((link) => {
-      link.dataset.init = '';
-      link.addEventListener('click', () => closeMobileDialog(dialog));
-    });
-
-    dialog.addEventListener('close', () => {
+    lifecycle.listen(dialog, dialog, 'close', () => {
       const trigger = mobileTriggerFor(dialog);
       trigger?.setAttribute('aria-expanded', 'false');
       const doc = dialog.ownerDocument;
@@ -148,4 +163,8 @@ export function enhance(root) {
   });
 }
 
-export const behavior = { name: 'sidebar', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'sidebar', enhance, destroy };

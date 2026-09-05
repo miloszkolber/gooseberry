@@ -1,7 +1,9 @@
 // -- Hover Card ----------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('hover-card');
 
 const HOVER_CARD_OPEN_DELAY = 150;
 const HOVER_CARD_CLOSE_DELAY = 100;
@@ -12,8 +14,7 @@ const initializedTriggers = new Set();
 let activeHoverCard = null;
 
 function hoverCardAnchorSupported(element) {
-  const css = element.ownerDocument.defaultView?.CSS
-    || (typeof CSS === 'undefined' ? null : CSS);
+  const css = element.ownerDocument.defaultView?.CSS || (typeof CSS === 'undefined' ? null : CSS);
   return typeof css?.supports === 'function' && css.supports('position-area', 'bottom');
 }
 
@@ -37,23 +38,18 @@ function positionHoverCardFallback(card, trigger) {
   let left;
 
   if (side === 'top' || side === 'bottom') {
-    top = side === 'top'
-      ? triggerRect.top - cardRect.height - gap
-      : triggerRect.bottom + gap;
+    top = side === 'top' ? triggerRect.top - cardRect.height - gap : triggerRect.bottom + gap;
     if (align === 'start') left = triggerRect.left;
     else if (align === 'end') left = triggerRect.right - cardRect.width;
     else left = triggerRect.left + (triggerRect.width - cardRect.width) / 2;
   } else {
-    left = side === 'left'
-      ? triggerRect.left - cardRect.width - gap
-      : triggerRect.right + gap;
+    left = side === 'left' ? triggerRect.left - cardRect.width - gap : triggerRect.right + gap;
     if (align === 'start') top = triggerRect.top;
     else if (align === 'end') top = triggerRect.bottom - cardRect.height;
     else top = triggerRect.top + (triggerRect.height - cardRect.height) / 2;
   }
 
-  const view = card.ownerDocument.defaultView
-    || (typeof window === 'undefined' ? null : window);
+  const view = card.ownerDocument.defaultView || (typeof window === 'undefined' ? null : window);
   if (!view) return;
   card.style.top = `${Math.max(edge, Math.min(top, view.innerHeight - cardRect.height - edge))}px`;
   card.style.left = `${Math.max(edge, Math.min(left, view.innerWidth - cardRect.width - edge))}px`;
@@ -75,9 +71,11 @@ function closeHoverCard(state, { restoreFocus = false, immediate = false } = {})
       // The native popover can already be closed or unsupported.
     }
     if (activeHoverCard === state) activeHoverCard = null;
-    if ((restoreFocus || focusWasInside)
-      && state.trigger.isConnected
-      && card.ownerDocument.activeElement !== state.trigger) {
+    if (
+      (restoreFocus || focusWasInside) &&
+      state.trigger.isConnected &&
+      card.ownerDocument.activeElement !== state.trigger
+    ) {
       state.suppressFocusOpen = true;
       state.trigger.focus();
     }
@@ -157,10 +155,14 @@ function bindHoverCard(state, card) {
   const anchorId = `--hover-card-${card.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   trigger.style.anchorName = anchorId;
   card.style.positionAnchor = anchorId;
-  trigger.setAttribute('aria-describedby', Array.from(new Set([...state.describedBy, card.id])).join(' '));
+  trigger.setAttribute(
+    'aria-describedby',
+    Array.from(new Set([...state.describedBy, card.id])).join(' ')
+  );
   state.card = card;
-  state.focusWithin = trigger.ownerDocument.activeElement === trigger
-    || card.contains(trigger.ownerDocument.activeElement);
+  state.focusWithin =
+    trigger.ownerDocument.activeElement === trigger ||
+    card.contains(trigger.ownerDocument.activeElement);
 
   state.cardListeners = {
     mouseenter: () => {
@@ -178,7 +180,11 @@ function bindHoverCard(state, card) {
       clearTimeout(state.closeTimer);
     },
     focusout: (event) => {
-      if (event.relatedTarget && (card.contains(event.relatedTarget) || trigger.contains(event.relatedTarget))) return;
+      if (
+        event.relatedTarget &&
+        (card.contains(event.relatedTarget) || trigger.contains(event.relatedTarget))
+      )
+        return;
       state.focusWithin = false;
       scheduleHoverCardClose(state);
     }
@@ -221,6 +227,7 @@ function rebindHoverCardTargets() {
 }
 
 function initHoverCard(trigger) {
+  if (triggerStates.has(trigger)) return;
   const card = resolveHoverCard(trigger);
   if (!card) return;
 
@@ -228,7 +235,9 @@ function initHoverCard(trigger) {
 
   const state = {
     trigger,
-    describedBy: new Set((trigger.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)),
+    describedBy: new Set(
+      (trigger.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+    ),
     card: null,
     cardListeners: null,
     triggerListeners: null,
@@ -283,10 +292,10 @@ function initHoverCard(trigger) {
 }
 
 function initHoverCards(root) {
-  const triggers = queryAll(root, '[data-hover-card-trigger]:not([data-hover-card-init])');
+  const triggers = queryAll(root, '[data-hover-card-trigger]');
   const cards = queryAll(root, '.hover-card[id]');
   if (cards.length) {
-    triggers.push(...queryAll(cards[0].ownerDocument, '[data-hover-card-trigger]:not([data-hover-card-init])'));
+    triggers.push(...queryAll(cards[0].ownerDocument, '[data-hover-card-trigger]'));
   }
   new Set(triggers).forEach(initHoverCard);
   rebindHoverCardTargets();
@@ -295,21 +304,27 @@ function initHoverCards(root) {
 function installGlobalListeners(ownerDocument) {
   if (initializedDocuments.has(ownerDocument)) return;
   initializedDocuments.add(ownerDocument);
+  lifecycle.add(ownerDocument, () => initializedDocuments.delete(ownerDocument));
 
-  ownerDocument.addEventListener('pointerdown', (event) => {
+  lifecycle.listen(ownerDocument, ownerDocument, 'pointerdown', (event) => {
     if (!activeHoverCard) return;
     const { trigger, card } = activeHoverCard;
     if (trigger.contains(event.target) || card.contains(event.target)) return;
     closeHoverCard(activeHoverCard, { immediate: true });
   });
 
-  ownerDocument.addEventListener('scroll', () => {
-    if (activeHoverCard) closeHoverCard(activeHoverCard, { immediate: true });
-  }, { passive: true, capture: true });
+  lifecycle.listen(
+    ownerDocument,
+    ownerDocument,
+    'scroll',
+    () => {
+      if (activeHoverCard) closeHoverCard(activeHoverCard, { immediate: true });
+    },
+    { passive: true, capture: true }
+  );
 
-  const view = ownerDocument.defaultView
-    || (typeof window === 'undefined' ? null : window);
-  view?.addEventListener('resize', () => {
+  const view = ownerDocument.defaultView || (typeof window === 'undefined' ? null : window);
+  lifecycle.listen(ownerDocument, view, 'resize', () => {
     if (!activeHoverCard) return;
     if (hoverCardAnchorSupported(activeHoverCard.card)) return;
     positionHoverCardFallback(activeHoverCard.card, activeHoverCard.trigger);
@@ -317,15 +332,17 @@ function installGlobalListeners(ownerDocument) {
 }
 
 export function enhance(root) {
-  const ownerDocument = root?.nodeType === 9
-    ? root
-    : root?.ownerDocument || (typeof document === 'undefined' ? null : document);
+  const ownerDocument =
+    root?.nodeType === 9
+      ? root
+      : root?.ownerDocument || (typeof document === 'undefined' ? null : document);
   if (!ownerDocument) return;
   installGlobalListeners(ownerDocument);
   initHoverCards(root);
 }
 
 export function destroy(root) {
+  lifecycle.destroy(root);
   queryAll(root, '[data-hover-card-trigger]').forEach(cleanupHoverCardTrigger);
   rebindHoverCardTargets();
 }

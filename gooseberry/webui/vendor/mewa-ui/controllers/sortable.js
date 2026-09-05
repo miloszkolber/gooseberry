@@ -1,26 +1,33 @@
 // -- Sortable -------------------------------------------------
 
-import { queryAll } from '../runtime/core.js';
+import { queryAll, createLifecycle } from '../runtime/core.js';
 
+
+const lifecycle = createLifecycle('sortable');
 
 export function enhance(root) {
-  queryAll(root, '.sortable:not([data-init])').forEach((list) => {
+  lifecycle.refresh(root);
+  queryAll(root, '.sortable').forEach((list) => {
     list.dataset.init = '';
+    if (lifecycle.has(list)) return;
+    list.dataset.mewaSortableInit = '';
     const doc = list.ownerDocument;
 
     const isHorizontal = list.dataset.orientation === 'horizontal';
     const NEXT_KEY = isHorizontal ? 'ArrowRight' : 'ArrowDown';
     const PREV_KEY = isHorizontal ? 'ArrowLeft' : 'ArrowUp';
 
-    let liveRegion = list.parentElement?.querySelector('.sortable-live');
+    let liveRegion = list.nextElementSibling?.matches('.sortable-live')
+      ? list.nextElementSibling
+      : null;
     if (!liveRegion) {
       liveRegion = doc.createElement('span');
       liveRegion.className = 'sortable-live';
       liveRegion.setAttribute('aria-live', 'polite');
       liveRegion.setAttribute('role', 'status');
-      list.parentElement
-        ? list.parentElement.insertBefore(liveRegion, list.nextSibling)
-        : list.after(liveRegion);
+      if (list.parentElement) list.parentElement.insertBefore(liveRegion, list.nextSibling);
+      else list.after(liveRegion);
+      lifecycle.add(list, () => liveRegion.remove());
     }
 
     function announce(message) {
@@ -61,10 +68,12 @@ export function enhance(root) {
       const items = getItems();
       const index = items.indexOf(item);
       announce(`${getItemLabel(item)}, moved to position ${index + 1} of ${items.length}.`);
-      list.dispatchEvent(new CustomEvent('sortable-change', {
-        bubbles: true,
-        detail: { item, index, source }
-      }));
+      list.dispatchEvent(
+        new CustomEvent('sortable-change', {
+          bubbles: true,
+          detail: { item, index, source }
+        })
+      );
     }
 
     function moveItem(item, direction, source) {
@@ -107,6 +116,7 @@ export function enhance(root) {
 
       actions.append(previous, next);
       item.append(actions);
+      lifecycle.add(list, () => actions.remove());
     }
 
     function updateStepControls() {
@@ -133,59 +143,76 @@ export function enhance(root) {
     markActive(getItems()[0], { focus: false });
     updateStepControls();
 
+    lifecycle.onUpdate(list, () => {
+      getAllItems().forEach(createStepControls);
+      const active = getActiveItem();
+      markActive(active || getItems()[0], { focus: false });
+      updateStepControls();
+    });
     let dragged = null;
 
-    getAllItems().forEach((item) => {
-      if (item.getAttribute('aria-disabled') === 'true') return;
-
-      item.addEventListener('dragstart', (event) => {
-        dragged = item;
-        item.setAttribute('data-dragging', '');
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', '');
-      });
-
-      item.addEventListener('dragend', () => {
-        item.removeAttribute('data-dragging');
-        list.querySelectorAll('[data-over]').forEach((candidate) => candidate.removeAttribute('data-over'));
-        dragged = null;
-      });
-
-      item.addEventListener('dragover', (event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        if (!dragged || dragged === item) return;
-        const rect = item.getBoundingClientRect();
-        const midpoint = isHorizontal
-          ? rect.left + rect.width / 2
-          : rect.top + rect.height / 2;
-        const pointer = isHorizontal ? event.clientX : event.clientY;
-        list.querySelectorAll('[data-over]').forEach((candidate) => {
-          if (candidate !== item) candidate.removeAttribute('data-over');
-        });
-        item.setAttribute('data-over', pointer < midpoint ? 'before' : 'after');
-      });
-
-      item.addEventListener('dragleave', () => {
-        item.removeAttribute('data-over');
-      });
-
-      item.addEventListener('drop', (event) => {
-        event.preventDefault();
-        const position = item.getAttribute('data-over');
-        item.removeAttribute('data-over');
-        if (!dragged || dragged === item) return;
-
-        if (position === 'before') list.insertBefore(dragged, item);
-        else list.insertBefore(dragged, item.nextSibling);
-
-        updateStepControls();
-        markActive(dragged);
-        dispatchChange(dragged, 'drag');
-      });
+    lifecycle.listen(list, list, 'dragstart', (event) => {
+      const item = event.target.closest('.sortable-item');
+      if (!item || item.parentElement !== list || item.getAttribute('aria-disabled') === 'true')
+        return;
+      dragged = item;
+      item.setAttribute('data-dragging', '');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', '');
     });
 
-    list.addEventListener('click', (event) => {
+    lifecycle.listen(list, list, 'dragend', (event) => {
+      const item = event.target.closest('.sortable-item');
+      if (!item || item.parentElement !== list || item.getAttribute('aria-disabled') === 'true')
+        return;
+      item.removeAttribute('data-dragging');
+      list
+        .querySelectorAll('[data-over]')
+        .forEach((candidate) => candidate.removeAttribute('data-over'));
+      dragged = null;
+    });
+
+    lifecycle.listen(list, list, 'dragover', (event) => {
+      const item = event.target.closest('.sortable-item');
+      if (!item || item.parentElement !== list || item.getAttribute('aria-disabled') === 'true')
+        return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      if (!dragged || dragged === item) return;
+      const rect = item.getBoundingClientRect();
+      const midpoint = isHorizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
+      const pointer = isHorizontal ? event.clientX : event.clientY;
+      list.querySelectorAll('[data-over]').forEach((candidate) => {
+        if (candidate !== item) candidate.removeAttribute('data-over');
+      });
+      item.setAttribute('data-over', pointer < midpoint ? 'before' : 'after');
+    });
+
+    lifecycle.listen(list, list, 'dragleave', (event) => {
+      const item = event.target.closest('.sortable-item');
+      if (!item || item.parentElement !== list || item.getAttribute('aria-disabled') === 'true')
+        return;
+      item.removeAttribute('data-over');
+    });
+
+    lifecycle.listen(list, list, 'drop', (event) => {
+      const item = event.target.closest('.sortable-item');
+      if (!item || item.parentElement !== list || item.getAttribute('aria-disabled') === 'true')
+        return;
+      event.preventDefault();
+      const position = item.getAttribute('data-over');
+      item.removeAttribute('data-over');
+      if (!dragged || dragged === item) return;
+
+      if (position === 'before') list.insertBefore(dragged, item);
+      else list.insertBefore(dragged, item.nextSibling);
+
+      updateStepControls();
+      markActive(dragged);
+      dispatchChange(dragged, 'drag');
+    });
+
+    lifecycle.listen(list, list, 'click', (event) => {
       const control = event.target.closest('.sortable-step');
       if (!control || control.disabled) return;
       const item = control.closest('.sortable-item');
@@ -197,7 +224,7 @@ export function enhance(root) {
       }
     });
 
-    list.addEventListener('keydown', (event) => {
+    lifecycle.listen(list, list, 'keydown', (event) => {
       if (event.target.closest('.sortable-step')) return;
       const active = getActiveItem() || list.querySelector(':scope > .sortable-item[tabindex="0"]');
       if (!active) return;
@@ -225,7 +252,7 @@ export function enhance(root) {
       }
     });
 
-    list.addEventListener('focusin', (event) => {
+    lifecycle.listen(list, list, 'focusin', (event) => {
       const item = event.target.closest('.sortable-item');
       if (!item || !list.contains(item)) return;
       if (event.target.closest('.sortable-step')) markActive(item, { focus: false });
@@ -234,4 +261,8 @@ export function enhance(root) {
   });
 }
 
-export const behavior = { name: 'sortable', enhance };
+export function destroy(root) {
+  lifecycle.destroy(root);
+}
+
+export const behavior = { name: 'sortable', enhance, destroy };

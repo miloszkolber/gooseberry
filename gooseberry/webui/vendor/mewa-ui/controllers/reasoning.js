@@ -4,12 +4,13 @@ import { queryAll } from '../runtime/core.js';
 const reasoningInstances = new WeakMap();
 
 function initReasoning(root) {
-  if (root.hasAttribute('data-init')) return;
+  if (reasoningInstances.has(root)) return;
   root.dataset.init = '';
+  root.dataset.mewaReasoningInit = '';
 
   const summary = root.querySelector(':scope > .reasoning-trigger');
   if (!summary || root.tagName !== 'DETAILS') {
-    root.removeAttribute('data-init');
+    root.removeAttribute('data-mewa-reasoning-init');
     return;
   }
 
@@ -43,7 +44,7 @@ function initReasoning(root) {
     destroy() {
       summary.removeEventListener('click', onSummaryClick);
       observer.disconnect();
-      root.removeAttribute('data-init');
+      root.removeAttribute('data-mewa-reasoning-init');
       reasoningInstances.delete(root);
     }
   });
